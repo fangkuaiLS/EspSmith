@@ -1,6 +1,8 @@
 # EspSmith
 
-
+<p align="center">
+  <img src="src-tauri/icons/icon.png" alt="EspSmith Logo" width="120" />
+</p>
 
 <p align="center">
   <strong>AI 驱动的 ESP32 集成开发环境</strong>
