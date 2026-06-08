@@ -174,33 +174,6 @@ flash 步骤失败 "OpenOCD connection refused"
 | **持久化存储**    | 基于 JSON 的文件存储（`<project>/.espsmith/experience/`），人类可读，便于版本控制和分享                 |
 | **跨项目复用**    | scope 机制支持全局经验（`all`）、芯片级经验（`esp32s3`）、项目级经验，灵活控制共享范围                          |
 
-**数据模型：**
-
-```
-ExperienceRecord {
-  id: "esp32s3-jtag-40mhz-unstable",
-  trigger: "JTAG 调试时出现 'DAP access failed' 错误",
-  fix: "将 OpenOCD adapter_khz 从 40000 降至 20000",
-  lesson: "ESP32-S3 JTAG 在 40MHz 下不稳定，建议使用 20MHz",
-  scope: "esp32s3",      // 适用范围
-  board_id: null,         // 可选：特定开发板
-  source_ref: "openocd.cfg:L15",
-  timestamp: "2026-05-31T..."
-}
-```
-
-**AI 注入效果：**
-
-```
-[Experience Context]
-Run history for esp32s3: 12/15 passed (confidence 80%)
-Known skills:
-- When [JTAG DAP access failed]: 将 OpenOCD adapter_khz 降至 20000
-- When [Flash 后串口无输出]: 检查 GPIO0 是否拉低，确认 boot 模式
-Likely pitfalls:
-- 使用 ESP32-S3 的 USB-OTG 引脚作为普通 GPIO 会导致 JTAG 失效
-- 开启 PSRAM 后需在 menuconfig 中启用 "Support for external, SPI-connected RAM"
-```
 
 ### 双引擎协同
 
@@ -294,7 +267,7 @@ Self-Healing 执行 → 失败 → 自动恢复 → 记录结果
 
 ```bash
 git clone <repository-url>
-cd esp-ai-studio
+cd espsmith
 ```
 
 #### 2. 安装前端依赖
@@ -327,11 +300,6 @@ npm run tauri -- build
 
 EspSmith 通过 CodeWhale CLI Agent 连接 AI 服务。
 
-#### 安装 CodeWhale
-
-```bash
-npm install -g @anthropic-ai/codewhale
-```
 
 #### 配置 API Key
 
@@ -491,6 +459,7 @@ esp-ai-studio/
 
 - **[AEL (AI Embedded Lab)](https://github.com/nicekwell/AI-Instrument-Closed-Loop)** — 多仪器闭环调试系统，启发了 Self-Healing 引擎和 Experience 引擎的设计
 - **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — 官方 ESP-IDF 扩展，启发了 IDF 工作流和串口管理
+- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI 工具，启发了 MCP 协议集成和 AI 助手模块设计
 
 ***
 
