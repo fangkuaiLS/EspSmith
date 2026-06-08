@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "EspSmith",
+  "version": "0.1.0",
+  "identifier": "top.fago.espsmith",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "EspSmith",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "titleBarStyle": "Overlay"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://localhost:* https://localhost:* https://ghproxy.net https://github.com"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": ["msi"],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "scripts/kconfig_dump.py": "scripts/",
+      "binaries/codewhale.exe": "binaries/",
+      "binaries/codewhale-tui.exe": "binaries/"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "wix": {
+        "language": "en-US",
+        "bannerPath": "wix/banner.bmp",
+        "dialogImagePath": "wix/dialog.bmp",
+        "template": "wix/main.wxs",
+        "fragmentPaths": ["wix/ui-theme.wxs"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJDNjFGMzUwQjExQ0VENEUKUldSTzdSeXhVUE5odkVmV0gvc3NpaFFReGNuYWl4YkNCT0R4VnFFTUQxdDJ0akFWU0NBSlRIT1MK",
+      "endpoints": [
+        "https://ghproxy.net/https://github.com/fangkuaiLS/EspSmith/releases/latest/download/latest.json",
+        "https://github.com/fangkuaiLS/EspSmith/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    },
+    "shell": {
+      "open": true
+    }
+  }
+}

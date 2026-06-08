@@ -1,0 +1,71 @@
+/* SettingsTree.module.css — matches SettingsTree.vue styles */
+
+.settingsTree {
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  color: var(--vscode-foreground);
+  user-select: none;
+}
+
+.treeList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.treeItem {
+  margin: 0;
+  padding: 0;
+}
+
+.treeItemContent {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.treeItemContent:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.treeItemToggle,
+.treeItemTogglePlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.treeItemToggle {
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.treeItemToggle:hover {
+  color: var(--vscode-foreground);
+}
+
+.treeItemLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+}
+
+.treeItemLabel.selected {
+  font-weight: 900;
+}
+
+.treeItem .treeList {
+  padding-left: 10px;
+}
+
+.treeList .treeList {
+  padding-left: 5px;
+}

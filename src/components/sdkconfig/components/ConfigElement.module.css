@@ -1,0 +1,59 @@
+/* ConfigElement.module.css — matches configElement.vue styles */
+
+.configEl {
+  width: 90%;
+}
+
+.configEl:hover {
+  background-color: var(--vscode-notifications-background);
+}
+
+.submenu {
+  padding-left: 0px;
+  overflow: hidden;
+}
+
+.menuconfig {
+  padding-left: 0px;
+}
+
+.menuTitleWrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menuResetIcon {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  display: flex;
+  align-items: center;
+}
+
+.menuResetIcon:hover {
+  color: var(--vscode-textLink-activeForeground);
+}
+
+.submenu:hover .menuResetIcon {
+  opacity: 1;
+}
+
+.menuTitle {
+  font-family: var(--vscode-font-family, 'Segoe WPC', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-weight: 750;
+  font-size: 16px;
+  color: var(--vscode-settings-headerForeground, #888888);
+  margin: 0;
+}
+
+/* Nested menu titles get progressively smaller */
+.configChildren .menuTitle {
+  font-size: 16px;
+}
+
+.configChildren .configChildren .menuTitle {
+  font-size: 14px;
+  font-weight: 600;
+}

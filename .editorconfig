@@ -1,0 +1,15 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+
+[*.rs]
+charset = utf-8
+
+[*.ts]
+charset = utf-8
+
+[*.tsx]
+charset = utf-8

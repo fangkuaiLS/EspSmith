@@ -1,0 +1,280 @@
+@import "tailwindcss";
+
+/* ============================================
+   ESP-AI-Studio Design System — Codex Inspired
+   ============================================ */
+
+@theme {
+  /* -- Surface Colors -- */
+  --color-surface-root: #0d0d0d;
+  --color-surface-base: #141414;
+  --color-surface-elevated: #1a1a1e;
+  --color-surface-overlay: #1f1f24;
+  --color-surface-hover: #25252b;
+  --color-surface-active: #2a2a31;
+
+  /* -- Border Colors -- */
+  --color-border-default: #2e2e38;
+  --color-border-subtle: #25252d;
+  --color-border-strong: #3e3e4a;
+  --color-border-accent: #3b82f680;
+
+  /* -- Text Colors -- */
+  --color-text-primary: #ececee;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #71717a;
+  --color-text-disabled: #52525b;
+  --color-text-inverse: #0d0d0d;
+
+  /* -- Accent Colors -- */
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-accent-muted: #1d4ed820;
+  --color-accent-ring: #3b82f640;
+
+  /* -- Semantic Colors -- */
+  --color-success: #22c55e;
+  --color-success-muted: #16a34a20;
+  --color-warning: #f59e0b;
+  --color-warning-muted: #d9770620;
+  --color-error: #ef4444;
+  --color-error-muted: #dc262620;
+  --color-info: #06b6d4;
+  --color-info-muted: #0891b220;
+
+  /* -- Shadows -- */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.5);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.6), 0 8px 10px -6px rgb(0 0 0 / 0.6);
+  --shadow-glow: 0 0 20px -6px rgb(59 130 246 / 0.15);
+
+  /* -- Border Radius -- */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* -- Typography -- */
+  --font-sans: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", Consolas, monospace;
+
+  /* -- Transitions -- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* ============================================
+   Auto Mode — Light Theme
+   ============================================ */
+
+[data-theme="auto"] {
+  --color-surface-root: #ffffff;
+  --color-surface-base: #f8f9fb;
+  --color-surface-elevated: #ffffff;
+  --color-surface-overlay: #f0f2f5;
+  --color-surface-hover: #e8ecf0;
+  --color-surface-active: #dde2e8;
+
+  --color-border-default: #dde1e6;
+  --color-border-subtle: #e8ecf0;
+  --color-border-strong: #c4c9d0;
+  --color-border-accent: #3b82f640;
+
+  --color-text-primary: #1a1d26;
+  --color-text-secondary: #6b7280;
+  --color-text-tertiary: #9ca3af;
+  --color-text-disabled: #c4c9d0;
+  --color-text-inverse: #ffffff;
+
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-muted: #2563eb10;
+  --color-accent-ring: #3b82f640;
+
+  --color-success: #16a34a;
+  --color-success-muted: #16a34a15;
+  --color-warning: #d97706;
+  --color-warning-muted: #d9770615;
+  --color-error: #dc2626;
+  --color-error-muted: #dc262615;
+  --color-info: #0891b2;
+  --color-info-muted: #0891b215;
+
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.06);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.08);
+  --shadow-glow: 0 0 20px -6px rgb(59 130 246 / 0.2);
+}
+
+/* ============================================
+   Base Styles
+   ============================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3e3e4a transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #3e3e4a;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+[data-theme="auto"] * {
+  scrollbar-color: #c4c9d0 transparent;
+}
+
+[data-theme="auto"] *::-webkit-scrollbar-thumb {
+  background: #c4c9d0;
+}
+
+[data-theme="auto"] *::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--color-surface-root);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+
+@utility scrollbar-hidden {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility animate-fade-in {
+  animation: fadeIn 0.2s var(--ease-out-expo);
+}
+
+@utility animate-slide-up {
+  animation: slideUp 0.25s var(--ease-out-expo);
+}
+
+@utility animate-slide-down {
+  animation: slideDown 0.25s var(--ease-out-expo);
+}
+
+@utility animate-scale-in {
+  animation: scaleIn 0.2s var(--ease-out-expo);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Shimmer loading animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@utility animate-shimmer {
+  background: linear-gradient(90deg, #2a2a31 25%, #33333d 50%, #2a2a31 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+[data-theme="auto"] .animate-shimmer {
+  background: linear-gradient(90deg, #e8ecf0 25%, #dde2e8 50%, #e8ecf0 75%);
+  background-size: 200% 100%;
+}
+
+/* Pulse dot for status indicators */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@utility animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* Pulse slow for background glow effects */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+
+@utility animate-pulse-slow {
+  animation: pulse-slow 4s ease-in-out infinite;
+}
+
+/* Fade slide up for welcome screen entrance */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Typing indicator dots */
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+/* ============================================
+   Focus & Selection
+   ============================================ */
+
+::selection {
+  background: var(--color-accent);
+  color: white;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  ring: 2px solid var(--color-accent-ring);
+}
+
+select option {
+  background-color: var(--color-surface-overlay);
+  color: var(--color-text-primary);
+  padding: 4px 8px;
+}

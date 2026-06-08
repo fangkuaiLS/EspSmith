@@ -1,0 +1,23 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for EspSmith",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    "fs:default",
+    "shell:default",
+    "process:default",
+    "updater:default",
+    "core:webview:allow-internal-toggle-devtools",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-start-dragging"
+  ]
+}
