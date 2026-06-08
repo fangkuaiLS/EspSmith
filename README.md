@@ -462,7 +462,8 @@ esp-ai-studio/
 
 - **[AEL (AI Embedded Lab)](https://github.com/nicekwell/AI-Instrument-Closed-Loop)** — 多仪器闭环调试系统，启发了 Self-Healing 引擎和 Experience 引擎的设计
 - **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — 官方 ESP-IDF 扩展，启发了 IDF 工作流和串口管理
-- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI 工具，启发了 MCP 协议集成和 AI 助手模块设计
+- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI 工具，提供 AI 能力支持
+- **[ESP-IDF](https://github.com/espressif/esp-idf)** — 乐鑫官方 ESP32 开发框架，提供完整的开发工具链
 
 ***
 

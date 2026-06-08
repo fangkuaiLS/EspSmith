@@ -376,7 +376,8 @@ This project draws inspiration from the following excellent open-source projects
 
 - **[AEL (AI Embedded Lab)](https://github.com/nicekwell/AI-Instrument-Closed-Loop)** — Multi-instrument closed-loop debugging system, inspired the Self-Healing engine and Experience engine design
 - **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — Official ESP-IDF extension, inspired IDF workflow and serial management
-- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI tool, inspired MCP protocol integration and AI assistant module design
+- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI tool, provides AI capability support
+- **[ESP-IDF](https://github.com/espressif/esp-idf)** — Espressif official ESP32 development framework, provides complete development toolchain
 
 ***
 
