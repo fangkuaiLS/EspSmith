@@ -144,6 +144,20 @@ if (warnings.length > 0) {
 
 const args = process.argv.slice(2);
 
+// 如果是 build 命令，先同步版本号
+if (args.includes('build')) {
+  process.stderr.write('[esp-ai-studio] Syncing version numbers...\n');
+  try {
+    execSync('npm run sync-version', {
+      stdio: 'inherit',
+      cwd: projectRoot,
+      shell: true,
+    });
+  } catch (error) {
+    process.stderr.write(`[esp-ai-studio] WARNING: Failed to sync version: ${error.message}\n`);
+  }
+}
+
 const child = spawn('npx', ['tauri', ...args], {
   stdio: 'inherit',
   env: process.env,
