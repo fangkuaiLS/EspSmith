@@ -42,7 +42,7 @@ EspSmith is a modern integrated development environment (IDE) for ESP32 series c
 
 ## Software Download
 
-Latest Version: **v0.1.0**
+Latest Version: **v0.1.1**
 
 - 🔗 **Release Page**: [GitHub Releases](https://github.com/fangkuaiLS/EspSmith/releases)
 
@@ -315,7 +315,7 @@ In EspSmith settings panel, fill in:
 
 - **AI Provider**: DeepSeek or Ollama
 - **API Key**: DeepSeek API Key (get from [platform.deepseek.com](https://platform.deepseek.com))
-- **ESP-IDF Path**: ESP-IDF installation directory (e.g., E:.espressif\v5.5.4\esp-idf)
+- **ESP-IDF Path**: ESP-IDF installation directory (e.g., E:.espressif\v0.1.1\esp-idf)
 
 #### Using Ollama Local Model
 

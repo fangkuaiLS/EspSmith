@@ -257,7 +257,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                         type="text"
                         value={localSettings.pythonPath || ''}
                         onChange={(e) => setLocalSettings({ ...localSettings, pythonPath: e.target.value })}
-                        placeholder="C:\\Espressif\\tools\\python\\v5.5.4\\venv\\Scripts\\python.exe"
+                        placeholder="C:\\Espressif\\tools\\python\\v0.1.1\\venv\\Scripts\\python.exe"
                         className="flex-1 px-3 py-2 text-[13px] bg-surface-overlay border border-border-subtle rounded-lg text-text-primary placeholder:text-text-disabled focus:outline-none font-mono"
                       />
                       <button
@@ -466,7 +466,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent font-bold text-[16px]">ES</div>
                     <div>
                       <p className="text-[14px] font-semibold">EspSmith</p>
-                      <p className="text-[12px] text-text-tertiary font-mono">v0.1.0</p>
+                      <p className="text-[12px] text-text-tertiary font-mono">v0.1.1</p>
                     </div>
                   </div>
                   <p className="text-[12px] text-text-tertiary mt-3">{t('settings.aboutDesc')}</p>
@@ -604,7 +604,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-border-default flex items-center justify-between gap-2">
-          <span className="text-[11px] text-text-tertiary font-mono tracking-wide">EspSmith v0.1.0</span>
+          <span className="text-[11px] text-text-tertiary font-mono tracking-wide">EspSmith v0.1.1</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 text-[12px] font-medium bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors">
               {t('settings.cancel')}

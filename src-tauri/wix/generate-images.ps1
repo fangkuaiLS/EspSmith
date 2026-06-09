@@ -189,8 +189,8 @@ function Create-Dialog {
     # Version text at bottom
     $verFont = New-Object System.Drawing.Font("Segoe UI", 7)
     $verBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(80, 85, 105))
-    $vsz = $g.MeasureString("v0.1.0", $verFont)
-    $g.DrawString("v0.1.0", $verFont, $verBrush, ($w - $vsz.Width) / 2, $h - 22)
+    $vsz = $g.MeasureString("v0.1.1", $verFont)
+    $g.DrawString("v0.1.1", $verFont, $verBrush, ($w - $vsz.Width) / 2, $h - 22)
 
     $g.Dispose()
     # WiX requires 24-bit BMP (Format24bppRgb), not 32-bit

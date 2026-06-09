@@ -1532,7 +1532,7 @@ fn handle_jsonrpc_request(server: &MCPServer, request: Value) -> Option<Value> {
         "initialize" => json!({
             "protocolVersion": "2024-11-05",
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "espsmith", "version": "0.1.0" }
+            "serverInfo": { "name": "espsmith", "version": "0.1.1" }
         }),
         "tools/list" => json!({ "tools": server.list_tools() }),
         "tools/call" => {
