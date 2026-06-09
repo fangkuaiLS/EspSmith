@@ -17,6 +17,7 @@ import type { editor } from 'monaco-editor';
 import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 loader.config({ monaco });
+
 import { X, FileCode, FileJson, FileText, FileCog, Image } from 'lucide-react';
 import { useFileStore } from '../../stores';
 
@@ -47,9 +48,8 @@ const ESP32_THEME = {
   },
 };
 
-function registerTheme(monaco: Monaco) {
-  monaco.editor.defineTheme('esp32-dark', ESP32_THEME);
-}
+// 在模块级别注册主题，确保编辑器首次渲染时主题已就绪，避免闪白/乱码
+monaco.editor.defineTheme('esp32-dark', ESP32_THEME);
 
 function registerCompletions(monaco: Monaco) {
   monaco.languages.registerCompletionItemProvider('c', {
@@ -178,16 +178,31 @@ export function CodeEditor() {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const { tabs, activeTabId, setActiveTab, closeTab, updateTabContent, saveFile, updateCursorPosition, updateEditorLanguage } = useFileStore();
 
-  const handleEditorMount: OnMount = (editor, monaco) => {
-    editorRef.current = editor;
-    registerTheme(monaco);
+  const handleBeforeMount = (monaco: Monaco) => {
+    // 主题已在模块级别注册，此处注册补全提供者
     registerCompletions(monaco);
-    monaco.editor.setTheme('esp32-dark');
+  };
+
+  const handleEditorMount: OnMount = (editor) => {
+    editorRef.current = editor;
 
     editor.onDidChangeCursorPosition((e) => {
       updateCursorPosition(e.position.lineNumber, e.position.column);
     });
   };
+
+  // 关闭标签时清理对应的 Monaco model，避免内存泄漏
+  const handleCloseTab = useCallback((id: string) => {
+    const tab = tabs.find((t) => t.id === id);
+    if (tab?.path) {
+      try {
+        const uri = monaco.Uri.parse(tab.path);
+        const model = monaco.editor.getModel(uri);
+        model?.dispose();
+      } catch { /* ignore */ }
+    }
+    closeTab(id);
+  }, [tabs, closeTab]);
 
   const handleEditorChange = useCallback((value: string | undefined) => {
     if (activeTabId && value !== undefined) {
@@ -230,7 +245,7 @@ export function CodeEditor() {
         tabs={tabs}
         activeTabId={activeTabId}
         onTabClick={setActiveTab}
-        onTabClose={closeTab}
+        onTabClose={handleCloseTab}
       />
 
       {/* Editor */}
@@ -238,9 +253,11 @@ export function CodeEditor() {
         {activeTab ? (
           <Editor
             height="100%"
+            path={activeTab.path}
             language={getLanguage(activeTab.name)}
             value={activeTab.content}
             onChange={handleEditorChange}
+            beforeMount={handleBeforeMount}
             onMount={handleEditorMount}
             theme="esp32-dark"
             options={{

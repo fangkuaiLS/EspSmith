@@ -34,11 +34,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       // 先保存旧项目缓存
       await get().saveCurrentCache();
-      await safeInvoke('create_project', {
+      const result = await safeInvoke<string>('create_project', {
         config: { name, path, chip, idf_path: idfPath },
       });
-      const projectPath = `${path}\\${name}`;
+      const projectPath = result || `${path}\\${name}`;
       const project = await safeInvoke<ProjectInfo>('open_project', { path: projectPath });
+      if (!project) {
+        set({ isLoading: false, error: `Failed to open project: ${projectPath}` });
+        return;
+      }
       set({ currentProject: project, isLoading: false });
     } catch (error) {
       set({ isLoading: false, error: String(error) });

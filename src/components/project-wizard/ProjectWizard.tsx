@@ -57,8 +57,12 @@ export function ProjectWizard({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const config = { name: projectName, path: projectPath, chip, idf_path: idfPath };
-      await safeInvoke('create_project', { config });
-      await openProject(`${projectPath}\\${projectName}`);
+      const result = await safeInvoke<string>('create_project', { config });
+      if (!result) {
+        setError('No response from backend');
+        return;
+      }
+      await openProject(result);
       onClose();
     } catch (err) {
       setError(String(err));

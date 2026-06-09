@@ -86,6 +86,8 @@ export function NewProjectDialog({ onClose, onProjectCreated, onOpenSettings }: 
         showToast('success', t('newProjectDialog.toast.createSuccess', { name: projectName }));
         onProjectCreated(result, selectedChip);
         onClose();
+      } else {
+        showToast('error', t('newProjectDialog.toast.createFailed', { error: 'No response from backend' }));
       }
     } catch (err) {
       showToast('error', t('newProjectDialog.toast.createFailed', { error: String(err) }));
