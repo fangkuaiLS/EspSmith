@@ -92,20 +92,3 @@ filesToUpdate.forEach(({ path: filePath, pattern, replacement }) => {
 });
 
 console.log(`\n🎉 Version sync complete! Updated ${updatedCount} files.`);
-
-// 重新生成 WiX 图片
-try {
-  const wixDir = path.join(rootDir, 'src-tauri', 'wix');
-  const ps1Path = path.join(wixDir, 'generate-images.ps1');
-
-  if (fs.existsSync(ps1Path)) {
-    console.log('\n🖼️  Regenerating WiX installer images...');
-    execSync(`powershell -ExecutionPolicy Bypass -File "${ps1Path}"`, {
-      cwd: wixDir,
-      stdio: 'inherit',
-    });
-    console.log('✅ WiX images regenerated!');
-  }
-} catch (error) {
-  console.warn('⚠️  Failed to regenerate WiX images:', error.message);
-}
