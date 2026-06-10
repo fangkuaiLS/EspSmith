@@ -280,7 +280,7 @@ Self-Healing 执行 → 失败 → 自动恢复 → 记录结果
 #### 1. 克隆项目
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/fangkuaiLS/EspSmith.git    
 cd espsmith
 ```
 
