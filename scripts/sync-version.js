@@ -65,11 +65,6 @@ const filesToUpdate = [
     pattern: /v\d+\.\d+\.\d+/g,
     replacement: `v${version}`,
   },
-  {
-    path: path.join(rootDir, 'src-tauri', 'wix', 'generate-images.ps1'),
-    pattern: /v\d+\.\d+\.\d+/g,
-    replacement: `v${version}`,
-  },
 ];
 
 // 更新文件
