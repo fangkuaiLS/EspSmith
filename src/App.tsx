@@ -15,7 +15,7 @@ import {
   Settings, ChevronDown, PanelLeft,
   Bug, Terminal, GitBranch, Loader2, FolderPlus,
   Minus, Square, Copy, X, SlidersHorizontal, Trash2, BarChart3,
-  Eraser, Play, HeartPulse, Usb
+  Eraser, Play, HeartPulse, Usb, Download
 } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle, ImperativePanelHandle } from 'react-resizable-panels';
 import { FileTree } from './components/filetree';
@@ -40,7 +40,6 @@ import type { SerialPortInfo, ChipTargetInfo, ConnectionInfo } from './types';
 
 type LeftPanel = 'files' | 'hardware';
 type BottomTab = 'build' | 'serial' | 'debug';
-
 type ViewMode = 'auto' | 'code';
 
 function getInitialViewMode(): ViewMode {
@@ -53,7 +52,7 @@ function getInitialViewMode(): ViewMode {
 
 function App() {
   const { t } = useTranslation();
-  const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
+  const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode());
   const [leftPanel, setLeftPanel] = useState<LeftPanel>('files');
   const [activeBottomTab, setActiveBottomTab] = useState<BottomTab>('build');
   const [showSettings, setShowSettings] = useState(false);
@@ -61,6 +60,22 @@ function App() {
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [showQuickOpen, setShowQuickOpen] = useState(false);
   const [showSdkConfig, setShowSdkConfig] = useState(false);
+
+  const [updateBanner, setUpdateBanner] = useState<{ version: string } | null>(null);
+  const [updateBannerDownloading, setUpdateBannerDownloading] = useState(false);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    (async () => {
+      try {
+        const { check } = await import('@tauri-apps/plugin-updater');
+        const update = await check();
+        if (update?.available) {
+          setUpdateBanner({ version: update.version });
+        }
+      } catch {}
+    })();
+  }, []);
 
   const isAutoMode = viewMode === 'auto';
 
@@ -78,7 +93,6 @@ function App() {
     try { localStorage.setItem('espsmith:viewMode', mode); } catch {}
   }, []);
 
-  // 内联输入对话框状态（替代浏览器 prompt）
   type DialogType = 'newFile' | 'newFolder' | null;
   const [dialogType, setDialogType] = useState<DialogType>(null);
   const showInputDialog = dialogType !== null;
@@ -87,7 +101,6 @@ function App() {
 const { loadConfig, detectConnection, connectionMode, connectionInfo } = useHardwareStore();
 const { idfStatus, settings, detectIDF } = useSettingsStore();
 
-  // Panel refs for collapse control
   const leftPanelRef = useRef<ImperativePanelHandle>(null);
   const rightPanelRef = useRef<ImperativePanelHandle>(null);
   const bottomPanelRef = useRef<ImperativePanelHandle>(null);
@@ -96,7 +109,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
   const [autoHardwareCollapsed, setAutoHardwareCollapsed] = useState(false);
   const autoHardwarePanelRef = useRef<ImperativePanelHandle>(null);
 
-  // 窗口控制状态（自定义标题栏）
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   const handleMinimize = useCallback(async () => {
@@ -121,7 +133,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     }
   }, []);
 
-  // 监听窗口最大化/还原事件
   useEffect(() => {
     if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
@@ -134,28 +145,23 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           window.isMaximized().then(setIsWindowMaximized);
         });
         unlisten = unsub;
-      } catch { /* ignore */ }
+      } catch {}
     })();
     return () => { unlisten?.(); };
   }, []);
 
   const [availablePorts, setAvailablePorts] = useState<SerialPortInfo[]>([]);
 
-  // Chip target & flash port selection (synced to AI backend)
-  // 参考官方扩展：从 IDF constants.py 动态获取目标列表 + esptool.py chip_id 检测端口芯片类型
   const [chipTargets, setChipTargets] = useState<ChipTargetInfo[]>([]);
   const [selectedChip, setSelectedChip] = useState<string>('');
   const [selectedPort, setSelectedPort] = useState<string>('');
-  // 使用 ref 跟踪最新值，避免 useCallback/useEffect 闭包陷阱
   const selectedChipRef = useRef(selectedChip);
   selectedChipRef.current = selectedChip;
   const selectedPortRef = useRef(selectedPort);
   selectedPortRef.current = selectedPort;
 
-  // 自动选择锁：防止启动加载与自动选择互相冲突
   const autoSelectLock = useRef(false);
 
-  // 加载动态芯片目标列表
   useEffect(() => {
     (async () => {
       const idfPath = getIdfPath();
@@ -165,12 +171,10 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         if (targets && targets.length > 0) {
           setChipTargets(targets);
         }
-      } catch { /* use fallback hardcoded list */ }
+      } catch {}
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idfStatus.active?.idf_path, settings.idfPath]);
 
-  // 关闭窗口前保存项目缓存
   useEffect(() => {
     const handleBeforeUnload = () => {
       const { currentProject } = useProjectStore.getState();
@@ -207,7 +211,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentProject]);
 
-  // Ctrl+Shift+F 全局搜索
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
@@ -219,7 +222,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentProject]);
 
-  // 监听自定义事件（从 FileTree 右键菜单触发）
   useEffect(() => {
     const handler = () => {
       if (currentProject) setShowGlobalSearch(true);
@@ -231,7 +233,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 锁定自动选择，防止启动加载与自动选择冲突
       autoSelectLock.current = true;
       await new Promise(r => setTimeout(r, 500));
       if (cancelled) return;
@@ -239,13 +240,11 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
       if (!cancelled && chip) setSelectedChip(chip);
       const port = await safeInvoke<string>('ai_get_flash_port');
       if (!cancelled && port) setSelectedPort(port);
-      // 解锁自动选择
       autoSelectLock.current = false;
     })();
     return () => { cancelled = true; autoSelectLock.current = false; };
   }, []);
 
-  // Sync chip to backend + persist to project config
   useEffect(() => {
     if (selectedChip) {
       safeInvoke('ai_set_target_chip', { chip: selectedChip });
@@ -260,7 +259,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     }
   }, [selectedChip]);
 
-  // Sync port to backend + persist to project config
   useEffect(() => {
     if (selectedPort) {
       safeInvoke('ai_set_flash_port', { port: selectedPort });
@@ -275,15 +273,10 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     }
   }, [selectedPort]);
 
-  // Debug state
-
-  // Auto-load hardware config, restore cache, and load persisted project config when project opens
   useEffect(() => {
     if (currentProject) {
       loadConfig(currentProject.path);
-      // 恢复项目缓存：标签页 + AI 聊天记录
       restoreCurrentCache();
-      // 加载项目级持久化配置（芯片型号 + 串口）
       (async () => {
         autoSelectLock.current = true;
         try {
@@ -302,18 +295,14 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     }
   }, [currentProject, loadConfig, restoreCurrentCache]);
 
-  // 启动时自动检测 ESP-IDF
   useEffect(() => {
     detectIDF();
   }, [detectIDF]);
 
-  // 获取当前可用的 IDF 路径（优先 active，fallback 到 settings 中配置的路径）
   const getIdfPath = useCallback(() => {
     return idfStatus.active?.idf_path || settings.idfPath || '';
   }, [idfStatus.active?.idf_path, settings.idfPath]);
 
-  // Load available serial ports (with chip detection if IDF available, 参考官方 SerialPort.list)
-  // 完整刷新（含 chip_id 检测，手动或首次加载用）
   const refreshPorts = useCallback(async () => {
     try {
       const idfPath = getIdfPath();
@@ -322,17 +311,14 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
       const ports = await safeInvoke<SerialPortInfo[]>(cmd, args);
       if (ports) {
         setAvailablePorts(ports);
-        // 芯片自动选择由 availablePorts effect 统一处理
       }
-    } catch { /* ignore */ }
+    } catch {}
   }, [getIdfPath]);
 
-  // 首次加载：完整刷新（含芯片检测）
   useEffect(() => {
     refreshPorts();
   }, [refreshPorts]);
 
-  // 同步 detectedChipsRef：当 availablePorts 出现 chip_type 时写入缓存
   useEffect(() => {
     for (const p of availablePorts) {
       const key = p.port_name || p.name || p.path;
@@ -342,7 +328,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     }
   }, [availablePorts]);
 
-  // 自动选择芯片（双向匹配）：selectedPort 变化时从 availablePorts 匹配，availablePorts 变化时匹配 selectedPort
   useEffect(() => {
     if (!selectedPort || selectedChipRef.current) return;
     const p = availablePorts.find(x => (x.port_name || x.name || x.path) === selectedPort && x.chip_type);
@@ -352,10 +337,8 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     }
   }, [selectedPort, availablePorts]);
 
-  // 当 selectedPort 变化但 availablePorts 还没有 chip_type 时，主动检测
   useEffect(() => {
     if (!selectedPort || selectedChipRef.current) return;
-    // 如果 availablePorts 中已有 chip_type，上面的 effect 会处理；这里只处理还没有的情况
     const alreadyHas = availablePorts.some(x => (x.port_name || x.name || x.path) === selectedPort && x.chip_type);
     if (alreadyHas) return;
 
@@ -363,7 +346,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     (async () => {
       try {
         const idfPath = getIdfPath();
-        if (!idfPath) return; // 无 IDF 则无法检测芯片
+        if (!idfPath) return;
         const ports = await safeInvoke<SerialPortInfo[]>('list_ports_with_idf', { idfPath });
         if (cancelled || !ports) return;
         setAvailablePorts(ports);
@@ -375,14 +358,13 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           console.log('[AutoSelect] Chip auto-selected via esptool:', target.chip_type);
           setSelectedChip(target.chip_type);
         }
-      } catch { /* ignore */ }
+      } catch {}
     })();
     return () => { cancelled = true; };
   }, [selectedPort, getIdfPath]);
 
-  // 热插拔轮询：每 2 秒轻量检测端口列表变化，变化时自动触发芯片检测
   const prevPortNamesRef = useRef<string[]>([]);
-  const detectedChipsRef = useRef<Record<string, string>>({}); // port_name → chip_type 缓存
+  const detectedChipsRef = useRef<Record<string, string>>({});
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -390,20 +372,17 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         if (!ports) return;
         const currentNames = ports.map(p => p.port_name || p.name || p.path);
         const prevNames = prevPortNamesRef.current;
-        // 检查是否有新增或移除的端口
         const hasChanged = currentNames.some(n => !prevNames.includes(n))
                         || prevNames.some(n => !currentNames.includes(n))
                         || prevNames.length !== currentNames.length;
 
         if (hasChanged) {
-          // 找到新增的端口
           const newPorts = currentNames.filter(n => !prevNames.includes(n));
 
           for (const n of prevNames) {
             if (!currentNames.includes(n)) delete detectedChipsRef.current[n];
           }
 
-          // 新增端口时自动选择端口（芯片由 refreshPorts 后的 selectedPort+availablePorts effect 自动选择）
           if (newPorts.length > 0) {
             const currentSelected = selectedPortRef.current;
             if (!currentSelected || !currentNames.includes(currentSelected)) {
@@ -412,11 +391,9 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
             }
           }
 
-          // 刷新端口列表（含 esptool chip_id 检测）和连接模式
           refreshPorts();
           detectConnection(selectedPortRef.current || undefined);
         } else {
-          // 无变化：合并已缓存的 chip_type，避免闪烁
           const merged = ports.map(p => {
             const key = p.port_name || p.name || p.path;
             return { ...p, chip_type: p.chip_type || detectedChipsRef.current[key] };
@@ -424,7 +401,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           setAvailablePorts(merged);
         }
         prevPortNamesRef.current = currentNames;
-      } catch { /* ignore */ }
+      } catch {}
     }, 2000);
 
     return () => clearInterval(interval);
@@ -436,21 +413,16 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     }
   }, [selectedPort, detectConnection]);
 
-  // 插入开发板后自动选择芯片和串口
-  // 通过 window 自定义事件直接触发
   useEffect(() => {
     const handler = (e: Event) => {
       const info = (e as CustomEvent<ConnectionInfo>).detail;
       if (!info || info.mode === 'unknown') return;
 
-      // 自动选择端口
       if (info.port && !selectedPortRef.current) {
         console.log('[AutoSelect] Port auto-selected from connectionInfo:', info.port);
         setSelectedPort(info.port);
       }
 
-      // 自动选择芯片：优先 idfTarget，其次 chipHint（排除模糊的 "ESP32-USB-JTAG"）
-      // 对于 VID/PID 无法确定的芯片，由 selectedPort+availablePorts effect 通过 esptool 检测
       if (!selectedChipRef.current) {
         const chip = info.idfTarget
           || (info.chipHint && info.chipHint !== 'ESP32-USB-JTAG'
@@ -484,7 +456,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     refreshPorts,
   });
 
-  // Override handleMenuconfig to show in-app SDK config editor
   const handleMenuconfig = useCallback(() => {
     console.log('[App] handleMenuconfig called, currentProject:', currentProject?.path);
     if (!currentProject) {
@@ -496,7 +467,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     setShowSdkConfig(true);
   }, [currentProject, t]);
 
-  // Debug: log when showSdkConfig changes
   useEffect(() => {
     console.log('[App] showSdkConfig changed to:', showSdkConfig, 'currentProject:', currentProject?.path);
   }, [showSdkConfig, currentProject]);
@@ -517,10 +487,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     else autoHardwarePanelRef.current?.collapse();
   };
 
-  // ===== 工具栏操作 =====
-
   const handleOpenProject = useCallback(async () => {
-    // Tauri 模式：使用原生文件夹选择对话框
     if (isTauri()) {
       try {
         const { open } = await import('@tauri-apps/plugin-dialog');
@@ -534,7 +501,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
       }
     }
 
-    // 浏览器模式：使用 showDirectoryPicker 或 prompt 回退
     try {
       if ('showDirectoryPicker' in window) {
         const dirHandle = await (window as any).showDirectoryPicker();
@@ -627,15 +593,11 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
       className="h-screen w-screen bg-surface-root text-text-primary overflow-hidden flex flex-col font-sans"
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* ===== 顶部工具栏 ===== */}
       <header data-tauri-drag-region className="h-11 border-b border-border-default bg-surface-elevated shrink-0 flex items-center px-3 select-none">
-        {/* Logo 模式切换滑块 */}
         <LogoToggle mode={viewMode} onChange={handleViewModeChange} />
 
-        {/* Divider */}
         <div className="w-px h-5 bg-border-default mx-3" />
 
-        {/* File Operations — 两模式均显示 */}
         <div className="flex items-center gap-0.5">
           <ToolbarButton icon={FolderPlus} label={t('toolbar.newProject')} onClick={() => setShowNewProject(true)} />
           <ToolbarButton icon={FolderOpen} label={t('toolbar.openFolder')} onClick={handleOpenProject} />
@@ -644,20 +606,16 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
 
         {!isAutoMode && (
           <>
-            {/* Divider */}
             <div className="w-px h-5 bg-border-default mx-1.5" />
 
-            {/* Build Operations */}
             <div className="flex items-center gap-0.5">
               <ToolbarButton icon={Hammer} label={t('toolbar.build')} onClick={handleBuild} loading={isBuilding} />
               <ToolbarButton icon={Zap} label={t('toolbar.flash')} onClick={handleFlash} loading={isFlashing} />
               <ToolbarButton icon={Radio} label={t('toolbar.monitor')} onClick={handleMonitor} />
             </div>
 
-            {/* Divider */}
             <div className="w-px h-5 bg-border-default mx-1.5" />
 
-            {/* Advanced IDF Operations */}
             <div className="flex items-center gap-0.5">
               <ToolbarButton icon={FilePlus} label={t('toolbar.newFile')} onClick={handleNewFile} />
               <ToolbarButton icon={SlidersHorizontal} label={t('toolbar.menuconfig')} onClick={handleMenuconfig} />
@@ -668,15 +626,12 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
               <ToolbarButton icon={HeartPulse} label="Doctor" onClick={handleDoctor} loading={isRunningDoctor} />
             </div>
 
-            {/* Divider */}
             <div className="w-px h-5 bg-border-default mx-1.5" />
           </>
         )}
 
-        {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Project Info */}
         {currentProject && (
           <div className="flex items-center gap-2 mr-3">
             <span className="text-[12px] text-text-secondary font-medium max-w-[160px] truncate">
@@ -685,7 +640,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           </div>
         )}
 
-        {/* Chip & Port Selector */}
         <div className="flex items-center gap-1.5 mr-2">
           <div className="flex items-center gap-1.5 h-[28px] w-[130px] px-2 bg-surface-overlay border border-border-subtle hover:border-border-default rounded-lg transition-all">
             <Cpu size={12} className="text-text-tertiary shrink-0" />
@@ -737,7 +691,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           <ConnectionModeIndicator />
         </div>
 
-        {/* Settings */}
         <div className="flex items-center gap-0.5 mr-1">
           <ToolbarButton icon={Settings} label={t('toolbar.settings')} onClick={() => setShowSettings(true)} />
         </div>
@@ -759,7 +712,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           </>
         )}
 
-        {/* 窗口控制按钮（最小化/最大化/关闭） */}
         {isTauri() && (
           <div className="flex items-center -mr-3">
             <WindowControlButton onClick={handleMinimize} title={t('window.minimize')}>
@@ -775,10 +727,43 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         )}
       </header>
 
-      {/* ===== 主内容区 ===== */}
+      {updateBanner && (
+        <div className={`flex items-center justify-between px-4 py-2 bg-accent/90 text-white text-[13px] font-medium shrink-0 ${updateBannerDownloading ? 'cursor-wait' : ''}`}>
+          <span>{t('settings.updateBanner', { version: updateBanner.version })}</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setUpdateBanner(null)}
+              disabled={updateBannerDownloading}
+              className="px-3 py-1 text-[12px] bg-white/20 rounded-md hover:bg-white/30 transition-colors disabled:opacity-50"
+            >
+              {t('settings.updateBannerDismiss')}
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  setUpdateBannerDownloading(true);
+                  const { check } = await import('@tauri-apps/plugin-updater');
+                  const { relaunch } = await import('@tauri-apps/plugin-process');
+                  const update = await check();
+                  if (update) {
+                    await update.downloadAndInstall();
+                    setTimeout(() => relaunch(), 500);
+                  }
+                } catch {}
+                setUpdateBannerDownloading(false);
+              }}
+              disabled={updateBannerDownloading}
+              className="flex items-center gap-1 px-3 py-1 text-[12px] bg-white rounded-md text-accent font-semibold hover:bg-white/90 transition-colors disabled:opacity-50"
+            >
+              {updateBannerDownloading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+              {t('settings.updateBannerInstall')}
+            </button>
+          </div>
+        </div>
+      )}
+
       {isAutoMode ? (
         <PanelGroup key="auto" direction="horizontal" className="flex-1 min-h-0">
-          {/* ===== 左侧：硬件配置 ===== */}
           <Panel
             ref={autoHardwarePanelRef}
             defaultSize={28}
@@ -795,10 +780,8 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
             </div>
           </Panel>
 
-          {/* 拖拽手柄 */}
           <PanelResizeHandle className="w-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
 
-          {/* ===== 右侧：AI 聊天 ===== */}
           <Panel defaultSize={72} minSize={35} className="bg-surface-base">
             <div className="h-full border-l border-border-default">
               <ChatPanel />
@@ -807,7 +790,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         </PanelGroup>
       ) : (
         <PanelGroup key="code" direction="horizontal" className="flex-1 min-h-0">
-          {/* ===== 左侧栏 ===== */}
           <Panel
             ref={leftPanelRef}
             defaultSize={19}
@@ -820,7 +802,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
             className="bg-surface-base"
           >
             <div className="h-full flex flex-col border-r border-border-default">
-              {/* 面板切换标签 */}
               <div className="flex border-b border-border-default">
                 <PanelTab
                   active={leftPanel === 'files'}
@@ -836,7 +817,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
                 />
               </div>
 
-              {/* 内容区 + Git 面板 */}
               <PanelGroup direction="vertical" className="flex-1">
                 <Panel defaultSize={62} minSize={30}>
                   <div className="h-full overflow-hidden">
@@ -853,13 +833,10 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
             </div>
           </Panel>
 
-          {/* 左侧拖拽手柄 */}
           <PanelResizeHandle className="w-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
 
-          {/* ===== 中部区域 ===== */}
           <Panel defaultSize={55} minSize={25}>
             <div className="h-full flex flex-col">
-              {/* 编辑器 + 底部面板垂直分割 */}
               <PanelGroup direction="vertical">
                 <Panel defaultSize={70} minSize={30}>
                   <div className="h-full bg-surface-root">
@@ -938,10 +915,8 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
             </div>
           </Panel>
 
-          {/* 右侧拖拽手柄 */}
           <PanelResizeHandle className="w-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
 
-          {/* ===== 右侧面板 - 聊天 ===== */}
           <Panel
             ref={rightPanelRef}
             defaultSize={26}
@@ -960,7 +935,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         </PanelGroup>
       )}
 
-      {/* ===== 状态栏 ===== */}
       <footer className="h-6 border-t border-border-default flex items-center px-3 text-[11px] bg-surface-elevated text-text-secondary shrink-0 select-none">
         <div className="flex items-center gap-1.5">
           <span className="flex items-center gap-1 px-1 py-0.5 rounded-sm hover:bg-surface-hover hover:text-text-primary transition-colors cursor-pointer">
@@ -1017,7 +991,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         </div>
       </footer>
 
-      {/* ===== 模态框 ===== */}
       <InputDialog
         open={showInputDialog}
         title={dialogType === 'newFile' ? t('dialog.newFile') : t('dialog.newFolder')}
@@ -1056,15 +1029,10 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         </div>
       )}
 
-      {/* 全局 Toast 通知 */}
       <ToastContainer />
     </div>
   );
 }
-
-/* ============================================
-   Sub-components
-   ============================================ */
 
 function ToolbarButton({
   icon: Icon,
@@ -1186,7 +1154,6 @@ function LogoToggle({
       className="relative flex items-center h-8 w-[70px] rounded-md bg-surface-base border border-border-subtle overflow-hidden cursor-pointer transition-colors hover:border-border-default"
       title={isCode ? 'Switch to Auto mode' : 'Switch to Code mode'}
     >
-      {/* Logo 滑块 */}
       <div
         className={`absolute top-0.5 bottom-0.5 aspect-square rounded bg-surface-elevated shadow-sm flex items-center justify-center transition-all duration-300 ease-in-out ${
           isCode ? 'right-0.5' : 'left-0.5'
@@ -1195,12 +1162,10 @@ function LogoToggle({
         <img src={isCode ? '/logo-b.png' : '/logo-w.png'} alt="" className="h-5 w-auto object-contain" />
       </div>
 
-      {/* 左侧文字（滑块在右时显示） */}
       <div className={`relative z-10 flex items-center justify-center flex-1 h-full transition-opacity duration-200 ${isCode ? 'opacity-60' : 'opacity-0'}`}>
         <span className="text-[11px] font-semibold tracking-wide text-text-primary ml-1">CODE</span>
       </div>
 
-      {/* 右侧文字（滑块在左时显示） */}
       <div className={`relative z-10 flex items-center justify-center flex-1 h-full transition-opacity duration-200 ${isCode ? 'opacity-0' : 'opacity-60'}`}>
         <span className="text-[11px] font-semibold tracking-wide text-text-primary mr-1">AUTO</span>
       </div>
