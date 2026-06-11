@@ -2,7 +2,7 @@
  * SettingsDialog - 设置面板组件 (Codex-inspired)
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, FolderOpen, RefreshCw, Check, AlertTriangle, Loader2, Cpu, Bot, Shield, Globe, Download, ChevronDown, ExternalLink, Sparkles } from 'lucide-react';
 import { useSettingsStore } from '../../stores';
@@ -36,6 +36,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string } | null>(null);
   const [updateProgress, setUpdateProgress] = useState<number>(0);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const downloadBytesRef = useRef(0);
+  const downloadTotalRef = useRef(0);
 
   useEffect(() => { detectIDF(); }, [detectIDF]);
 
@@ -92,7 +94,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           await validateIDFPathFunc(path);
         }
       } catch {
-        // 降级到手动输入
         goManualInput();
       }
     } else {
@@ -479,7 +480,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                       <p className="text-[13px] font-medium">{t('settings.checkUpdate')}</p>
                       <p className="text-[11px] text-text-tertiary mt-0.5">
                         {updateStatus === 'up-to-date' && t('settings.alreadyLatest')}
-                        {updateStatus === 'available' && t('settings.newVersionAvailable', { version: updateInfo?.version })}
+                        {updateStatus === 'available' && t('settings.newVersionAvailable', { version: updateInfo?.version || '?' })}
                         {updateStatus === 'checking' && t('settings.checkingUpdate')}
                         {updateStatus === 'downloading' && t('settings.downloadingUpdate', { percent: updateProgress })}
                         {updateStatus === 'ready' && t('settings.updateReady')}
@@ -493,24 +494,37 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                           try {
                             setUpdateStatus('downloading');
                             setUpdateProgress(0);
+                            downloadBytesRef.current = 0;
+                            downloadTotalRef.current = 0;
                             const { check } = await import('@tauri-apps/plugin-updater');
                             const { relaunch } = await import('@tauri-apps/plugin-process');
                             const update = await check();
                             if (update) {
                               await update.downloadAndInstall((event) => {
                                 switch (event.event) {
-                                  case 'Started':
+                                  case 'Started': {
+                                    const total = (event.data as any)?.contentLength;
+                                    if (total) downloadTotalRef.current = total;
                                     break;
-                                  case 'Progress':
-                                    setUpdateProgress(prev => Math.min(prev + 5, 95));
+                                  }
+                                  case 'Progress': {
+                                    const chunkLen = (event.data as any)?.chunkLength || 0;
+                                    downloadBytesRef.current += chunkLen;
+                                    if (downloadTotalRef.current > 0) {
+                                      const pct = Math.round((downloadBytesRef.current / downloadTotalRef.current) * 100);
+                                      setUpdateProgress(Math.min(pct, 99));
+                                    } else {
+                                      setUpdateProgress(prev => Math.min(prev + 8, 90));
+                                    }
                                     break;
+                                  }
                                   case 'Finished':
                                     setUpdateProgress(100);
                                     break;
                                 }
                               });
                               setUpdateStatus('ready');
-                              await relaunch();
+                              setTimeout(() => relaunch(), 500);
                             }
                           } catch (err: any) {
                             setUpdateStatus('error');
@@ -533,14 +547,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                             setUpdateError(null);
                             const { check } = await import('@tauri-apps/plugin-updater');
                             const update = await check();
-                            if (update?.available) {
+                            if (!update) {
+                              setUpdateStatus('up-to-date');
+                            } else if (update.available) {
                               setUpdateStatus('available');
                               setUpdateInfo({ version: update.version, body: update.body || undefined });
-                            } else if (update) {
-                              setUpdateStatus('up-to-date');
                             } else {
-                              setUpdateStatus('error');
-                              setUpdateError('Check returned null');
+                              setUpdateStatus('up-to-date');
                             }
                           } catch (err: any) {
                             setUpdateStatus('error');
