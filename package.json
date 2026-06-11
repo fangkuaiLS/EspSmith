@@ -1,14 +1,15 @@
 {
   "name": "espsmith",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "node scripts/run-tauri.mjs",
-    "sync-version": "node scripts/sync-version.js"
+    "sync-version": "node scripts/sync-version.js",
+    "generate-latest-json": "node scripts/generate-latest-json.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
@@ -40,7 +41,7 @@
     "@tauri-apps/cli": "^2.2.2",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react-dom": "^18.3.12",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"

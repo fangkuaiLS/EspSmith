@@ -165,5 +165,18 @@ const child = spawn('npx', ['tauri', ...args], {
 });
 
 child.on('close', (code) => {
+  // build 成功后自动生成 latest.json
+  if (code === 0 && args.includes('build')) {
+    process.stderr.write('[esp-ai-studio] Generating latest.json for updater...\n');
+    try {
+      execSync('node scripts/generate-latest-json.js', {
+        stdio: 'inherit',
+        cwd: projectRoot,
+        shell: true,
+      });
+    } catch (error) {
+      process.stderr.write(`[esp-ai-studio] WARNING: Failed to generate latest.json: ${error.message}\n`);
+    }
+  }
   process.exit(code);
 });

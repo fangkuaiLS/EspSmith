@@ -16,6 +16,8 @@ i18n.use(initReactI18next).init({
   fallbackLng: "zh",
   interpolation: {
     escapeValue: false, // React 已经安全处理了 XSS
+    prefix: '{',
+    suffix: '}',
   },
 });
 
