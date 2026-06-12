@@ -13,7 +13,7 @@ export interface AppSettings {
   gdbPort: string;
   openOcdScript?: string;
   useDocker: boolean;
-  aiModel: 'deepseek' | 'ollama';
+  aiModel: 'deepseek' | 'ollama' | 'mimo';
   deepseekModel: 'deepseek-v4-pro' | 'deepseek-v4-flash';
   deepseekApiKey?: string;
   ollamaEndpoint?: string;

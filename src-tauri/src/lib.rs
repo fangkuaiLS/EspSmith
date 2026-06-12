@@ -19,6 +19,7 @@ mod idf;
 mod sdkconfig;
 mod sdkconfig_loader;
 mod ai_assistant;
+mod ai_provider;
 mod self_healing;
 mod instruments;
 mod experience;
@@ -300,6 +301,8 @@ pub fn run() {
             ai_assistant::ai_get_permission_mode,
             ai_assistant::ai_respond_permission,
             ai_assistant::check_codewhale_status,
+            ai_assistant::check_mimo_status,
+            ai_assistant::check_ai_backend_status,
             ai_assistant::setup_codewhale,
             // Experience 经验库管理
             ai_assistant::experience_open_dir,

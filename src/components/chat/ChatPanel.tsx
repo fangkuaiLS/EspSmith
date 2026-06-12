@@ -52,7 +52,7 @@ const STATUS_CONFIG: Record<AIStatus, { labelKey: string; dotClass: string }> = 
 interface ModelOption {
   id: string;
   label: string;
-  provider: 'deepseek' | 'ollama';
+  provider: 'deepseek' | 'ollama' | 'mimo';
   model: string;
 }
 
@@ -60,11 +60,13 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'deepseek', model: 'deepseek-v4-pro' },
   { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', provider: 'deepseek', model: 'deepseek-v4-flash' },
   { id: 'ollama', label: 'Ollama (Local)', provider: 'ollama', model: 'ollama' },
+  { id: 'mimo', label: 'MiMo-Code', provider: 'mimo', model: 'mimo' },
 ];
 
 function getCurrentModelId(): string {
   const s = useSettingsStore.getState().settings;
   if (s.aiModel === 'ollama') return 'ollama';
+  if (s.aiModel === 'mimo') return 'mimo';
   return s.deepseekModel || 'deepseek-v4-pro';
 }
 
@@ -203,6 +205,8 @@ export function ChatPanel() {
     if (option.provider === 'deepseek') {
       newSettings.aiModel = 'deepseek';
       newSettings.deepseekModel = option.model as 'deepseek-v4-pro' | 'deepseek-v4-flash';
+    } else if (option.provider === 'mimo') {
+      newSettings.aiModel = 'mimo';
     } else {
       newSettings.aiModel = 'ollama';
     }

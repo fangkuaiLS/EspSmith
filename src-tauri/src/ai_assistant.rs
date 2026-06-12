@@ -338,11 +338,13 @@ pub async fn ai_start(config: AIConfig) -> Result<String, String> {
         info!("MCP server check skipped — using exec_shell-only mode");
     }
 
-    ensure_codewhale_ready().map_err(|e| {
+    // 根据 ai_provider 选择对应的 Provider 并检查就绪状态
+    let provider = crate::ai_provider::select_provider(&client.config);
+    provider.ensure_ready().map_err(|e| {
         format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
     })?;
 
-    Ok("CodeWhale Agent is ready".into())
+    Ok(format!("{} Agent is ready", provider.display_name()))
 }
 
 #[tauri::command]
@@ -390,15 +392,14 @@ pub async fn ai_send_message(
     message: String,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let (api_key, model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, ai_provider, permission_mode, chip_changed) = {
+    let (model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, ai_provider, permission_mode, chip_changed) = {
         let client = AI_CLIENT.lock().await;
-        let key = client
+        let _key = client
             .config
             .api_key
             .clone()
             .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
         (
-            key,
             client.config.model.clone(),
             client.config.project_path.clone(),
             client.config.idf_path.clone(),
@@ -427,19 +428,8 @@ pub async fn ai_send_message(
         ensure_project_agent_instructions(project_path.as_deref(), idf_path.as_deref())?;
     }
 
-    let binary = ensure_codewhale_ready()?;
-    let mut cmd = tokio::process::Command::new(&binary);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    cmd.args(["--model", &model, "exec", "--auto", "--output-format", "stream-json"]);
-
-    if let Some(ref sid) = session_id {
-        cmd.arg("--session-id").arg(sid);
-    }
-
-    if let Some(ref _pp) = project_path {
+    // 初始化经验库
+    if project_path.is_some() {
         let exp_dir = dirs_next::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("espsmith")
@@ -447,7 +437,18 @@ pub async fn ai_send_message(
         crate::experience::init(exp_dir);
     }
 
-    cmd.arg(build_short_agent_prompt(&message, project_path.as_deref(), idf_path.as_deref(), target_chip.as_deref(), flash_port.as_deref(), chip_changed));
+    // 选择 AI Provider（CodeWhale / MiMo-Code）
+    let provider = crate::ai_provider::select_provider(&{
+        let client = AI_CLIENT.lock().await;
+        client.config.clone()
+    });
+    let provider_name = provider.display_name();
+
+    let binary = provider.ensure_ready().map_err(|e| {
+        format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
+    })?;
+
+    let prompt = build_short_agent_prompt(&message, project_path.as_deref(), idf_path.as_deref(), target_chip.as_deref(), flash_port.as_deref(), chip_changed);
 
     // Clear chip_changed flag after it's been consumed by the prompt
     if chip_changed {
@@ -455,45 +456,49 @@ pub async fn ai_send_message(
         client.config.chip_changed = false;
     }
 
-    match ai_provider.as_str() {
-        "ollama" => {
-            info!("Using Ollama local model: {}", model);
-        }
-        _ => {
-            cmd.env("DEEPSEEK_API_KEY", &api_key);
-            info!("Using DeepSeek API with model: {}", model);
-        }
+    let config_snapshot = {
+        let client = AI_CLIENT.lock().await;
+        client.config.clone()
+    };
+
+    let mut provider_cmd = provider.build_command(
+        &binary,
+        &config_snapshot,
+        &prompt,
+        session_id.as_deref(),
+    );
+
+    // 设置 API Key 环境变量
+    if let Some((env_key, env_val)) = provider.api_key_env(&config_snapshot) {
+        provider_cmd.cmd.env(&env_key, &env_val);
+        info!("Using API key env: {} with model: {}", env_key, model);
     }
 
-    // 显式传递 IPC 管道地址给 CodeWhale，确保其 exec_shell 启动的子进程能委托主进程执行闭环
+    // 显式传递 IPC 管道地址给 AI Provider，确保其 exec_shell 启动的子进程能委托主进程执行闭环
     if let Ok(pipe_addr) = std::env::var(crate::self_healing::ipc::ENV_PIPE_NAME) {
-        cmd.env(crate::self_healing::ipc::ENV_PIPE_NAME, &pipe_addr);
-        info!("Passing IPC pipe address to CodeWhale: {}", pipe_addr);
+        provider_cmd.cmd.env(crate::self_healing::ipc::ENV_PIPE_NAME, &pipe_addr);
+        info!("Passing IPC pipe address to {}: {}", provider_name, pipe_addr);
     }
 
     if let Some(ref path) = project_path {
-        cmd.current_dir(path);
-        info!("CodeWhale working directory: {}", path);
+        provider_cmd.cmd.current_dir(path);
+        info!("{} working directory: {}", provider_name, path);
     }
 
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
+    info!("Starting {} run (session: {:?})", provider_name, session_id);
 
-    info!("Starting CodeWhale exec (session: {:?})", session_id);
-
-    let mut child = cmd
+    let mut child = provider_cmd.cmd
         .spawn()
         .map_err(|e| format!("i18n:aiBackend.codewhaleStartFailed|path={}|error={}", binary.display(), e))?;
 
     let stdout = child
         .stdout
         .take()
-        .ok_or("Failed to read CodeWhale stdout")?;
+        .ok_or_else(|| format!("Failed to read {} stdout", provider_name))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or("Failed to read CodeWhale stderr")?;
+        .ok_or_else(|| format!("Failed to read {} stderr", provider_name))?;
 
     {
         let mut guard = RUNNING_CHILD.lock().await;
@@ -2087,7 +2092,7 @@ fn get_codewhale_local_dir() -> PathBuf {
     base.join("espsmith").join("codewhale")
 }
 
-fn get_local_codewhale_binary() -> PathBuf {
+pub fn get_local_codewhale_binary() -> PathBuf {
     if cfg!(windows) {
         get_codewhale_local_dir().join("codewhale.cmd")
     } else {
@@ -2096,7 +2101,7 @@ fn get_local_codewhale_binary() -> PathBuf {
 }
 
 /// 获取内嵌的 CodeWhale 二进制路径
-fn get_bundled_codewhale_binary() -> Option<PathBuf> {
+pub fn get_bundled_codewhale_binary() -> Option<PathBuf> {
     BUNDLED_CODEWHALE_DIR.get().map(|dir| {
         if cfg!(windows) {
             dir.join("codewhale.exe")
@@ -2113,7 +2118,7 @@ fn has_executable_extension(path: &Path) -> bool {
     }
 }
 
-fn which_cmd(cmd: &str) -> Option<PathBuf> {
+pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
     if cfg!(windows) {
         let output = std::process::Command::new("where")
             .arg(cmd)
@@ -2166,6 +2171,35 @@ pub async fn check_codewhale_status() -> Result<String, String> {
     }
 
     Ok("missing".into())
+}
+
+/// 检查 MiMo-Code 安装状态
+#[tauri::command]
+pub async fn check_mimo_status() -> Result<String, String> {
+    let provider = crate::ai_provider::MiMoCodeProvider;
+    Ok(provider.check_status())
+}
+
+/// 根据 ai_provider 检查对应 AI 后端的安装状态
+#[tauri::command]
+pub async fn check_ai_backend_status(ai_provider: String) -> Result<serde_json::Value, String> {
+    let kind = crate::ai_provider::ProviderKind::from_str(&ai_provider);
+    let (codewhale, mimo) = match kind {
+        crate::ai_provider::ProviderKind::CodeWhale => {
+            let cw = crate::ai_provider::CodeWhaleProvider.check_status();
+            (cw, crate::ai_provider::MiMoCodeProvider.check_status())
+        }
+        crate::ai_provider::ProviderKind::MiMoCode => {
+            let cw = crate::ai_provider::CodeWhaleProvider.check_status();
+            let mimo = crate::ai_provider::MiMoCodeProvider.check_status();
+            (cw, mimo)
+        }
+    };
+    Ok(serde_json::json!({
+        "activeProvider": kind.as_str(),
+        "codewhale": codewhale,
+        "mimo": mimo,
+    }))
 }
 
 /// 自动安装 CodeWhale（内嵌版本直接返回已安装，无需额外操作）
@@ -2227,7 +2261,7 @@ pub async fn setup_codewhale(app_handle: tauri::AppHandle) -> Result<String, Str
 }
 
 /// 确保 CodeWhale 可用 (内部函数，在 ai_send_message 中调用)
-fn ensure_codewhale_ready() -> Result<PathBuf, String> {
+pub fn ensure_codewhale_ready() -> Result<PathBuf, String> {
     // 优先使用内嵌二进制
     if let Some(bundled) = get_bundled_codewhale_binary() {
         if bundled.exists() {
