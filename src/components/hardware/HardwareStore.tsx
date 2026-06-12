@@ -46,14 +46,18 @@ function PeripheralForm({
         )
       : {}
   );
+  const hasInitialCustomLib = initialValues?.library_choice && 
+    !peripheral.libraries.some(lib => lib.id === initialValues.library_choice);
   const [library, setLibrary] = useState(
-    initialValues?.library_choice || peripheral.libraries[0]?.id || 'none'
+    hasInitialCustomLib ? 'custom' : (initialValues?.library_choice || peripheral.libraries[0]?.id || 'none')
   );
+  const [customLibrary, setCustomLibrary] = useState(hasInitialCustomLib ? initialValues?.library_choice || '' : '');
   const [notes, setNotes] = useState(initialValues?.notes || '');
 
   const allPins = [...peripheral.required_pins, ...peripheral.optional_pins];
 
   const handleSave = () => {
+    const finalLibrary = library === 'custom' ? customLibrary.trim() || 'none' : library;
     const instance: PeripheralInstance = {
       id: initialValues?.id || `${peripheral.id}-${Date.now()}`,
       definition_id: peripheral.id,
@@ -61,7 +65,7 @@ function PeripheralForm({
       pin_values: Object.fromEntries(
         Object.entries(pinValues).map(([k, v]) => [k, parseInt(v) || 0])
       ),
-      library_choice: library,
+      library_choice: finalLibrary,
       notes,
     };
     onSave(instance);
@@ -130,22 +134,37 @@ function PeripheralForm({
           ))}
         </div>
 
-        {peripheral.libraries.length > 1 && (
-          <div>
-            <label className="block text-[11px] font-medium text-text-tertiary mb-1.5 uppercase tracking-wider">
-              {t('hardware.driverLib')}
-            </label>
-            <select
-              value={library}
-              onChange={(e) => setLibrary(e.target.value)}
-              className="w-full px-3 py-2 text-[13px] bg-surface-overlay border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-accent"
-            >
-              {peripheral.libraries.map((lib) => (
-                <option key={lib.id} value={lib.id}>{lib.name}</option>
+        <div>
+          <label className="block text-[11px] font-medium text-text-tertiary mb-1.5 uppercase tracking-wider">
+            {t('hardware.driverLib')}
+          </label>
+          <select
+            value={library}
+            onChange={(e) => {
+              setLibrary(e.target.value);
+              if (e.target.value !== 'custom') {
+                setCustomLibrary('');
+              }
+            }}
+            className="w-full px-3 py-2 text-[13px] bg-surface-overlay border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-accent"
+          >
+            {peripheral.libraries.map((lib) => (
+                <option key={lib.id} value={lib.id}>
+                  {lib.id === 'none' ? t('hardware.libNone') : t(`hardware.libs.${lib.id}`, lib.name)}
+                </option>
               ))}
-            </select>
-          </div>
-        )}
+            <option value="custom">-- {t('hardware.custom')} --</option>
+          </select>
+          {library === 'custom' && (
+            <input
+              type="text"
+              value={customLibrary}
+              onChange={(e) => setCustomLibrary(e.target.value)}
+              placeholder={t('hardware.customLibraryPlaceholder')}
+              className="w-full px-3 py-2 mt-2 text-[13px] bg-surface-overlay border border-accent/50 rounded-md text-text-primary placeholder:text-text-disabled focus:outline-none focus:border-accent"
+            />
+          )}
+        </div>
 
         <div>
           <label className="block text-[11px] font-medium text-text-tertiary mb-1.5 uppercase tracking-wider">

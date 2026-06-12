@@ -90,6 +90,20 @@ pub fn register_delegate_handler(handler: Box<DelegateHandlerFn>) {
     tracing::info!("[IPC] Delegate handler registered");
 }
 
+/// Read the IPC address from the temp file written by the main process.
+/// This is a fallback for when environment variables aren't propagated
+/// (e.g., through CodeWhale's exec_shell).
+fn read_ipc_addr_file() -> Option<String> {
+    let path = std::env::temp_dir().join("espsmith").join("ipc_addr");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let addr = content.trim().to_string();
+    if addr.is_empty() { return None; }
+    // Validate format: should be "127.0.0.1:PORT"
+    if !addr.contains(':') { return None; }
+    tracing::info!("[IPC] Discovered address from file: {}", addr);
+    Some(addr)
+}
+
 // ── Server side (main espsmith.exe process) ────────────────────────────
 
 /// Start the TCP-based IPC server.
@@ -97,6 +111,9 @@ pub fn register_delegate_handler(handler: Box<DelegateHandlerFn>) {
 /// Listens on `127.0.0.1:{port}` and handles:
 /// - `delegate` messages: run Self-Healing engine in main process, return result
 /// - `event` messages: re-broadcast RunnerEvent (legacy fallback)
+///
+/// Also writes the IPC address to a temp file so CLI processes can discover it
+/// even when environment variables aren't propagated through CodeWhale's exec_shell.
 ///
 /// Call this once during app startup (in `lib.rs::run()`).
 pub fn start_ipc_server() {
@@ -115,6 +132,18 @@ pub fn start_ipc_server() {
 
     // Set the env var so child processes know where to connect
     std::env::set_var(ENV_PIPE_NAME, &addr);
+
+    // Also write to a temp file as a fallback discovery mechanism.
+    // This ensures CLI processes can find the IPC server even when
+    // CodeWhale's exec_shell doesn't propagate environment variables.
+    let lock_dir = std::env::temp_dir().join("espsmith");
+    let _ = std::fs::create_dir_all(&lock_dir);
+    let addr_file = lock_dir.join("ipc_addr");
+    if let Err(e) = std::fs::write(&addr_file, &addr) {
+        tracing::warn!("[IPC] Failed to write addr file: {}", e);
+    } else {
+        tracing::info!("[IPC] Wrote address {} to {}", addr, addr_file.display());
+    }
     SERVER_RUNNING.store(true, Ordering::Relaxed);
 
     std::thread::spawn(move || {
@@ -218,8 +247,22 @@ fn run_delegate(command: &str, args: &serde_json::Value) -> DelegateResult {
 ///
 /// Returns `None` if IPC is unavailable (caller should fall back to local execution).
 /// Blocks until the main process completes the Self-Healing engine (may take minutes).
+///
+/// `explicit_addr`: if provided (e.g. from `--ipc-addr` CLI arg), takes priority
+/// over the `ESPSMITH_RUNNER_PIPE` environment variable. This ensures the CLI can
+/// reach the main process even when CodeWhale's `exec_shell` does not propagate
+/// env vars to child processes.
+#[allow(dead_code)] // 便捷接口，保留供外部使用
 pub fn send_delegate_and_wait(command: &str, args: &serde_json::Value) -> Option<DelegateResult> {
-    let addr = std::env::var(ENV_PIPE_NAME).ok()?;
+    send_delegate_and_wait_with_addr(command, args, None)
+}
+
+pub fn send_delegate_and_wait_with_addr(command: &str, args: &serde_json::Value, explicit_addr: Option<&str>) -> Option<DelegateResult> {
+    let addr = explicit_addr
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var(ENV_PIPE_NAME).ok())
+        .or_else(|| read_ipc_addr_file())
+        ?;
 
     tracing::info!("[IPC] Connecting to parent at {} for delegate: {}", addr, command);
     let mut stream = TcpStream::connect(&addr).ok()?;
@@ -267,9 +310,12 @@ pub fn send_delegate_and_wait(command: &str, args: &serde_json::Value) -> Option
 /// Send a RunnerEvent to the parent process via IPC (best-effort).
 /// Legacy fallback for non-delegate execution path.
 pub fn send_event_to_parent(event: &RunnerEvent) {
-    let addr = match std::env::var(ENV_PIPE_NAME) {
-        Ok(a) => a,
-        Err(_) => return,
+    let addr = match std::env::var(ENV_PIPE_NAME)
+        .ok()
+        .or_else(|| read_ipc_addr_file())
+    {
+        Some(a) => a,
+        None => return,
     };
 
     // Connect per-event (simple, no cached state)

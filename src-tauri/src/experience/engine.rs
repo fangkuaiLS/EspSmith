@@ -1,6 +1,7 @@
 //! Experience Engine — experience management.
 
 use super::storage;
+use dirs_next;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -82,7 +83,10 @@ pub struct ExperienceEngine {
 
 impl ExperienceEngine {
     pub fn new(base_dir: Option<PathBuf>) -> Self {
-        let dir = base_dir.unwrap_or_else(|| PathBuf::from(".ael-experience"));
+        let dir = base_dir.unwrap_or_else(|| dirs_next::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("espsmith")
+            .join("experience"));
         Self {
             store: storage::ExperienceStore::new(dir),
         }

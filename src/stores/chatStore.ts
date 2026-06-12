@@ -437,7 +437,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 } else {
                     op.startedAt = Date.now();
                 }
-                op.currentStepIndex = 0;
+                // 从步骤状态推断 currentStepIndex，而非硬编码为 0
+                const runningIdx = op.steps.findIndex(s => s.status === 'running');
+                op.currentStepIndex = runningIdx >= 0 ? runningIdx : op.steps.filter(s => s.status === 'done').length;
                 set({ activeOperation: op });
             });
             unlistenOpDone = await listen<{ toolUseId: string; status?: string }>('ai-operation-done', (event) => {
@@ -452,10 +454,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 // Check if the operation succeeded or failed
                 const opStatus = event.payload?.status || '';
                 const isError = opStatus === 'error' || opStatus.includes('error') || opStatus.includes('fail');
-                // Mark all steps as done or error based on overall status
+                // 只标记尚未完成（pending/running）的步骤，保留已有状态
+                // 避免覆盖后端已逐步推送的真实进度
                 const finishedSteps = current.steps.map(s => ({
                     ...s,
-                    status: isError ? 'error' : 'done',
+                    status: s.status === 'done' || s.status === 'error' ? s.status : (isError ? 'error' : 'done'),
                 }));
                 set({ activeOperation: { ...current, steps: finishedSteps } });
                 opDoneTimer = setTimeout(() => {

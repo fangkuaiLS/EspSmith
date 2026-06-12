@@ -107,7 +107,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     ],
     optional_pins: [],
     libraries: [
-      { id: 'none', name: '无（直接控制）' },
+      { id: 'none', name: '无' },
     ],
   },
   {
@@ -121,7 +121,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     ],
     optional_pins: [],
     libraries: [
-      { id: 'none', name: '无（PWM控制）' },
+      { id: 'none', name: '无' },
       { id: 'esp_led_strip', name: 'ESP LED Strip' },
     ],
   },
@@ -135,7 +135,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'gpio2', display_name: 'GPIO2', required: false, description: '第二路控制引脚' },
     ],
-    libraries: [{ id: 'none', name: '无（GPIO 输出）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'servo',
@@ -161,7 +161,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'in4', display_name: 'IN4', required: true, description: '输入4' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（直接控制）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'dc_motor_l298n',
@@ -177,7 +177,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'in3', display_name: 'IN3', required: false, description: '第二路方向1' },
       { name: 'in4', display_name: 'IN4', required: false, description: '第二路方向2' },
     ],
-    libraries: [{ id: 'none', name: '无（直接控制）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'buzzer',
@@ -199,7 +199,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '输入引脚' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（GPIO 输入）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'dht11',
@@ -320,7 +320,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '输出信号引脚' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（GPIO 输入）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'mq2',
@@ -332,7 +332,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'do', display_name: 'DO', required: false, description: '数字输出(阈值)' },
     ],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'mq135',
@@ -342,7 +342,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'ao', display_name: 'AO', required: true, description: '模拟输出(ADC)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'soil_moisture',
@@ -354,7 +354,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'do', display_name: 'DO', required: false, description: '数字输出(阈值)' },
     ],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'touch_ttp223',
@@ -364,7 +364,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '输出信号引脚' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（GPIO 输入）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'rc522_rfid',
@@ -413,7 +413,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'do', display_name: 'DO', required: false, description: '数字输出(阈值)' },
     ],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'hall_a3144',
@@ -423,7 +423,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '数字输出引脚' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（GPIO 输入/中断）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'ldr',
@@ -433,7 +433,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'ao', display_name: 'AO', required: true, description: '分压输出(ADC)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'rain_sensor',
@@ -445,7 +445,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'do', display_name: 'DO', required: false, description: '数字输出(阈值)' },
     ],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'vl53l0x',
@@ -468,7 +468,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'ao', display_name: 'AO', required: true, description: '中间引脚(ADC)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'rotary_encoder',
@@ -650,7 +650,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'en', display_name: 'EN/KEY', required: false, description: 'AT模式使能' },
     ],
-    libraries: [{ id: 'none', name: '无（UART）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'nrf24l01',
@@ -742,7 +742,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'scl', display_name: 'SCL', required: true, description: 'I2C 时钟线' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（I2C 读写）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
 
   // ==================== 其他 ====================
@@ -781,7 +781,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '控制引脚' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（GPIO/PWM）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'servo_mg996r',
@@ -804,7 +804,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '控制引脚' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（GPIO+MOS驱动）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
 
   // ==================== 摄像头 ====================
@@ -1017,7 +1017,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'ao', display_name: 'AO', required: true, description: '模拟输出(ADC)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'flame_sensor',
@@ -1029,7 +1029,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'do', display_name: 'DO', required: false, description: '数字输出(阈值)' },
     ],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'pulse_sensor',
@@ -1051,7 +1051,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '脉冲输出引脚(中断)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（脉冲计数）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'mq7',
@@ -1063,7 +1063,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'do', display_name: 'DO', required: false, description: '数字输出(阈值)' },
     ],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'mq4',
@@ -1075,7 +1075,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'do', display_name: 'DO', required: false, description: '数字输出(阈值)' },
     ],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'voltage_divider',
@@ -1085,7 +1085,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'ao', display_name: 'AO', required: true, description: '分压输出(ADC)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'joystick',
@@ -1097,7 +1097,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'sw', display_name: 'SW', required: true, description: '按键' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（ADC+GPIO）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
 
   // ==================== RTC 时钟 ====================
@@ -1132,7 +1132,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'bin2', display_name: 'BIN2', required: false, description: 'B路方向2' },
       { name: 'stby', display_name: 'STBY', required: false, description: '待机控制' },
     ],
-    libraries: [{ id: 'none', name: '无（PWM+GPIO）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'solenoid_lock',
@@ -1142,7 +1142,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'gpio', display_name: 'GPIO', required: true, description: '控制引脚(MOS驱动)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（GPIO输出）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'fan_motor',
@@ -1154,7 +1154,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     optional_pins: [
       { name: 'tach', display_name: 'TACH', required: false, description: '转速反馈(中断)' },
     ],
-    libraries: [{ id: 'none', name: '无（PWM输出）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
 
   // ==================== 输入扩展 ====================
@@ -1285,7 +1285,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'ao', display_name: 'AO', required: true, description: '模拟输出(ADC)' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'none', name: '无（ADC 读取）' }],
+    libraries: [{ id: 'none', name: '无' }],
   },
   {
     id: 'co2_mh_z19',

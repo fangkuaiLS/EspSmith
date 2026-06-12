@@ -150,6 +150,8 @@ pub fn run() {
             if let Ok(resource_dir) = app.path().resource_dir() {
                 ai_assistant::init_bundled_codewhale(&resource_dir);
             }
+            // 初始化全局 AppHandle，供 sink 在非 Tauri 命令上下文中 emit 事件
+            ai_assistant::init_app_handle(app.handle().clone());
             // 启动 IPC 服务器：让 espsmith-cli.exe 子进程能把 RunnerEvent 实时传回主进程
             self_healing::ipc::start_ipc_server();
             // 注册委托处理器：CLI 子进程通过 IPC 委托主进程执行 Self-Healing 引擎（实时进度）
@@ -289,7 +291,6 @@ pub fn run() {
             ai_assistant::ai_reset_usage,
             ai_assistant::ai_set_project_path,
             ai_assistant::ai_set_idf_path,
-            ai_assistant::ai_set_ael_path,
             ai_assistant::ai_set_target_chip,
             ai_assistant::ai_get_target_chip,
             ai_assistant::ai_notify_chip_changed,
@@ -300,6 +301,11 @@ pub fn run() {
             ai_assistant::ai_respond_permission,
             ai_assistant::check_codewhale_status,
             ai_assistant::setup_codewhale,
+            // Experience 经验库管理
+            ai_assistant::experience_open_dir,
+            ai_assistant::experience_export,
+            ai_assistant::experience_import,
+            ai_assistant::experience_stats,
             // MCP 工具调用（嵌入式 MCP Server）
             mcp_call_tool,
         ])
@@ -319,17 +325,30 @@ fn mcp_call_tool(
     tool_name: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    // Forward every RunnerEvent emitted by long-running tools (notably
-    // `closed_loop`) to the frontend as the `ai-runner-event` Tauri event,
-    // so the chat timeline can show "绗?N 娆″皾璇?/ 宸插簲鐢?X 鎭㈠鎿嶄綔" in
-    // real time instead of waiting for the tool_result.
+    // 预设置 ACTIVE_JTAG_OPERATION（如果工具类型匹配且尚未设置）
+    // 基于当前 flash_port 检测连接模式，确保多设备场景下判断正确
+    let is_jtag = {
+        let flash_port = crate::ai_assistant::get_cached_flash_port();
+        crate::connection::detect_connection_mode(flash_port.as_deref()).mode.is_jtag()
+    };
+    if let Some(op) = crate::ai_assistant::detect_jtag_operation_for_delegate(&tool_name, is_jtag) {
+        if crate::ai_assistant::try_set_active_operation(op) {
+            let active = crate::ai_assistant::lock_active_operation();
+            if let Some(ref a) = *active {
+                let _ = app_handle.emit("ai-operation-progress", a);
+            }
+        }
+    }
+
+    // sink 直接调用 handle_runner_event_for_progress 更新进度，
+    // 同时 emit ai-runner-event 供前端直接使用
     let ah = app_handle.clone();
     let sink: std::sync::Arc<dyn Fn(&crate::self_healing::types::RunnerEvent) + Send + Sync> =
         std::sync::Arc::new(move |event: &crate::self_healing::types::RunnerEvent| {
-            // 发送到前端 ai-runner-event（供直接 Tauri 命令路径使用）
+            // 主要路径：直接更新 ACTIVE_JTAG_OPERATION 并 emit ai-operation-progress
+            crate::ai_assistant::handle_runner_event_for_progress(event);
+            // 辅助：emit ai-runner-event 供前端直接使用
             let _ = ah.emit("ai-runner-event", event);
-            // 同时通过全局广播通道发送（AI 助手监听器会桥接到 ai-operation-progress）
-            crate::self_healing::broadcast_event(event);
         });
     let result = mcp::call_tool_direct_with_progress(
         project_root,
@@ -358,9 +377,20 @@ pub fn run_cli() -> Result<(), String> {
 
     // Acquire global command lock for long-running commands.
     // This ensures only one espsmith.exe build/flash/etc. runs at a time.
+    // NOTE: For commands that support IPC delegation (closed-loop, jtag-runtime-check),
+    // the lock is acquired by the delegate handler in the main process, so the CLI
+    // must NOT acquire it here — otherwise the main process sees a stale lock from
+    // the CLI's PID and refuses to run. We skip the lock here and let the delegate
+    // path handle it; if delegation fails and we fall back to local execution,
+    // the individual cmd_* functions will acquire the lock themselves.
     let _lock = match cmd {
         Some(c) if LOCKED_COMMANDS.contains(&c) => {
-            Some(GlobalCommandLock::acquire(c).map_err(|e| e)?)
+            // closed-loop and jtag-runtime-check use IPC delegation — skip lock here
+            if matches!(c, "closed-loop" | "jtag-runtime-check") {
+                None
+            } else {
+                Some(GlobalCommandLock::acquire(c).map_err(|e| e)?)
+            }
         }
         _ => None,
     };
@@ -685,15 +715,13 @@ fn tail_str(s: &str, max_chars: usize) -> String {
     }
 }
 
-/// 委托处理器：在主进程中执行 Self-Healing 引擎，RunnerEvent 通过 broadcast_event 实时到达前端。
+/// 委托处理器：在主进程中执行 Self-Healing 引擎，RunnerEvent 实时到达前端。
+///
+/// 核心设计：sink 直接调用 handle_runner_event_for_progress 更新进度并 emit，
+/// 不再通过 broadcast_event → 全局监听器这条间接路径，避免时序竞争导致事件丢失。
 fn run_delegate_command(command: &str, args: &serde_json::Value) -> self_healing::ipc::DelegateResult {
     let project = args["project"].as_str().unwrap_or("").to_string();
     let idf = args["idf"].as_str().map(|s| s.to_string());
-
-    let sink: std::sync::Arc<dyn Fn(&self_healing::types::RunnerEvent) + Send + Sync> =
-        std::sync::Arc::new(|event: &self_healing::types::RunnerEvent| {
-            self_healing::broadcast_event(event);
-        });
 
     let tool_name = match command {
         "closed_loop" => "closed_loop",
@@ -706,6 +734,44 @@ fn run_delegate_command(command: &str, args: &serde_json::Value) -> self_healing
             };
         }
     };
+
+    // 在执行引擎前先设置 ACTIVE_JTAG_OPERATION（如果尚未设置）
+    // 解决时序竞争：IPC 线程中 RunnerEvent 可能在 CodeWhale 的 tool_use 事件
+    // 被 tokio 任务处理之前就开始产生。
+    // 使用和 MCPServer::closed_loop 相同的 is_jtag 判断逻辑，确保步骤数量匹配
+    let is_jtag = {
+        let conn_info = crate::connection::get_cached_connection_info();
+        if conn_info.mode.is_jtag() {
+            true
+        } else if conn_info.mode != crate::connection::ConnectionMode::Unknown {
+            false
+        } else {
+            // Unknown 模式下重新检测，使用 CLI 传递的端口
+            let port = args["port"].as_str();
+            crate::connection::detect_connection_mode(port).mode.is_jtag()
+        }
+    };
+    tracing::info!("[Delegate] command={}, is_jtag={}, cached_mode={:?}", command, is_jtag, crate::connection::get_cached_connection_info().mode);
+    if let Some(op) = crate::ai_assistant::detect_jtag_operation_for_delegate(command, is_jtag) {
+        tracing::info!("[Delegate] Detected operation: type={}, steps={}", op.operation_type, op.steps.len());
+        if crate::ai_assistant::try_set_active_operation(op) {
+            tracing::info!("[Delegate] Pre-set ACTIVE_JTAG_OPERATION for command={}", command);
+            // 立即 emit 初始进度（所有步骤 pending），让前端尽早显示进度卡片
+            if let Some(ah) = crate::ai_assistant::app_handle() {
+                let active = crate::ai_assistant::lock_active_operation();
+                if let Some(ref a) = *active {
+                    let _ = ah.emit("ai-operation-progress", a);
+                }
+            }
+        }
+    }
+
+    // sink 直接调用 handle_runner_event_for_progress，这是进度追踪的主要路径。
+    // 不再通过 broadcast_event → 全局监听器间接路径。
+    let sink: std::sync::Arc<dyn Fn(&self_healing::types::RunnerEvent) + Send + Sync> =
+        std::sync::Arc::new(|event: &self_healing::types::RunnerEvent| {
+            crate::ai_assistant::handle_runner_event_for_progress(event);
+        });
 
     let result = mcp::call_tool_direct_with_progress(
         project, idf, tool_name, args, Some(sink),
@@ -758,8 +824,11 @@ fn cmd_closed_loop(args: &[String]) -> Result<serde_json::Value, String> {
         tool_args["force_uart"] = serde_json::json!(true);
     }
 
+    // --ipc-addr 允许显式传递主进程 IPC 地址，避免 CodeWhale exec_shell 不传递环境变量
+    let ipc_addr = parse_named_arg(args, "ipc-addr");
+
     // 优先委托主进程执行（RunnerEvent 实时广播到前端），回退到本地执行
-    if let Some(result) = self_healing::ipc::send_delegate_and_wait("closed_loop", &tool_args) {
+    if let Some(result) = self_healing::ipc::send_delegate_and_wait_with_addr("closed_loop", &tool_args, ipc_addr.as_deref()) {
         if result.success {
             Ok(result.data)
         } else {
@@ -825,8 +894,11 @@ fn cmd_jtag_runtime_check(args: &[String]) -> Result<serde_json::Value, String> 
         tool_args["watch_variables"] = serde_json::json!(vars);
     }
 
+    // --ipc-addr 允许显式传递主进程 IPC 地址
+    let ipc_addr = parse_named_arg(args, "ipc-addr");
+
     // 优先委托主进程执行（RunnerEvent 实时广播到前端），回退到本地执行
-    if let Some(result) = self_healing::ipc::send_delegate_and_wait("jtag_runtime_check", &tool_args) {
+    if let Some(result) = self_healing::ipc::send_delegate_and_wait_with_addr("jtag_runtime_check", &tool_args, ipc_addr.as_deref()) {
         if result.success {
             Ok(result.data)
         } else {
@@ -853,7 +925,8 @@ fn cmd_jtag_runtime_check(args: &[String]) -> Result<serde_json::Value, String> 
 fn cmd_openocd_start(args: &[String]) -> Result<serde_json::Value, String> {
     let chip = parse_named_arg(args, "chip")
         .or_else(|| {
-            crate::connection::get_cached_connection_info()
+            let flash_port = crate::ai_assistant::get_cached_flash_port();
+            crate::connection::detect_connection_mode(flash_port.as_deref())
                 .chip_hint.as_ref().and_then(|h| {
                     let lower = h.to_ascii_lowercase().replace('-', "");
                     if lower == "esp32" { None } else { Some(lower) }

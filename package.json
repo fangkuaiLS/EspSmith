@@ -1,7 +1,7 @@
 {
   "name": "espsmith",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -41,7 +41,7 @@
     "@tauri-apps/cli": "^2.2.2",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"

@@ -18,7 +18,6 @@ export interface AppSettings {
   deepseekApiKey?: string;
   ollamaEndpoint?: string;
   reviewMode: boolean;
-  aelPath?: string;
 }
 
 // 初始默认设置
@@ -35,7 +34,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     deepseekApiKey: undefined,
     ollamaEndpoint: 'http://localhost:11434',
     reviewMode: true,
-    aelPath: undefined,
 };
 
 // ESP-IDF检测状态

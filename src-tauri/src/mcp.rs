@@ -48,7 +48,10 @@ impl MCPServer {
             .canonicalize()
             .map_err(|e| format!("Invalid project path: {e}"))?;
 
-        let exp_dir = project_root.join(".espsmith").join("experience");
+        let exp_dir = dirs_next::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("espsmith")
+            .join("experience");
         experience::init(exp_dir);
 
         Ok(Self { project_root, idf_path, progress_sink: None })
@@ -555,7 +558,8 @@ impl MCPServer {
     }
 
     fn list_serial_ports(&self) -> ToolResult {
-        let conn_info = connection::get_cached_connection_info();
+        let flash_port = crate::ai_assistant::get_cached_flash_port();
+        let conn_info = connection::detect_connection_mode(flash_port.as_deref());
         match serialport::available_ports() {
             Ok(ports) => ok(json!({
                 "ports": ports.into_iter().map(|p| {
@@ -594,7 +598,8 @@ impl MCPServer {
     }
 
     fn get_connection_mode_mcp(&self) -> ToolResult {
-        let info = connection::get_cached_connection_info();
+        let flash_port = crate::ai_assistant::get_cached_flash_port();
+        let info = connection::detect_connection_mode(flash_port.as_deref());
         match serde_json::to_value(&info) {
             Ok(val) => ok(val),
             Err(e) => err(e.to_string()),
@@ -890,7 +895,8 @@ impl MCPServer {
     }
 
     fn project_context(&self) -> ToolResult {
-        let conn_info = connection::get_cached_connection_info();
+        let flash_port = crate::ai_assistant::get_cached_flash_port();
+        let conn_info = connection::detect_connection_mode(flash_port.as_deref());
         let is_jtag = conn_info.mode.is_jtag();
         let mode_str = conn_info.mode.as_str();
         let mode_label = &conn_info.mode_label;
@@ -1029,7 +1035,8 @@ impl MCPServer {
         let elf_path = str_arg(args, "elf_path").map(|s| adapters::normalize_path_for_gdb(s).to_string());
         let expected_pc_mask = str_arg(args, "expected_pc_mask").unwrap_or("0x40000000");
 
-        let conn_info = connection::get_cached_connection_info();
+        let flash_port_for_conn = crate::ai_assistant::get_cached_flash_port();
+        let conn_info = connection::detect_connection_mode(flash_port_for_conn.as_deref());
         let is_jtag = if force_jtag {
             true
         } else if force_uart {
@@ -1532,7 +1539,7 @@ fn handle_jsonrpc_request(server: &MCPServer, request: Value) -> Option<Value> {
         "initialize" => json!({
             "protocolVersion": "2024-11-05",
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "espsmith", "version": "0.1.1" }
+            "serverInfo": { "name": "espsmith", "version": "0.1.3" }
         }),
         "tools/list" => json!({ "tools": server.list_tools() }),
         "tools/call" => {

@@ -1,0 +1,19 @@
+Fix: UART闭环验证进度不同步 + 多项改进
+
+核心修复：
+- UART闭环验证UI进度不同步：sink直接调用handle_runner_event_for_progress替代broadcast_event间接路径，避免ACTIVE_JTAG_OPERATION时序竞争
+- tool_use处理器不再覆盖已预设置的ACTIVE_JTAG_OPERATION，只更新tool_use_id
+- 前端ai-operation-done不再无条件覆盖步骤状态，保留后端逐步推送的真实进度
+- 前端currentStepIndex从步骤状态推断而非硬编码为0
+- build.rs用catch_unwind包裹tauri_build::build()，修复espsmith-cli编译崩溃
+- run-tauri.mjs在dev模式启动前自动编译espsmith-cli.exe
+
+其他改进：
+- 更新检查：修复latest.json缺失、版本号/百分比不显示、已是最新时报错
+- 添加启动时自动检查更新和顶部更新横幅
+- 打包时自动生成latest.json
+- 所有外设显示驱动库选择，支持自定义输入
+- i18next插值配置修复
+- IPC地址写入临时文件，CLI回退发现
+- GlobalCommandLock对closed-loop/jtag-runtime-check不再获取锁
+- 集成apply-patch工具到AI prompt

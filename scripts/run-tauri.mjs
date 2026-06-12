@@ -144,6 +144,37 @@ if (warnings.length > 0) {
 
 const args = process.argv.slice(2);
 
+// 如果是 dev 命令，确保 espsmith-cli.exe 已编译
+// cargo tauri dev 只编译 espsmith.exe（GUI），不编译 espsmith-cli.exe（console）。
+// build.rs 已用 catch_unwind 包裹 tauri_build::build()，所以 cargo build --bin espsmith-cli
+// 不会再 panic。这里在 tauri dev 启动前先编译 CLI binary。
+if (args.includes('dev')) {
+  const cliExePath = join(projectRoot, 'src-tauri', 'target', 'debug', 'espsmith-cli.exe');
+  // 检查是否需要重新编译：文件不存在，或者 lib.rs 比 cli.exe 更新
+  const needsCompile = !existsSync(cliExePath) || (() => {
+    const { statSync } = require('fs');
+    try {
+      const cliTime = statSync(cliExePath).mtimeMs;
+      const libTime = statSync(join(projectRoot, 'src-tauri', 'src', 'lib.rs')).mtimeMs;
+      return libTime > cliTime;
+    } catch { return true; }
+  })();
+  if (needsCompile) {
+    process.stderr.write('[esp-ai-studio] Compiling espsmith-cli.exe for dev mode...\n');
+    try {
+      execSync('cargo build --bin espsmith-cli --manifest-path src-tauri/Cargo.toml', {
+        stdio: 'inherit',
+        cwd: projectRoot,
+        shell: true,
+      });
+      process.stderr.write('[esp-ai-studio] espsmith-cli.exe compiled successfully.\n');
+    } catch (error) {
+      process.stderr.write(`[esp-ai-studio] WARNING: Failed to compile espsmith-cli.exe: ${error.message}\n`);
+      process.stderr.write('[esp-ai-studio] Falling back to espsmith.exe for CLI operations (may not capture output).\n');
+    }
+  }
+}
+
 // 如果是 build 命令，先同步版本号
 if (args.includes('build')) {
   process.stderr.write('[esp-ai-studio] Syncing version numbers...\n');

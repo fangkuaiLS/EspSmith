@@ -1,14 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
-use tauri::Emitter;
+use std::sync::{Arc, OnceLock, Mutex as StdMutex};
 use tokio::sync::Mutex;
+use tauri::Emitter;
 use tracing::info;
 use crate::connection::ConnectionMode;
 
 /// 内嵌的 CodeWhale 二进制目录路径（由 lib.rs 在 setup 时初始化）
 static BUNDLED_CODEWHALE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 全局 AppHandle，供 sink 在非 Tauri 命令上下文中 emit 事件
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+/// 初始化全局 AppHandle，在 lib.rs setup 中调用
+pub fn init_app_handle(handle: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(handle);
+}
+
+/// 获取全局 AppHandle 的引用，供 sink 等非 Tauri 命令上下文使用
+pub fn app_handle() -> Option<&'static tauri::AppHandle> {
+    APP_HANDLE.get()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AIStatus {
@@ -68,8 +81,6 @@ pub struct AIConfig {
     pub project_path: Option<String>,
     pub idf_path: Option<String>,
     #[serde(default)]
-    pub ael_path: Option<String>,
-    #[serde(default)]
     pub target_chip: Option<String>,
     #[serde(default)]
     pub flash_port: Option<String>,
@@ -115,7 +126,6 @@ impl CodeWhaleClient {
                 enable_tool_use: true,
                 project_path: None,
                 idf_path: None,
-                ael_path: None,
                 target_chip: None,
                 flash_port: None,
                 ai_provider: "deepseek".into(),
@@ -169,10 +179,13 @@ lazy_static::lazy_static! {
         Arc::new(Mutex::new(CodeWhaleClient::new()));
     static ref RUNNING_CHILD: Arc<Mutex<Option<tokio::process::Child>>> =
         Arc::new(Mutex::new(None));
-    static ref AI_STATUS: Arc<Mutex<AIStatus>> =
-        Arc::new(Mutex::new(AIStatus::Idle));
-    static ref ACTIVE_JTAG_OPERATION: Arc<Mutex<Option<OperationProgress>>> =
-        Arc::new(Mutex::new(None));
+    static ref AI_STATUS: Arc<StdMutex<AIStatus>> =
+        Arc::new(StdMutex::new(AIStatus::Idle));
+    /// 使用 std::sync::Mutex 而非 tokio::sync::Mutex：
+    /// 全局监听器在 IPC 线程（非 tokio 线程）中被调用，必须用 lock() 而非 try_lock()。
+    /// tokio 任务中也不跨 .await 持锁，所以 std::sync::Mutex 安全。
+    static ref ACTIVE_JTAG_OPERATION: Arc<StdMutex<Option<OperationProgress>>> =
+        Arc::new(StdMutex::new(None));
 }
 
 async fn kill_running_child() {
@@ -199,6 +212,105 @@ async fn kill_running_child() {
             let _ = child.start_kill();
         }
         let _ = child.wait().await;
+    }
+}
+
+/// 处理 RunnerEvent 并更新 ACTIVE_JTAG_OPERATION 的步骤状态，然后 emit 到前端。
+///
+/// 这是进度追踪的核心函数，被以下路径调用：
+/// 1. sink（run_delegate_command / mcp_call_tool）—— 主要路径，直接调用
+/// 2. 全局监听器（通过 broadcast_event）—— 备用路径，用于 IPC legacy event 等场景
+///
+/// 关键设计：sink 直接调用此函数而非通过 broadcast_event → 全局监听器间接路径，
+/// 避免 ACTIVE_JTAG_OPERATION 未设置时事件被丢弃的时序竞争问题。
+pub fn handle_runner_event_for_progress(event: &crate::self_healing::types::RunnerEvent) {
+    use crate::self_healing::types::RunnerEvent;
+
+    let ah = match APP_HANDLE.get() {
+        Some(h) => h.clone(),
+        None => {
+            tracing::warn!("[Progress] No APP_HANDLE, dropping event");
+            return;
+        }
+    };
+
+    let mut op = match ACTIVE_JTAG_OPERATION.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    let Some(ref mut active) = *op else {
+        tracing::warn!("[Progress] Dropping event — no active operation. Event: {:?}", event_summary(event));
+        return;
+    };
+
+    let step_idx = match event {
+        RunnerEvent::StepStarted { step_index, .. } |
+        RunnerEvent::StepFailed { step_index, .. } |
+        RunnerEvent::StepPassed { step_index, .. } |
+        RunnerEvent::RecoveryApplied { step_index, .. } => *step_index,
+    };
+
+    if step_idx >= active.steps.len() {
+        tracing::warn!(
+            "[Progress] step_idx={} >= steps.len()={}, dropping event. operation_type={}, steps={:?}",
+            step_idx,
+            active.steps.len(),
+            active.operation_type,
+            active.steps.iter().map(|s| (&s.label, &s.status)).collect::<Vec<_>>()
+        );
+        return;
+    }
+
+    match event {
+        RunnerEvent::StepStarted { .. } => {
+            for (i, s) in active.steps.iter_mut().enumerate() {
+                if i < step_idx { s.status = "done".into(); }
+                else if i == step_idx { s.status = "running".into(); }
+                else { s.status = "pending".into(); }
+            }
+        }
+        RunnerEvent::StepPassed { .. } => {
+            active.steps[step_idx].status = "done".into();
+        }
+        RunnerEvent::StepFailed { will_retry, error, .. } => {
+            if !*will_retry {
+                active.steps[step_idx].status = "error".into();
+            }
+            let _ = ah.emit("ai-operation-step-error", serde_json::json!({
+                "stepIndex": step_idx,
+                "error": error,
+                "willRetry": will_retry,
+            }));
+        }
+        RunnerEvent::RecoveryApplied { action, reason, .. } => {
+            let _ = ah.emit("ai-operation-recovery", serde_json::json!({
+                "action": action,
+                "reason": reason,
+            }));
+        }
+    }
+
+    tracing::info!(
+        "[Progress] Emitting ai-operation-progress: step_idx={}, steps={:?}",
+        step_idx,
+        active.steps.iter().map(|s| (&s.label, &s.status)).collect::<Vec<_>>()
+    );
+    let _ = ah.emit("ai-operation-progress", &*active);
+}
+
+/// 事件摘要，用于日志输出（避免打印整个事件的大字段）
+fn event_summary(event: &crate::self_healing::types::RunnerEvent) -> String {
+    use crate::self_healing::types::RunnerEvent;
+    match event {
+        RunnerEvent::StepStarted { step_index, step_name, attempt, .. } =>
+            format!("StepStarted(idx={}, name={}, attempt={})", step_index, step_name, attempt),
+        RunnerEvent::StepPassed { step_index, step_name, duration_ms, .. } =>
+            format!("StepPassed(idx={}, name={}, dur={}ms)", step_index, step_name, duration_ms),
+        RunnerEvent::StepFailed { step_index, step_name, will_retry, .. } =>
+            format!("StepFailed(idx={}, name={}, retry={})", step_index, step_name, will_retry),
+        RunnerEvent::RecoveryApplied { step_index, action, .. } =>
+            format!("RecoveryApplied(idx={}, action={})", step_index, action),
     }
 }
 
@@ -278,7 +390,7 @@ pub async fn ai_send_message(
     message: String,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let (api_key, model, project_path, idf_path, enable_tool_use, ael_path, target_chip, flash_port, session_id, ai_provider, permission_mode, chip_changed) = {
+    let (api_key, model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, ai_provider, permission_mode, chip_changed) = {
         let client = AI_CLIENT.lock().await;
         let key = client
             .config
@@ -291,7 +403,6 @@ pub async fn ai_send_message(
             client.config.project_path.clone(),
             client.config.idf_path.clone(),
             client.config.enable_tool_use,
-            client.config.ael_path.clone(),
             client.config.target_chip.clone(),
             client.config.flash_port.clone(),
             client.session_id.clone(),
@@ -303,7 +414,7 @@ pub async fn ai_send_message(
 
     kill_running_child().await;
     {
-        let mut status = AI_STATUS.lock().await;
+        let mut status = AI_STATUS.lock().unwrap();
         *status = AIStatus::Thinking;
     }
 
@@ -313,7 +424,7 @@ pub async fn ai_send_message(
     }
 
     if enable_tool_use {
-        ensure_project_agent_instructions(project_path.as_deref(), idf_path.as_deref(), ael_path.as_deref())?;
+        ensure_project_agent_instructions(project_path.as_deref(), idf_path.as_deref())?;
     }
 
     let binary = ensure_codewhale_ready()?;
@@ -328,8 +439,11 @@ pub async fn ai_send_message(
         cmd.arg("--session-id").arg(sid);
     }
 
-    if let Some(ref pp) = project_path {
-        let exp_dir = std::path::Path::new(pp).join(".espsmith").join("experience");
+    if let Some(ref _pp) = project_path {
+        let exp_dir = dirs_next::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("espsmith")
+            .join("experience");
         crate::experience::init(exp_dir);
     }
 
@@ -349,6 +463,12 @@ pub async fn ai_send_message(
             cmd.env("DEEPSEEK_API_KEY", &api_key);
             info!("Using DeepSeek API with model: {}", model);
         }
+    }
+
+    // 显式传递 IPC 管道地址给 CodeWhale，确保其 exec_shell 启动的子进程能委托主进程执行闭环
+    if let Ok(pipe_addr) = std::env::var(crate::self_healing::ipc::ENV_PIPE_NAME) {
+        cmd.env(crate::self_healing::ipc::ENV_PIPE_NAME, &pipe_addr);
+        info!("Passing IPC pipe address to CodeWhale: {}", pipe_addr);
     }
 
     if let Some(ref path) = project_path {
@@ -380,85 +500,16 @@ pub async fn ai_send_message(
         *guard = Some(child);
     }
 
-    // 注册全局管道事件监听器（仅首次注册，后续调用复用）
-    // 将 RunnerEvent 桥接到 OperationProgress 卡片，替代之前的假定时器。
+    // 全局监听器现在只是 handle_runner_event_for_progress 的薄包装，
+    // 真正的进度处理逻辑在 handle_runner_event_for_progress 中。
+    // sink（run_delegate_command / mcp_call_tool）直接调用该函数，
+    // 不再依赖 broadcast_event → 全局监听器这条间接路径。
     {
         static LISTENER_REGISTERED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         let _ = LISTENER_REGISTERED.get_or_init(|| {
-            let ah = app_handle.clone();
             let listener: Arc<dyn Fn(&crate::self_healing::types::RunnerEvent) + Send + Sync> =
-                Arc::new(move |event: &crate::self_healing::types::RunnerEvent| {
-                    use crate::self_healing::types::RunnerEvent;
-                    // 调试日志：记录每个收到的 RunnerEvent
-                    tracing::info!(
-                        "[GlobalListener] Received event: {:?}",
-                        event
-                    );
-                    // 使用 try_lock 避免 IPC 线程和 tokio 异步运行时之间的死锁
-                    let mut op = match ACTIVE_JTAG_OPERATION.try_lock() {
-                        Ok(guard) => guard,
-                        Err(_) => {
-                            tracing::warn!("[GlobalListener] ACTIVE_JTAG_OPERATION lock contention, retrying...");
-                            // 短暂等待后重试一次
-                            std::thread::sleep(std::time::Duration::from_millis(10));
-                            match ACTIVE_JTAG_OPERATION.try_lock() {
-                                Ok(guard) => guard,
-                                Err(_) => {
-                                    tracing::warn!("[GlobalListener] ACTIVE_JTAG_OPERATION still locked, dropping event");
-                                    return;
-                                }
-                            }
-                        }
-                    };
-                    let Some(ref mut active) = *op else {
-                        tracing::warn!("[GlobalListener] Dropping event — no active operation");
-                        return;
-                    };
-
-                    let step_idx = match event {
-                        RunnerEvent::StepStarted { step_index, .. } |
-                        RunnerEvent::StepFailed { step_index, .. } |
-                        RunnerEvent::StepPassed { step_index, .. } |
-                        RunnerEvent::RecoveryApplied { step_index, .. } => *step_index,
-                    };
-
-                    if step_idx >= active.steps.len() { return; }
-
-                    match event {
-                        RunnerEvent::StepStarted { .. } => {
-                            for (i, s) in active.steps.iter_mut().enumerate() {
-                                if i < step_idx { s.status = "done".into(); }
-                                else if i == step_idx { s.status = "running".into(); }
-                                else { s.status = "pending".into(); }
-                            }
-                        }
-                        RunnerEvent::StepPassed { .. } => {
-                            active.steps[step_idx].status = "done".into();
-                        }
-                        RunnerEvent::StepFailed { will_retry, error, .. } => {
-                            if !*will_retry {
-                                active.steps[step_idx].status = "error".into();
-                            }
-                            let _ = ah.emit("ai-operation-step-error", serde_json::json!({
-                                "stepIndex": step_idx,
-                                "error": error,
-                                "willRetry": will_retry,
-                            }));
-                        }
-                        RunnerEvent::RecoveryApplied { action, reason, .. } => {
-                            let _ = ah.emit("ai-operation-recovery", serde_json::json!({
-                                "action": action,
-                                "reason": reason,
-                            }));
-                        }
-                    }
-                    // 调试日志：记录发出的进度事件
-                    tracing::info!(
-                        "[GlobalListener] Emitting ai-operation-progress: step_idx={}, steps={:?}",
-                        step_idx,
-                        active.steps.iter().map(|s| (&s.label, &s.status)).collect::<Vec<_>>()
-                    );
-                    let _ = ah.emit("ai-operation-progress", &*active);
+                Arc::new(|event| {
+                    handle_runner_event_for_progress(event);
                 });
             crate::self_healing::add_global_listener(listener);
         });
@@ -534,8 +585,8 @@ pub async fn ai_send_message(
                                             }
                                         }
                                         info!("CodeWhale tool call: {}", name);
-                                        // 跟踪 write_file 调用的路径
-                                        if name == "write_file" {
+                                        // 跟踪 write_file / apply_patch 调用的路径
+                                        if name == "write_file" || name == "apply_patch" {
                                             pending_write_path = event.get("input")
                                                 .and_then(|v| v.get("path"))
                                                 .and_then(|v| v.as_str())
@@ -552,7 +603,7 @@ pub async fn ai_send_message(
                                             AIStatus::ToolCall
                                         };
                                         {
-                                            let mut status = AI_STATUS.lock().await;
+                                            let mut status = AI_STATUS.lock().unwrap();
                                             *status = new_status;
                                         }
                                         let _ = app_handle.emit("ai-tool-use", serde_json::json!({
@@ -567,15 +618,20 @@ pub async fn ai_send_message(
                                                 .unwrap_or("");
                                             let tool_use_id = event["id"].as_str().unwrap_or("");
                                             // 判断当前是否为 JTAG 模式
-                                            // 优先级：1. 缓存的连接模式 > 2. flash_port 是否为空（兜底）
+                                            // 基于用户选择的 flash_port 检测，而非全局缓存
                                             let is_jtag = {
                                                 let conn = crate::connection::get_cached_connection_info();
-                                                if conn.mode != ConnectionMode::Unknown {
-                                                    conn.mode.is_jtag()
+                                                if conn.mode.is_jtag() {
+                                                    true
+                                                } else if conn.mode != ConnectionMode::Unknown {
+                                                    false
                                                 } else {
-                                                    // 兜底：无 UART 串口端口即为 JTAG
-                                                    let c = AI_CLIENT.lock().await;
-                                                    c.config.flash_port.as_ref().is_none_or(|p| p.trim().is_empty())
+                                                    // Unknown 模式下重新检测
+                                                    let flash_port = {
+                                                        let c = AI_CLIENT.lock().await;
+                                                        c.config.flash_port.clone()
+                                                    };
+                                                    crate::connection::detect_connection_mode(flash_port.as_deref()).mode.is_jtag()
                                                 }
                                             };
                                             tracing::info!(
@@ -590,15 +646,29 @@ pub async fn ai_send_message(
                                                     tool_use_id
                                                 );
                                                 {
-                                                    let mut op = ACTIVE_JTAG_OPERATION.lock().await;
-                                                    *op = Some(progress.clone());
+                                                    let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap();
+                                                    match *op {
+                                                        Some(ref mut existing) => {
+                                                            // run_delegate_command 可能已经预设置了 ACTIVE_JTAG_OPERATION，
+                                                            // 此时只更新 tool_use_id（用于匹配 tool_result），保留现有进度
+                                                            existing.tool_use_id = tool_use_id.to_string();
+                                                            tracing::info!(
+                                                                "[AIAssistant] Updated tool_use_id for existing operation: id={}",
+                                                                tool_use_id
+                                                            );
+                                                        }
+                                                        None => {
+                                                            *op = Some(progress.clone());
+                                                        }
+                                                    }
                                                 }
                                                 // 发送初始进度卡片（步骤全部 pending）
-                                                let _ = app_handle.emit("ai-operation-progress", &progress);
-
-                                                // 委托模式下，CLI 会将执行委托给主进程，
-                                                // 主进程直接运行 Self-Healing 引擎，RunnerEvent 通过全局监听器实时更新进度。
-                                                // 不再需要 start_progress_simulator。
+                                                // 注意：如果 run_delegate_command 已经预设置了，这里会重新 emit，
+                                                // 但 operationId 相同，前端会正确更新
+                                                let op = ACTIVE_JTAG_OPERATION.lock().unwrap();
+                                                if let Some(ref active) = *op {
+                                                    let _ = app_handle.emit("ai-operation-progress", active);
+                                                }
                                             }
                                         }
                                     }
@@ -646,7 +716,7 @@ pub async fn ai_send_message(
                                             output_text.as_ref().map(|s| s.len()).unwrap_or(0)
                                         );
                                         let should_emit_done = {
-                                            let mut op = ACTIVE_JTAG_OPERATION.lock().await;
+                                            let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap();
                                             let matches = op.as_ref().map_or(false, |o| {
                                                 // Empty tool_use_id on the op (legacy / unknown) is
                                                 // treated as a wildcard match so older call sites
@@ -777,7 +847,7 @@ pub async fn ai_send_message(
                                     }
                                     "done" => {
                                         {
-                                            let mut status = AI_STATUS.lock().await;
+                                            let mut status = AI_STATUS.lock().unwrap();
                                             *status = AIStatus::Idle;
                                         }
                                         if let Some(done_content) = event["content"].as_str() {
@@ -867,7 +937,7 @@ pub async fn ai_send_message(
     }
     // 清理操作状态（会话结束）
     {
-        let mut op = ACTIVE_JTAG_OPERATION.lock().await;
+        let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap();
         *op = None;
     }
 
@@ -877,7 +947,7 @@ pub async fn ai_send_message(
     }
 
     if output.is_empty() {
-        let mut status = AI_STATUS.lock().await;
+        let mut status = AI_STATUS.lock().unwrap();
         *status = AIStatus::Error;
         if !stderr_lines.is_empty() {
             return Err(format!("CodeWhale error:\n{}", stderr_lines.join("\n")));
@@ -886,7 +956,7 @@ pub async fn ai_send_message(
     }
 
     {
-        let mut status = AI_STATUS.lock().await;
+        let mut status = AI_STATUS.lock().unwrap();
         *status = AIStatus::Idle;
     }
 
@@ -913,7 +983,7 @@ pub async fn ai_send_message(
 
 #[tauri::command]
 pub async fn ai_get_status() -> Result<AIStatus, String> {
-    let status = AI_STATUS.lock().await;
+    let status = AI_STATUS.lock().unwrap();
     Ok(status.clone())
 }
 
@@ -982,7 +1052,10 @@ pub async fn ai_get_target_chip() -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn ai_set_flash_port(port: Option<String>) -> Result<(), String> {
     let mut client = AI_CLIENT.lock().await;
-    client.config.flash_port = port;
+    client.config.flash_port = port.clone();
+    drop(client); // 释放锁后再检测连接模式
+    // 立即基于新端口更新全局连接模式缓存，确保多设备场景下模式与选中端口一致
+    crate::connection::detect_connection_mode(port.as_deref());
     Ok(())
 }
 
@@ -1034,7 +1107,10 @@ pub async fn sync_target_chip(chip: String) {
 /// 同步设置烧录串口（供 project.rs 在 open_project 时调用）
 pub async fn sync_flash_port(port: String) {
     let mut client = AI_CLIENT.lock().await;
-    client.config.flash_port = Some(port);
+    client.config.flash_port = Some(port.clone());
+    drop(client);
+    // 立即基于新端口更新全局连接模式缓存
+    crate::connection::detect_connection_mode(Some(&port));
 }
 
 /// 通知 AI 后端芯片已变更，下次编译时需要执行 set-target
@@ -1054,6 +1130,17 @@ pub fn get_cached_idf_path() -> Option<String> {
         .ok()
         .and_then(|client| {
             client.config.idf_path.clone().filter(|p| !p.is_empty())
+        })
+}
+
+/// Get the cached flash port from AI config (used by connection.rs for targeted detection).
+/// This uses try_lock() to avoid blocking; if the lock is held, returns None.
+pub fn get_cached_flash_port() -> Option<String> {
+    AI_CLIENT
+        .try_lock()
+        .ok()
+        .and_then(|client| {
+            client.config.flash_port.clone().filter(|p| !p.trim().is_empty())
         })
 }
 
@@ -1175,6 +1262,13 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
     let flash_cmd = format!("{cli} flash --project \"{project}\" --idf \"{idf}\" --port \"{port}\"", cli=cli_exe, project=project, idf=idf, port=port);
     let monitor_cmd = format!("{cli} monitor --port \"{port}\" --duration 5000", cli=cli_exe, port=port);
 
+    // 获取 IPC 地址，嵌入到 closed-loop / jtag-runtime-check 命令中
+    // 这样即使 CodeWhale 的 exec_shell 不传递环境变量，CLI 也能委托主进程执行
+    let ipc_addr_arg = std::env::var(crate::self_healing::ipc::ENV_PIPE_NAME)
+        .ok()
+        .map(|addr| format!(" --ipc-addr {}", addr))
+        .unwrap_or_default();
+
     let chip_warn = if target_chip.is_none_or(|c| c == "auto") {
         "芯片型号未配置,请先让用户在工具栏选择。"
     } else { "" };
@@ -1182,7 +1276,9 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         "烧录串口未配置,烧录前请先让用户在工具栏选择。"
     } else { "" };
 
-    let conn_info = crate::connection::get_cached_connection_info();
+    // 基于用户选择的 flash_port 检测连接模式，而非全局缓存
+    // 确保多设备场景下 AI 使用的是当前选中端口对应的模式
+    let conn_info = crate::connection::detect_connection_mode(flash_port);
     let is_jtag = conn_info.mode.is_jtag();
     let detected_port = conn_info.port.as_deref().unwrap_or(port);
 
@@ -1192,9 +1288,9 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         .unwrap_or_default();
 
     let direct_rule = if chip_changed {
-        "芯片刚切换,编译命令已包含--target参数,直接执行即可(会自动执行set-target重配置)。set-target较慢请耐心等待。若build失败报告错误即可。烧录前确认编译目标与硬件一致。引入第三方组件必须在main/idf_component.yml声明依赖(如espressif/led_strip:\"*\"),同时在main/CMakeLists.txt的idf_component_register中添加REQUIRES组件名,禁止手动下载源码或git submodule,build时自动下载集成。回复简要总结结果即可。重要: build/flash/closed-loop是长时间同步命令(可能需要数分钟),exec_shell执行后必须耐心等待结果返回,绝不要在命令运行中重复执行同一命令或尝试跳过,否则会导致进程冲突和崩溃。如果收到\"Another espsmith command is running\"错误,说明上一次命令仍在运行,必须等待其完成,不要重试。"
+        "芯片刚切换,编译命令已包含--target参数,直接执行即可(会自动执行set-target重配置)。set-target较慢请耐心等待。若build失败报告错误即可。烧录前确认编译目标与硬件一致。优先通过组件注册表引入(在main/idf_component.yml声明依赖如espressif/led_strip:\"*\",同时在main/CMakeLists.txt的idf_component_register中添加REQUIRES组件名),build时自动下载集成。回复简要总结结果即可。重要: build/flash/closed-loop是长时间同步命令(可能需要数分钟),exec_shell执行后必须耐心等待结果返回,绝不要在命令运行中重复执行同一命令或尝试跳过,否则会导致进程冲突和崩溃。如果收到\"Another espsmith command is running\"错误,说明上一次命令仍在运行,必须等待其完成,不要重试。"
     } else {
-        "路径已预配置。编译直接执行build命令即可,不要携带--target参数(除非用户明确要求切换芯片,因为set-target会触发完全重配置非常慢)。若build失败报告错误即可。烧录前确认编译目标与硬件一致。引入第三方组件必须在main/idf_component.yml声明依赖(如espressif/led_strip:\"*\"),同时在main/CMakeLists.txt的idf_component_register中添加REQUIRES组件名,禁止手动下载源码或git submodule,build时自动下载集成。回复简要总结结果即可。重要: build/flash/closed-loop是长时间同步命令(可能需要数分钟),exec_shell执行后必须耐心等待结果返回,绝不要在命令运行中重复执行同一命令或尝试跳过,否则会导致进程冲突和崩溃。如果收到\"Another espsmith command is running\"错误,说明上一次命令仍在运行,必须等待其完成,不要重试。"
+        "路径已预配置。编译直接执行build命令即可,不要携带--target参数(除非用户明确要求切换芯片,因为set-target会触发完全重配置非常慢)。若build失败报告错误即可。烧录前确认编译目标与硬件一致。优先通过组件注册表引入(在main/idf_component.yml声明依赖如espressif/led_strip:\"*\",同时在main/CMakeLists.txt的idf_component_register中添加REQUIRES组件名),build时自动下载集成。回复简要总结结果即可。重要: build/flash/closed-loop是长时间同步命令(可能需要数分钟),exec_shell执行后必须耐心等待结果返回,绝不要在命令运行中重复执行同一命令或尝试跳过,否则会导致进程冲突和崩溃。如果收到\"Another espsmith command is running\"错误,说明上一次命令仍在运行,必须等待其完成,不要重试。"
     };
 
     let resolved_chip = target_chip
@@ -1209,17 +1305,18 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
 
     if is_jtag {
         let jtag_label = conn_info.mode_label.as_str();
-        let closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"", cli=cli_exe, project=project, idf=idf, port=detected_port);
-        let jtag_check_cmd = format!("{cli} jtag-runtime-check --project \"{project}\" --idf \"{idf}\" --port \"{port}\" --chip {chip}", cli=cli_exe, project=project, idf=idf, port=detected_port, chip=resolved_chip);
+        let closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
+        let jtag_check_cmd = format!("{cli} jtag-runtime-check --project \"{project}\" --idf \"{idf}\" --port \"{port}\" --chip {chip}{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, chip=resolved_chip, ipc=ipc_addr_arg);
         let openocd_start_cmd = format!("{cli} openocd-start --chip {chip}", cli=cli_exe, chip=resolved_chip);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者，当前连接模式={jtag_label}(JTAG)，芯片={chip}。文件: list_directory, read_file, write_file。{direct_rule}{chip_warn}{port_warn}{hw_hint}{civ_context}\n编译: exec_shell {build_cmd}\nJTAG闭环验证(首选): exec_shell {closed_loop_cmd}\n  - closed-loop内部自动处理: OpenOCD启动→烧录→串口验证→GDB PC/堆栈验证，一条命令搞定\n  - 如果closed-loop失败，根据错误信息修复代码后重试，不要手动操作OpenOCD/GDB\nJTAG深度检查(仅限设断点/观察变量时): exec_shell {jtag_check_cmd}\n  - 如果jtag-runtime-check失败，回退到closed-loop即可，不要手动连接GDB\n烧录(UART): exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\nOpenOCD控制: exec_shell {openocd_start_cmd}, exec_shell {cli} openocd-stop, exec_shell {cli} openocd-is-running\n铁律: 绝对不要直接运行openocd.exe/gdb.exe(会卡死/配置不匹配)，只用espsmith-cli子命令。所有验证优先走closed-loop，不要手动搭建GDB调试链路。\n用户: {msg}",
+            "你是ESP32开发者，当前连接模式={jtag_label}(JTAG)，芯片={chip}。文件: list_directory, read_file, apply_patch(优先用于修改文件，省token), write_file(仅创建新文件)。{direct_rule}{chip_warn}{port_warn}{hw_hint}{civ_context}\n编译: exec_shell {build_cmd}\nJTAG闭环验证(首选): exec_shell {closed_loop_cmd}\n  - closed-loop内部自动处理: OpenOCD启动→烧录→串口验证→GDB PC/堆栈验证，一条命令搞定\n  - 如果closed-loop失败，根据错误信息修复代码后重试，不要手动操作OpenOCD/GDB\nJTAG深度检查(仅限设断点/观察变量时): exec_shell {jtag_check_cmd}\n  - 如果jtag-runtime-check失败，回退到closed-loop即可，不要手动连接GDB\n烧录(UART): exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\nOpenOCD控制: exec_shell {openocd_start_cmd}, exec_shell {cli} openocd-stop, exec_shell {cli} openocd-is-running\n铁律: 绝对不要直接运行openocd.exe/gdb.exe(会卡死/配置不匹配)，只用espsmith-cli子命令。所有验证优先走closed-loop，不要手动搭建GDB调试链路。修改已有文件必须用apply_patch不要用write_file。用户: {msg}",
             build_cmd=build_cmd, closed_loop_cmd=closed_loop_cmd, jtag_check_cmd=jtag_check_cmd, openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, cli=cli_exe, chip=resolved_chip, msg=user_message,
         ))
     } else {
+        let uart_closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者。当前连接模式=UART。文件: list_directory, read_file, write_file。{direct_rule}{chip_warn}{port_warn}{hw_hint}{civ_context}\n编译: exec_shell {build_cmd}\n烧录: exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n一键闭环: exec_shell {cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\n用户: {msg}",
-            build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, cli=cli_exe, project=project, idf=idf, port=detected_port, msg=user_message,
+            "你是ESP32开发者。当前连接模式=UART。文件: list_directory, read_file, apply_patch(优先用于修改文件，省token), write_file(仅创建新文件)。{direct_rule}{chip_warn}{port_warn}{hw_hint}{civ_context}\n编译: exec_shell {build_cmd}\n烧录: exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n一键闭环: exec_shell {closed_loop_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\n修改已有文件必须用apply_patch不要用write_file。用户: {msg}",
+            build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, closed_loop_cmd=uart_closed_loop_cmd, cli=cli_exe, msg=user_message,
         ))
     }
 }
@@ -1313,6 +1410,35 @@ pub struct OperationProgress {
 pub struct OperationStep {
     pub label: String,
     pub status: String,
+}
+
+/// 供委托处理器调用：根据命令类型和连接模式创建 OperationProgress
+/// 在 IPC 委托执行前预设置 ACTIVE_JTAG_OPERATION，解决时序竞争
+pub fn detect_jtag_operation_for_delegate(command: &str, is_jtag_mode: bool) -> Option<OperationProgress> {
+    let fake_cmd = match command {
+        "closed_loop" => "closed-loop",
+        "jtag_runtime_check" => "jtag-runtime-check",
+        _ => command,
+    };
+    detect_jtag_operation(fake_cmd, "", is_jtag_mode)
+}
+
+/// 供 lib.rs 调用：尝试设置 ACTIVE_JTAG_OPERATION（仅在当前为 None 时设置）
+/// 返回 true 表示成功设置（之前为 None）
+pub fn try_set_active_operation(op: OperationProgress) -> bool {
+    let mut active = ACTIVE_JTAG_OPERATION.lock().unwrap();
+    if active.is_none() {
+        *active = Some(op);
+        true
+    } else {
+        false
+    }
+}
+
+/// 供 lib.rs 调用：获取 ACTIVE_JTAG_OPERATION 的锁
+/// 返回 MutexGuard，调用者可以在持有锁期间读取/修改操作状态
+pub fn lock_active_operation() -> std::sync::MutexGuard<'static, Option<OperationProgress>> {
+    ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn detect_jtag_operation(command: &str, tool_use_id: &str, is_jtag_mode: bool) -> Option<OperationProgress> {
@@ -1465,7 +1591,7 @@ fn is_sensitive_tool(name: &str, input: Option<&serde_json::Value>) -> bool {
         }
         return !command.is_empty();
     }
-    matches!(lower_name.as_str(), "write_file")
+    matches!(lower_name.as_str(), "write_file" | "apply_patch")
 }
 
 fn describe_sensitive_operation(name: &str, input: Option<&serde_json::Value>) -> String {
@@ -1475,6 +1601,10 @@ fn describe_sensitive_operation(name: &str, input: Option<&serde_json::Value>) -
         return format!("i18n:aiBackend.deleteFile|path={}", path);
     }
     if lower_name == "write_file" {
+        let path = input.and_then(|v| v.get("path").and_then(|p| p.as_str())).unwrap_or("i18n:aiBackend.unknown");
+        return format!("i18n:aiBackend.writeFile|path={}", path);
+    }
+    if lower_name == "apply_patch" {
         let path = input.and_then(|v| v.get("path").and_then(|p| p.as_str())).unwrap_or("i18n:aiBackend.unknown");
         return format!("i18n:aiBackend.writeFile|path={}", path);
     }
@@ -1491,7 +1621,6 @@ fn describe_sensitive_operation(name: &str, input: Option<&serde_json::Value>) -
 fn ensure_project_agent_instructions(
     project_path: Option<&str>,
     idf_path: Option<&str>,
-    ael_path: Option<&str>,
 ) -> Result<(), String> {
     let project_path = match project_path {
         Some(path) if !path.trim().is_empty() => PathBuf::from(path),
@@ -1510,7 +1639,8 @@ fn ensure_project_agent_instructions(
 - 目标框架: ESP-IDF {idf_ver}
 - ESP-IDF 路径: `{idf_path}`（已预配置，无需检查 idf.py 存在性）
 - 编译烧录通过 `exec_shell` 调用 `espsmith-cli.exe` 子命令完成（必须用 espsmith-cli.exe 而非 espsmith.exe，因为后者是GUI程序无法输出到管道）
-- `list_directory` / `read_file` / `write_file` 仅限项目目录内使用
+- `list_directory` / `read_file` / `apply_patch` / `write_file` 仅限项目目录内使用
+- **优先使用 `apply_patch` 修改文件**：`apply_patch` 接受 unified diff 格式，仅传输变更部分，节省 token 且更安全。仅在创建新文件或重写整个文件时才使用 `write_file`
 
 ## 构建/烧录/监控命令（通过 exec_shell 执行）
 
@@ -1534,7 +1664,7 @@ fn ensure_project_agent_instructions(
 ## 闭环工作流（必须按此顺序执行）
 
 1. **检查项目** — 用 `list_directory` / `read_file` 了解现有代码
-2. **编辑代码** — 用 `write_file` 修改源文件
+2. **编辑代码** — 优先用 `apply_patch` 修改源文件（仅传变更行，省 token），创建新文件时才用 `write_file`
 3. **构建** — 用 `exec_shell` 执行 `espsmith-cli.exe build ...`
 4. **JTAG闭环验证(首选，强烈推荐)** — 构建成功后，用 `exec_shell` 执行:
    - `espsmith-cli.exe closed-loop --project <项目路径> --idf <IDF路径> --port <串口>` 一键构建→烧录→验证
@@ -1551,6 +1681,19 @@ fn ensure_project_agent_instructions(
 ## 关键规则
 - ESP-IDF 已预配置，无需检查或验证 IDF 路径/工具链，直接构建即可
 - 所有操作均通过 `exec_shell` + `espsmith-cli.exe` 子命令完成（不要用 espsmith.exe）
+- **修改已有文件必须优先使用 `apply_patch`**（unified diff 格式），避免 `write_file` 全量写入浪费 token。`apply_patch` 格式示例：
+  ```
+  --- a/main/main.c
+  +++ b/main/main.c
+  @@ -10,6 +10,8 @@
+   #include "freertos/FreeRTOS.h"
+   #include "freertos/task.h"
+
+  +#include "driver/gpio.h"
+  +
+   void app_main(void)
+  ```
+  仅在创建全新文件时使用 `write_file`
 - **禁止**直接调用 idf.py、export.bat、install.bat、pip install 等命令
 - **禁止**直接运行 openocd.exe、xtensa-esp-elf-gdb.exe 等底层工具（会因配置不匹配而失败），所有 JTAG/GDB 操作通过 espsmith-cli 子命令完成
 - **禁止**安装、修复、删除或重装 ESP-IDF/工具链，IDE 已完成配置
@@ -1572,7 +1715,7 @@ fn ensure_project_agent_instructions(
     idf_component_register(SRCS "main.c" INCLUDE_DIRS "." REQUIRES led_strip)
     ```
   - 添加后执行 `espsmith-cli.exe build --project ... --idf ...` 即可自动下载并集成
-  - **禁止**手动下载组件源码放入项目目录、**禁止**使用 git submodule 方式引入组件
+  - **优先**通过组件注册表引入组件，避免手动下载组件源码或使用 git submodule 方式
   - 常用组件注册表：ESP-IDF 官方组件在 `https://components.espressif.com/`，IDF 额外组件在 `https://github.com/espressif/idf-extra-components`
   - 如果用户要求引入的组件在 Component Registry 中不存在，应告知用户该组件暂不支持自动管理，建议手动放置到 `main/components/` 目录下并在该目录创建 `CMakeLists.txt`
 - **必须回复**: 每次工具调用完成后，必须用中文向用户汇报结果
@@ -1583,56 +1726,55 @@ fn ensure_project_agent_instructions(
         idf_path = idf_path.unwrap_or("(not configured)")
     );
 
-    // Append AEL multi-instrument closed-loop section if ael_path is configured
-    let has_ael = ael_path.map_or(false, |p| !p.trim().is_empty());
-    let ael_section = if has_ael {
-        format!(
-            r#"
-<!-- AEL-MULTI-INSTRUMENT:START -->
-# AEL 多仪器闭环调试（跨平台验证）
+    // Append Experience Engine section
+    let experience_section = format!(
+        r#"
+<!-- EXPERIENCE-ENGINE:START -->
+# Experience 经验引擎（AI 疑难杂症积累与自愈）
 
-## 当 ESP32 代码涉及外设驱动/协议实现时，应同时使用 AEL 在以下平台验证：
+## 经验数据存储在全局共享目录（所有 ESP32 项目共用），跨项目复用疑难修复经验。
+## 只记录真正有价值的疑难问题，不记录常规编译错误、配置拼写等简单问题。
 
-| 平台 | 关键差异 |
-|------|---------|
-| STM32F103 | ARM Cortex-M3, GPIO/SPI/I2C 寄存器差异 |
-| RP2040 | 双核 Cortex-M0+, PIO 状态机 |
-| CH32V | RISC-V 架构, WCH 外设寄存器 |
-| nRF52840 | ARM Cortex-M4, BLE 协议栈 |
-| FPGA (iCE40) | 纯硬件实现, LUT/FF 约束 |
-
-## AEL MCP 工具
+## Experience MCP 工具
 
 | 工具 | 功能 |
 |------|------|
-| `ael_experience_context(board, test)` | 查询历史运行经验（**运行前必须调用**） |
-| `ael_run_test(board, test)` | 运行完整闭环测试（preflight→build→flash→verify） |
-| `ael_run_pack(pack, board)` | 运行测试套件 |
-| `ael_record_skill(trigger, fix, lesson, scope)` | 记录修复经验（**修复问题后必须调用**） |
-| `ael_instrument_doctor(id)` | 检查仪器健康状态 |
-| `ael_list_boards` | 列出可用开发板 |
-| `ael_list_instruments` | 列出已注册仪器 |
+| `query_experience(board, test)` | 查询历史疑难经验 |
+| `record_experience(trigger, fix, lesson, scope)` | 记录疑难修复经验 |
 
-## 跨平台闭环工作流
+## 疑难杂症闭环工作流
 
-1. **查询经验** — `ael_experience_context` 获取已知陷阱和修复技能
-2. **运行测试** — `ael_run_test` 在其他平台运行相同逻辑的测试
-3. **对比结果** — ESP32 vs STM32 vs RP2040 的寄存器/时序差异
-4. **修复并记录** — 用 `ael_record_skill` 记录跨平台兼容性修复
-5. **重新构建** — 回到 EspSmith 工具链重新构建 ESP32 代码
+1. **执行操作** — 编写代码、运行命令、烧录等
+2. **遇到疑难** — 非常规错误：API 行为与文档不符、ESP-IDF 已知 bug、硬件时序陷阱等
+3. **查询经验** — `query_experience` 查询是否有同类疑难问题的历史修复方案
+4. **按经验修复** — 如果经验引擎有记录，优先按历史方案修复；否则自行分析修复
+5. **记录经验** — 用 `record_experience` 记录疑难触发条件、修复方法和经验教训
+6. **重新构建** — 基于修复结果重新构建和验证
+
+## 什么算疑难杂症（应记录）
+- ESP-IDF API 行为与官方文档不一致，需要 workaround
+- 特定芯片型号的硬件 errata 或已知 bug
+- 外设驱动的时序陷阱（如 SPI/I2C 需要特定延迟才能稳定）
+- 内存管理问题（如 DMA 对齐要求、PSRAM 限制）
+- Wi-Fi/BLE 协议栈的非常规行为
+- 多次尝试才找到根因的隐蔽问题
+
+## 什么不算疑难杂症（不应记录）
+- 常规编译错误（缺少头文件、语法错误）
+- 配置拼写错误（Kconfig 选项名写错）
+- 简单的依赖缺失（未声明 REQUIRES）
+- 烧录端口选错等操作失误
 
 ## 关键规则
-- 发现外设驱动 bugs 后，**同时**在 ESP32 和 AEL 平台验证修复
-- 跨平台发现的寄存器级差异必须通过 `ael_record_skill` 记录为工程经验
-- `ael_experience_context` 应在每次 `ael_run_test` 之前调用
-<!-- AEL-MULTI-INSTRUMENT:END -->
+- 遇到疑难问题时，**先调用 `query_experience` 查询历史修复方案**，有记录则优先按经验修复
+- 修复疑难问题后，**必须**通过 `record_experience` 记录：触发条件(trigger)、修复方法(fix)、经验教训(lesson)、适用范围(scope)
+- `scope` 应填写具体的 ESP32 芯片型号（如 `esp32`、`esp32s3`、`esp32c3`）
+- 重复犯相同疑难错误是严重问题，经验引擎的核心目的就是避免此类情况
+<!-- EXPERIENCE-ENGINE:END -->
 "#
-        )
-    } else {
-        String::new()
-    };
+    );
 
-    let block = format!("{block}{ael_section}");
+    let block = format!("{block}{experience_section}");
 
     let updated = if let (Some(start_idx), Some(end_idx)) = (existing.find(start), existing.find(end)) {
         let after_end = end_idx + end.len();
@@ -1650,7 +1792,6 @@ fn ensure_project_agent_instructions(
 fn ensure_codewhale_mcp_server(
     project_path: Option<&str>,
     idf_path: Option<&str>,
-    ael_path: Option<&str>,
 ) -> Result<(), String> {
     let project_path = match project_path {
         Some(path) if !path.trim().is_empty() => path,
@@ -1698,34 +1839,6 @@ fn ensure_codewhale_mcp_server(
         "enabled_tools": [],
         "disabled_tools": []
     });
-
-    // Register AEL MCP Server if ael_path is configured
-    if let Some(ael_dir) = ael_path.filter(|v| !v.trim().is_empty()) {
-        let ael_script = PathBuf::from(ael_dir).join("ael_mcp_server.py");
-        if ael_script.exists() {
-            let python = find_python_on_path();
-            root["servers"]["ael-embedded-lab"] = serde_json::json!({
-                "command": python,
-                "args": [ael_script.to_string_lossy()],
-                "env": {
-                    "AEL_HOME": ael_dir,
-                    "PYTHONUNBUFFERED": "1"
-                },
-                "url": null,
-                "connect_timeout": null,
-                "execute_timeout": 600,
-                "read_timeout": 600,
-                "disabled": false,
-                "enabled": true,
-                "required": false,
-                "enabled_tools": [],
-                "disabled_tools": []
-            });
-            info!("Registered AEL MCP server: {}", ael_script.display());
-        } else {
-            info!("AEL MCP server script not found at: {}", ael_script.display());
-        }
-    }
 
     std::fs::write(
         &mcp_path,
@@ -1786,11 +1899,153 @@ fn find_python_on_path() -> String {
     if cfg!(windows) { "python".to_string() } else { "python3".to_string() }
 }
 
+// ─── Experience 经验库管理 ─────────────────────────────────────────
+
+/// 获取经验库目录路径
+fn experience_dir() -> PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("espsmith")
+        .join("experience")
+}
+
+/// 打开经验库所在目录
 #[tauri::command]
-pub async fn ai_set_ael_path(path: Option<String>) -> Result<(), String> {
-    let mut client = AI_CLIENT.lock().await;
-    client.config.ael_path = path;
-    Ok(())
+pub async fn experience_open_dir() -> Result<String, String> {
+    let dir = experience_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建经验库目录失败: {e}"))?;
+    opener::open(&dir).map_err(|e| format!("打开目录失败: {e}"))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// 导出经验库为 JSON 文件
+#[tauri::command]
+pub async fn experience_export(export_path: String) -> Result<String, String> {
+    let dir = experience_dir();
+    let skills_dir = dir.join("skills");
+    let stats_dir = dir.join("stats");
+
+    let mut skills: Vec<serde_json::Value> = Vec::new();
+    if skills_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+            for entry in entries.flatten() {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        skills.push(val);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut stats: Vec<serde_json::Value> = Vec::new();
+    if stats_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&stats_dir) {
+            for entry in entries.flatten() {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        stats.push(val);
+                    }
+                }
+            }
+        }
+    }
+
+    let export_data = serde_json::json!({
+        "version": 1,
+        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "skills": skills,
+        "stats": stats,
+    });
+
+    let content = serde_json::to_string_pretty(&export_data)
+        .map_err(|e| format!("序列化失败: {e}"))?;
+    std::fs::write(&export_path, content)
+        .map_err(|e| format!("写入文件失败: {e}"))?;
+
+    let count = skills.len();
+    Ok(format!("已导出 {count} 条经验到 {}", export_path))
+}
+
+/// 从 JSON 文件导入经验库（合并，不覆盖已有记录）
+#[tauri::command]
+pub async fn experience_import(import_path: String) -> Result<String, String> {
+    let content = std::fs::read_to_string(&import_path)
+        .map_err(|e| format!("读取文件失败: {e}"))?;
+    let data: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("解析 JSON 失败: {e}"))?;
+
+    let dir = experience_dir();
+    let skills_dir = dir.join("skills");
+    let stats_dir = dir.join("stats");
+    std::fs::create_dir_all(&skills_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&stats_dir).map_err(|e| e.to_string())?;
+
+    // 导入 skills（跳过已存在的）
+    let mut imported_skills = 0u32;
+    let mut skipped_skills = 0u32;
+    if let Some(skills) = data.get("skills").and_then(|v| v.as_array()) {
+        for skill in skills {
+            if let Some(id) = skill.get("id").and_then(|v| v.as_str()) {
+                let dest = skills_dir.join(format!("{id}.json"));
+                if dest.exists() {
+                    skipped_skills += 1;
+                } else {
+                    let json = serde_json::to_string_pretty(skill)
+                        .map_err(|e| format!("序列化 skill 失败: {e}"))?;
+                    std::fs::write(&dest, json)
+                        .map_err(|e| format!("写入 skill 失败: {e}"))?;
+                    imported_skills += 1;
+                }
+            }
+        }
+    }
+
+    // 导入 stats（覆盖合并）
+    let mut imported_stats = 0u32;
+    if let Some(stats) = data.get("stats").and_then(|v| v.as_array()) {
+        for stat in stats {
+            // stats 文件名从 board 和 test 字段推导
+            let board = stat.get("board").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let test = stat.get("test").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let dest = stats_dir.join(format!("{board}__{test}.json"));
+            let json = serde_json::to_string_pretty(stat)
+                .map_err(|e| format!("序列化 stat 失败: {e}"))?;
+            std::fs::write(&dest, json)
+                .map_err(|e| format!("写入 stat 失败: {e}"))?;
+            imported_stats += 1;
+        }
+    }
+
+    Ok(format!(
+        "导入完成: {imported_skills} 条新经验, {skipped_skills} 条已存在跳过, {imported_stats} 条统计记录"
+    ))
+}
+
+/// 获取经验库统计信息
+#[tauri::command]
+pub async fn experience_stats() -> Result<serde_json::Value, String> {
+    let dir = experience_dir();
+    let skills_dir = dir.join("skills");
+    let stats_dir = dir.join("stats");
+
+    let skill_count = if skills_dir.exists() {
+        std::fs::read_dir(&skills_dir).map(|e| e.count()).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let stat_count = if stats_dir.exists() {
+        std::fs::read_dir(&stats_dir).map(|e| e.count()).unwrap_or(0)
+    } else {
+        0
+    };
+
+    Ok(serde_json::json!({
+        "skillCount": skill_count,
+        "statCount": stat_count,
+        "path": dir.to_string_lossy(),
+    }))
 }
 
 // ─── CodeWhale 内置安装 ────────────────────────────────────────────

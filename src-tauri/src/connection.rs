@@ -352,7 +352,10 @@ pub fn start_port_watcher(app_handle: tauri::AppHandle) {
                 );
                 last_fingerprint = current;
 
-                let mut info = detect_connection_mode(None);
+                // 使用当前用户选择的 flash_port 作为 target_port，
+                // 确保连接模式检测与 UI 选择的串口一致
+                let current_flash_port = crate::ai_assistant::get_cached_flash_port();
+                let mut info = detect_connection_mode(current_flash_port.as_deref());
                 let new_mode = info.mode;
 
                 // If VID/PID couldn't determine the exact chip (e.g. PID 0x1001),

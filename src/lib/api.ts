@@ -69,13 +69,8 @@ export async function startAI(): Promise<void> {
                 enableToolUse: true,
                 projectPath: project?.path ?? null,
                 idfPath: idfStatus.active?.idf_path || settings.idfPath || null,
-                aelPath: settings.aelPath || null,
             },
         });
-        // Also set AEL path separately for runtime updates
-        if (settings.aelPath) {
-            await invoke('ai_set_ael_path', { path: settings.aelPath });
-        }
     }
 }
 

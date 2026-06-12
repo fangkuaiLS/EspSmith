@@ -18,8 +18,8 @@ use std::sync::Mutex;
 
 static EXPERIENCE: Mutex<Option<engine::ExperienceEngine>> = Mutex::new(None);
 
-/// Initialize the global Experience Engine with a project-specific base directory.
-/// Typically called once at startup with `<project>/.espsmith/experience`.
+/// Initialize the global Experience Engine with a shared base directory.
+/// Typically called once at startup with `<data_dir>/espsmith/experience`.
 pub fn init(base_dir: PathBuf) {
     let mut guard = EXPERIENCE.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(engine::ExperienceEngine::new(Some(base_dir)));

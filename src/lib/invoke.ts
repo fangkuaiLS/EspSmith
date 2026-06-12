@@ -274,6 +274,12 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
             return 'missing' as unknown as T;
         case 'setup_codewhale':
             return 'installed' as unknown as T;
+        case 'experience_stats':
+            return { skillCount: 0, statCount: 0, path: '' } as unknown as T;
+        case 'experience_open_dir':
+        case 'experience_export':
+        case 'experience_import':
+            return null;
 
         default:
             console.warn(`[invoke] Unknown command in browser mode: ${cmd}`);

@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, FolderOpen, RefreshCw, Check, AlertTriangle, Loader2, Cpu, Bot, Shield, Globe, Download, ChevronDown, ExternalLink, Sparkles } from 'lucide-react';
+import { X, FolderOpen, RefreshCw, Check, AlertTriangle, Loader2, Cpu, Bot, Shield, Globe, Download, ChevronDown, ExternalLink, Sparkles, Database, Upload, HardDrive } from 'lucide-react';
 import { useSettingsStore } from '../../stores';
 import { AppSettings } from '../../types';
 import { getCurrentLanguage, switchLanguage, translateBackendString } from '../../i18n';
@@ -36,6 +36,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string } | null>(null);
   const [updateProgress, setUpdateProgress] = useState<number>(0);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [expStats, setExpStats] = useState<{ skillCount: number; statCount: number; path: string } | null>(null);
+  const [expLoading, setExpLoading] = useState(false);
+  const [expMessage, setExpMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const downloadBytesRef = useRef(0);
   const downloadTotalRef = useRef(0);
 
@@ -48,6 +51,17 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   };
 
   useEffect(() => { checkCodewhaleStatus(); }, []);
+
+  const loadExpStats = async () => {
+    setExpLoading(true);
+    try {
+      const stats = await safeInvoke<{ skillCount: number; statCount: number; path: string }>('experience_stats');
+      setExpStats(stats);
+    } catch { setExpStats(null); }
+    finally { setExpLoading(false); }
+  };
+
+  useEffect(() => { loadExpStats(); }, []);
 
   const handleInstallCodewhale = async () => {
     setIsInstallingCodewhale(true);
@@ -94,6 +108,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           await validateIDFPathFunc(path);
         }
       } catch {
+        // 降级到手动输入
         goManualInput();
       }
     } else {
@@ -258,7 +273,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                         type="text"
                         value={localSettings.pythonPath || ''}
                         onChange={(e) => setLocalSettings({ ...localSettings, pythonPath: e.target.value })}
-                        placeholder="C:\\Espressif\\tools\\python\\v0.1.1\\venv\\Scripts\\python.exe"
+                        placeholder="C:\\Espressif\\tools\\python\\v0.1.3\\venv\\Scripts\\python.exe"
                         className="flex-1 px-3 py-2 text-[13px] bg-surface-overlay border border-border-subtle rounded-lg text-text-primary placeholder:text-text-disabled focus:outline-none font-mono"
                       />
                       <button
@@ -401,6 +416,115 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     <p className="text-[11px] text-success mt-2">{t('settings.codewhaleInstallSuccess')}</p>
                   )}
                 </div>
+
+                {/* Experience 经验库管理 */}
+                <div className="border-t border-border-subtle pt-5">
+                  <h3 className="text-[13px] font-semibold mb-3 flex items-center gap-2">
+                    <Database size={14} />
+                    经验库管理
+                  </h3>
+                  <p className="text-[11px] text-text-tertiary mb-3">
+                    经验库记录 AI 在 ESP32 开发中遇到的疑难杂症及修复方案，所有项目共享。重做系统或换电脑前请导出备份。
+                  </p>
+
+                  <div className="p-3 bg-surface-overlay rounded-lg border border-border-subtle mb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {expLoading ? (
+                          <Loader2 size={14} className="text-text-tertiary animate-spin" />
+                        ) : expStats && expStats.skillCount > 0 ? (
+                          <Check size={14} className="text-success" />
+                        ) : (
+                          <HardDrive size={14} className="text-text-tertiary" />
+                        )}
+                        <span className="text-[13px] text-text-secondary">
+                          {expLoading ? '...' : expStats ? `${expStats.skillCount} 条经验记录` : '暂无经验记录'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={loadExpStats}
+                        className="flex items-center gap-1 px-2 py-1 text-[11px] bg-surface-hover border border-border-subtle rounded-md text-text-tertiary hover:text-text-primary transition-colors"
+                      >
+                        <RefreshCw size={11} />
+                        刷新
+                      </button>
+                    </div>
+                    {expStats?.path && (
+                      <p className="text-[10px] text-text-tertiary mt-1.5 font-mono truncate">{expStats.path}</p>
+                    )}
+                  </div>
+
+                  {expMessage && (
+                    <p className={`text-[11px] mb-2 ${expMessage.type === 'success' ? 'text-success' : 'text-error'}`}>
+                      {expMessage.text}
+                    </p>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        setExpMessage(null);
+                        try {
+                          await safeInvoke<string>('experience_open_dir');
+                        } catch (err: any) {
+                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || '打开失败') });
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 text-[12px] bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <FolderOpen size={14} />
+                      打开目录
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setExpMessage(null);
+                        try {
+                          const { save } = await import('@tauri-apps/plugin-dialog');
+                          const path = await save({
+                            defaultPath: `espsmith-experience-${new Date().toISOString().slice(0, 10)}.json`,
+                            filters: [{ name: 'JSON', extensions: ['json'] }],
+                          });
+                          if (path) {
+                            const result = await safeInvoke<string>('experience_export', { exportPath: path });
+                            setExpMessage({ type: 'success', text: result || '导出成功' });
+                            loadExpStats();
+                          }
+                        } catch (err: any) {
+                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || '导出失败') });
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 text-[12px] bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <Download size={14} />
+                      导出
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setExpMessage(null);
+                        try {
+                          const { open } = await import('@tauri-apps/plugin-dialog');
+                          const selected = await open({
+                            multiple: false,
+                            filters: [{ name: 'JSON', extensions: ['json'] }],
+                            title: '选择经验库文件',
+                          });
+                          if (selected) {
+                            const filePath = Array.isArray(selected) ? selected[0] : selected;
+                            const result = await safeInvoke<string>('experience_import', { importPath: filePath });
+                            setExpMessage({ type: 'success', text: result || '导入成功' });
+                            loadExpStats();
+                          }
+                        } catch (err: any) {
+                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || '导入失败') });
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 text-[12px] bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+                    >
+                      <Upload size={14} />
+                      导入
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -467,7 +591,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center text-accent font-bold text-[16px]">ES</div>
                     <div>
                       <p className="text-[14px] font-semibold">EspSmith</p>
-                      <p className="text-[12px] text-text-tertiary font-mono">v0.1.1</p>
+                      <p className="text-[12px] text-text-tertiary font-mono">v0.1.3</p>
                     </div>
                   </div>
                   <p className="text-[12px] text-text-tertiary mt-3">{t('settings.aboutDesc')}</p>
@@ -547,6 +671,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                             setUpdateError(null);
                             const { check } = await import('@tauri-apps/plugin-updater');
                             const update = await check();
+                            // null = no update available (already latest)
                             if (!update) {
                               setUpdateStatus('up-to-date');
                             } else if (update.available) {
@@ -617,7 +742,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-border-default flex items-center justify-between gap-2">
-          <span className="text-[11px] text-text-tertiary font-mono tracking-wide">EspSmith v0.1.1</span>
+          <span className="text-[11px] text-text-tertiary font-mono tracking-wide">EspSmith v0.1.3</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 text-[12px] font-medium bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors">
               {t('settings.cancel')}
