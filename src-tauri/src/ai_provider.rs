@@ -364,7 +364,7 @@ pub fn convert_mimo_event(raw: &serde_json::Value) -> Option<Vec<serde_json::Val
         }
         "error" => {
             // MiMo: {"type":"error","error":{...}}
-            // 转为 stderr 风格的错误，让 ai_assistant 能捕获
+            // 转为 CodeWhale 兼容的 done 事件 + 将错误信息放入 output
             let error_msg = if let Some(msg) = raw["error"]["data"]["message"].as_str() {
                 msg.to_string()
             } else if let Some(name) = raw["error"]["name"].as_str() {
@@ -373,7 +373,17 @@ pub fn convert_mimo_event(raw: &serde_json::Value) -> Option<Vec<serde_json::Val
                 "Unknown MiMo-Code error".to_string()
             };
             tracing::error!("MiMo-Code error: {}", error_msg);
-            // 不产生 CodeWhale 兼容事件，错误通过 stderr 捕获
+            // 产生一个 content 事件让 output 非空，这样错误信息能传递到前端
+            results.push(serde_json::json!({
+                "type": "content",
+                "content": format!("❌ MiMo-Code 错误: {}", error_msg)
+            }));
+            // 同时产生 done 事件结束循环
+            let session_id = raw["sessionID"].as_str().unwrap_or("");
+            results.push(serde_json::json!({
+                "type": "done",
+                "session_id": session_id
+            }));
         }
         "step_start" | "reasoning" => {
             // step_start 和 reasoning 不需要转换为 CodeWhale 格式

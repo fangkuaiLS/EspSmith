@@ -970,9 +970,9 @@ pub async fn ai_send_message(
         let mut status = AI_STATUS.lock().unwrap();
         *status = AIStatus::Error;
         if !stderr_lines.is_empty() {
-            return Err(format!("CodeWhale error:\n{}", stderr_lines.join("\n")));
+            return Err(format!("{} error:\n{}", provider_name, stderr_lines.join("\n")));
         }
-        return Err("CodeWhale returned no response. Check the API key and network access.".into());
+        return Err(format!("{} returned no response. Check the API key and network access.", provider_name));
     }
 
     {
