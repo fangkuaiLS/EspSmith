@@ -58,10 +58,8 @@ export async function startAI(): Promise<void> {
 
         if (settings.aiModel === 'ollama') {
             model = 'ollama';
-        } else if (settings.aiModel === 'mimo') {
-            // MiMo-Code 使用自己的模型选择，这里传 mimo 标识
-            model = 'mimo';
         }
+        // MiMo-Code 使用相同的模型名，Provider 会自动添加 provider/ 前缀
 
         await invoke('ai_start', {
             config: {

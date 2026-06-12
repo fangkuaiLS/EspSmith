@@ -49,24 +49,49 @@ const STATUS_CONFIG: Record<AIStatus, { labelKey: string; dotClass: string }> = 
 
 
 
+interface ToolchainOption {
+  id: string;
+  label: string;
+  aiModel: 'deepseek' | 'ollama' | 'mimo';
+}
+
+const TOOLCHAIN_OPTIONS: ToolchainOption[] = [
+  { id: 'codewhale', label: 'CodeWhale', aiModel: 'deepseek' },
+  { id: 'mimo', label: 'MiMo-Code', aiModel: 'mimo' },
+  { id: 'ollama', label: 'Ollama', aiModel: 'ollama' },
+];
+
 interface ModelOption {
   id: string;
   label: string;
-  provider: 'deepseek' | 'ollama' | 'mimo';
   model: string;
 }
 
-const MODEL_OPTIONS: ModelOption[] = [
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'deepseek', model: 'deepseek-v4-pro' },
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', provider: 'deepseek', model: 'deepseek-v4-flash' },
-  { id: 'ollama', label: 'Ollama (Local)', provider: 'ollama', model: 'ollama' },
-  { id: 'mimo', label: 'MiMo-Code', provider: 'mimo', model: 'mimo' },
-];
+// 每个工具链对应的模型列表
+const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
+  codewhale: [
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', model: 'deepseek-v4-pro' },
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash' },
+  ],
+  mimo: [
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', model: 'deepseek-v4-pro' },
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash' },
+  ],
+  ollama: [
+    { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
+  ],
+};
+
+function getCurrentToolchainId(): string {
+  const s = useSettingsStore.getState().settings;
+  if (s.aiModel === 'mimo') return 'mimo';
+  if (s.aiModel === 'ollama') return 'ollama';
+  return 'codewhale';
+}
 
 function getCurrentModelId(): string {
   const s = useSettingsStore.getState().settings;
   if (s.aiModel === 'ollama') return 'ollama';
-  if (s.aiModel === 'mimo') return 'mimo';
   return s.deepseekModel || 'deepseek-v4-pro';
 }
 
@@ -121,6 +146,8 @@ export function ChatPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const [toolchainOpen, setToolchainOpen] = useState(false);
+  const toolchainDropdownRef = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyDropdownRef = useRef<HTMLDivElement>(null);
   const [permOpen, setPermOpen] = useState(false);
@@ -198,24 +225,31 @@ export function ChatPanel() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [stopAI, clearMessages, startAI, loadSessions]);
 
-  const handleModelChange = useCallback(async (option: ModelOption) => {
-    setModelOpen(false);
-    if (option.id === currentModelId) return;
+  const handleToolchainChange = useCallback(async (option: ToolchainOption) => {
+    setToolchainOpen(false);
+    const currentToolchain = getCurrentToolchainId();
+    if (option.id === currentToolchain) return;
     const newSettings = { ...settings };
-    if (option.provider === 'deepseek') {
-      newSettings.aiModel = 'deepseek';
-      newSettings.deepseekModel = option.model as 'deepseek-v4-pro' | 'deepseek-v4-flash';
-    } else if (option.provider === 'mimo') {
-      newSettings.aiModel = 'mimo';
-    } else {
-      newSettings.aiModel = 'ollama';
-    }
+    newSettings.aiModel = option.aiModel;
     setSettings(newSettings);
     stopAI();
     clearMessages(true);
     loadSessions();
     setTimeout(() => { startAI(); }, 150);
-  }, [settings, setSettings, stopAI, clearMessages, startAI, currentModelId, loadSessions]);
+  }, [settings, setSettings, stopAI, clearMessages, startAI, loadSessions]);
+
+  const handleModelSelect = useCallback(async (option: ModelOption) => {
+    setModelOpen(false);
+    const currentModel = getCurrentModelId();
+    if (option.id === currentModel) return;
+    const newSettings = { ...settings };
+    newSettings.deepseekModel = option.model as 'deepseek-v4-pro' | 'deepseek-v4-flash';
+    setSettings(newSettings);
+    stopAI();
+    clearMessages(true);
+    loadSessions();
+    setTimeout(() => { startAI(); }, 150);
+  }, [settings, setSettings, stopAI, clearMessages, startAI, loadSessions]);
 
   const handleNewTask = () => {
     stopAI();
@@ -328,32 +362,33 @@ export function ChatPanel() {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="relative" ref={modelDropdownRef}>
+          {/* 工具链选择 */}
+          <div className="relative" ref={toolchainDropdownRef}>
             <button
-              onClick={() => setModelOpen(!modelOpen)}
+              onClick={() => setToolchainOpen(!toolchainOpen)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-overlay border border-border-subtle text-[11px] text-text-secondary hover:text-text-primary hover:border-border-default transition-all"
-              title={t('chat.switchModel')}
+              title="切换工具链"
             >
               <span className="max-w-[100px] truncate">
-                {MODEL_OPTIONS.find(o => o.id === currentModelId)?.label || currentModelId}
+                {TOOLCHAIN_OPTIONS.find(o => o.id === getCurrentToolchainId())?.label || 'CodeWhale'}
               </span>
-              <ChevronDown size={11} className={`transition-transform ${modelOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown size={11} className={`transition-transform ${toolchainOpen ? 'rotate-180' : ''}`} />
             </button>
-            {modelOpen && (
-              <div className="absolute right-0 top-full mt-1 w-[200px] bg-surface-elevated border border-border-default rounded-lg shadow-lg z-50 py-1 animate-scale-in origin-top-right">
-                {MODEL_OPTIONS.map((option) => (
+            {toolchainOpen && (
+              <div className="absolute right-0 top-full mt-1 w-[180px] bg-surface-elevated border border-border-default rounded-lg shadow-lg z-50 py-1 animate-scale-in origin-top-right">
+                {TOOLCHAIN_OPTIONS.map((option) => (
                   <button
                     key={option.id}
-                    onClick={() => handleModelChange(option)}
+                    onClick={() => handleToolchainChange(option)}
                     className={`w-full flex items-center gap-2 px-3 py-2 text-[12px] transition-colors ${
-                      option.id === currentModelId
+                      option.id === getCurrentToolchainId()
                         ? 'bg-accent-muted text-accent'
                         : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
                     }`}
                   >
-                    <div className={`w-2 h-2 rounded-full ${option.id === currentModelId ? 'bg-accent' : 'bg-text-disabled'}`} />
+                    <div className={`w-2 h-2 rounded-full ${option.id === getCurrentToolchainId() ? 'bg-accent' : 'bg-text-disabled'}`} />
                     <span>{option.label}</span>
-                    {option.id === currentModelId && <Check size={12} className="ml-auto text-accent" />}
+                    {option.id === getCurrentToolchainId() && <Check size={12} className="ml-auto text-accent" />}
                   </button>
                 ))}
               </div>
@@ -477,7 +512,42 @@ export function ChatPanel() {
             style={{ minHeight: '36px', maxHeight: '200px' }}
           />
           <div className="flex items-center justify-between px-2 py-1.5">
-            <div className="relative" ref={permDropdownRef}>
+            <div className="flex items-center gap-1">
+              {/* 模型选择 */}
+              <div className="relative" ref={modelDropdownRef}>
+                <button
+                  onClick={() => setModelOpen(!modelOpen)}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all"
+                  title="切换模型"
+                >
+                  <Cpu size={12} />
+                  <span className="max-w-[80px] truncate">
+                    {MODELS_BY_TOOLCHAIN[getCurrentToolchainId()]?.find(o => o.id === getCurrentModelId())?.label || getCurrentModelId()}
+                  </span>
+                  <ChevronDown size={10} className={`transition-transform ${modelOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {modelOpen && (
+                  <div className="absolute left-0 bottom-full mb-1 w-[200px] bg-surface-elevated border border-border-default rounded-lg shadow-lg z-50 py-1 animate-scale-in origin-bottom-left">
+                    {MODELS_BY_TOOLCHAIN[getCurrentToolchainId()]?.map((option) => (
+                      <button
+                        key={option.id}
+                        onClick={() => handleModelSelect(option)}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-[12px] transition-colors ${
+                          option.id === getCurrentModelId()
+                            ? 'bg-accent-muted text-accent'
+                            : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                        }`}
+                      >
+                        <div className={`w-2 h-2 rounded-full ${option.id === getCurrentModelId() ? 'bg-accent' : 'bg-text-disabled'}`} />
+                        <span>{option.label}</span>
+                        {option.id === getCurrentModelId() && <Check size={12} className="ml-auto text-accent" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* 权限模式 */}
+              <div className="relative" ref={permDropdownRef}>
               <button
                 onClick={() => setPermOpen(!permOpen)}
                 className={`flex items-center gap-1 px-2 py-1 text-[11px] rounded-md transition-all ${
@@ -525,6 +595,7 @@ export function ChatPanel() {
                   </button>
                 </div>
               )}
+            </div>
             </div>
             <button
               onClick={isBusy ? stopAI : handleSend}

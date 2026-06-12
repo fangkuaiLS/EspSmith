@@ -34,6 +34,7 @@ impl ProviderKind {
 }
 
 /// Provider 构建命令的结果
+#[allow(dead_code)]
 pub struct ProviderCommand {
     /// 已配置好 args/env/stdio 的 tokio Command
     pub cmd: Command,
@@ -43,6 +44,7 @@ pub struct ProviderCommand {
 
 /// AI Provider trait：定义子进程模式 AI 编码助手的统一接口
 #[allow(async_fn_in_trait)]
+#[allow(dead_code)]
 pub trait AIProvider: Send + Sync {
     /// Provider 类型
     fn kind(&self) -> ProviderKind;
@@ -115,7 +117,7 @@ impl AIProvider for CodeWhaleProvider {
         &self,
         binary: &PathBuf,
         config: &AIConfig,
-        _prompt: &str,
+        prompt: &str,
         session_id: Option<&str>,
     ) -> ProviderCommand {
         let mut cmd = Command::new(binary);
@@ -129,7 +131,9 @@ impl AIProvider for CodeWhaleProvider {
             cmd.arg("--session-id").arg(sid);
         }
 
-        // prompt 在调用方追加（因为需要 sanitize）
+        // prompt 作为位置参数
+        cmd.arg(prompt);
+
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());

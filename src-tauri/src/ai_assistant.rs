@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use tauri::Emitter;
 use tracing::info;
 use crate::connection::ConnectionMode;
+use crate::ai_provider::AIProvider;
 
 /// 内嵌的 CodeWhale 二进制目录路径（由 lib.rs 在 setup 时初始化）
 static BUNDLED_CODEWHALE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -392,7 +393,7 @@ pub async fn ai_send_message(
     message: String,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let (model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, ai_provider, permission_mode, chip_changed) = {
+    let (model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, _ai_provider, permission_mode, chip_changed) = {
         let client = AI_CLIENT.lock().await;
         let _key = client
             .config
