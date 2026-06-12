@@ -58,8 +58,9 @@ export async function startAI(): Promise<void> {
 
         if (settings.aiModel === 'ollama') {
             model = 'ollama';
+        } else if (settings.aiModel === 'mimo') {
+            model = settings.mimoModel || 'xiaomi/mimo-v2.5';
         }
-        // MiMo-Code 使用相同的模型名，Provider 会自动添加 provider/ 前缀
 
         await invoke('ai_start', {
             config: {
