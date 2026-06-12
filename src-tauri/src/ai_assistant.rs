@@ -563,7 +563,8 @@ pub async fn ai_send_message(
                                 match event_type {
                                     "content" => {
                                         if let Some(content) = event["content"].as_str() {
-                                            info!("CodeWhale content ({} chars): {}",
+                                            info!("{} content ({} chars): {}",
+                                                provider_name,
                                                 content.len(),
                                                 &content[..content.len().min(120)]);
                                             output.push_str(content);
@@ -603,7 +604,7 @@ pub async fn ai_send_message(
                                                 }
                                             }
                                         }
-                                        info!("CodeWhale tool call: {}", name);
+                                        info!("{} tool call: {}", provider_name, name);
                                         // 跟踪 write_file / apply_patch 调用的路径
                                         if name == "write_file" || name == "apply_patch" {
                                             pending_write_path = event.get("input")
@@ -810,11 +811,11 @@ pub async fn ai_send_message(
                                     "session_capture" => {
                                         if let Some(sid) = event["content"].as_str() {
                                             new_session_id = Some(sid.to_string());
-                                            info!("CodeWhale session: {}", sid);
+                                            info!("{} session: {}", provider_name, sid);
                                         }
                                     }
                                     "usage" => {
-                                        info!("CodeWhale usage event: {}", serde_json::to_string(&event).unwrap_or_default());
+                                        info!("{} usage event: {}", provider_name, serde_json::to_string(&event).unwrap_or_default());
                                         let input = event["input_tokens"].as_u64()
                                             .or_else(|| event["inputTokens"].as_u64())
                                             .or_else(|| event["usage"]["input_tokens"].as_u64())
@@ -837,13 +838,13 @@ pub async fn ai_send_message(
                                             msg_input_tokens = input;
                                             msg_output_tokens = output;
                                             msg_cached_tokens = cached;
-                                            info!("CodeWhale usage: input={} output={} cached={}", input, output, cached);
+                                            info!("{} usage: input={} output={} cached={}", provider_name, input, output, cached);
                                         }
                                     }
                                     "metadata" => {
-                                        info!("CodeWhale metadata event: {}", serde_json::to_string(&event).unwrap_or_default());
+                                        info!("{} metadata event: {}", provider_name, serde_json::to_string(&event).unwrap_or_default());
                                         if let Some(model) = event["meta"]["model"].as_str() {
-                                            info!("CodeWhale model: {}", model);
+                                            info!("{} model: {}", provider_name, model);
                                         }
                                         let meta_input = event["meta"]["input_tokens"].as_u64()
                                             .or_else(|| event["meta"]["usage"]["input_tokens"].as_u64())
@@ -861,7 +862,7 @@ pub async fn ai_send_message(
                                             msg_input_tokens = meta_input;
                                             msg_output_tokens = meta_output;
                                             msg_cached_tokens = meta_cached;
-                                            info!("CodeWhale metadata usage: input={} output={} cached={}", meta_input, meta_output, meta_cached);
+                                            info!("{} metadata usage: input={} output={} cached={}", provider_name, meta_input, meta_output, meta_cached);
                                         }
                                     }
                                     "done" => {
@@ -872,9 +873,9 @@ pub async fn ai_send_message(
                                         if let Some(done_content) = event["content"].as_str() {
                                             output.push_str(done_content);
                                             let _ = app_handle.emit("ai-chunk", done_content);
-                                            info!("CodeWhale done (with content, {} chars)", done_content.len());
+                                            info!("{} done (with content, {} chars)", provider_name, done_content.len());
                                         } else {
-                                            info!("CodeWhale done (no content in done event)");
+                                            info!("{} done (no content in done event)", provider_name);
                                         }
                                         // 在 break 前立即发送 usage，避免时序竞争
                                         {
@@ -907,7 +908,8 @@ pub async fn ai_send_message(
                                     }
                                     _ => {
                                         info!(
-                                            "CodeWhale unknown event type: '{}' keys=[{}] line={}",
+                                            "{} unknown event type: '{}' keys=[{}] line={}",
+                                            provider_name,
                                             event_type,
                                             event.as_object().map(|o| o.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default(),
                                             &line[..line.len().min(300)]
@@ -936,7 +938,7 @@ pub async fn ai_send_message(
                 match result {
                     Ok(Some(line)) => {
                         if !line.trim().is_empty() {
-                            tracing::warn!("CodeWhale stderr: {}", line);
+                            tracing::warn!("{} stderr: {}", provider_name, line);
                             stderr_lines.push(line);
                         }
                     }
