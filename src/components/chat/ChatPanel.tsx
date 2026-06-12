@@ -75,9 +75,6 @@ const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
   ],
   mimo: [
     { id: 'xiaomi/mimo-v2.5', label: 'MiMo V2.5 (免费)', model: 'xiaomi/mimo-v2.5' },
-    { id: 'xiaomi/mimo-v2-pro', label: 'MiMo V2 Pro', model: 'xiaomi/mimo-v2-pro' },
-    { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek/deepseek-v4-flash' },
-    { id: 'deepseek/deepseek-reasoner', label: 'DeepSeek R1', model: 'deepseek/deepseek-reasoner' },
   ],
   ollama: [
     { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
