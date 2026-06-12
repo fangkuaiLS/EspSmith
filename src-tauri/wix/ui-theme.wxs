@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  EspSmith - 安装向导 UI 美化 Fragment
+  通过 fragmentPaths 注入到 Tauri 默认 MSI 模板中
+
+  注意：
+  1. Banner 和 Dialog 图片通过 tauri.conf.json 的 bannerPath/dialogImagePath 配置，
+     由 Tauri 默认模板自动处理 WixUIBannerBmp/WixUIDialogBmp 变量。
+  2. 界面中文化通过 zh-CN.wxl locale 文件实现，不在 Fragment 中用 Publish 覆盖
+     （Publish 的 Property="Value" 语法无法改变控件文本，只设置了一个无用的属性）。
+  3. 不要在此 Fragment 中定义与主模板同名的 Property，会导致链接冲突。
+     所有界面文字覆盖都应通过 locale 文件完成。
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <Fragment>
+    <!-- 目前留空，所有自定义内容通过 zh-CN.wxl locale 文件实现 -->
+    <!-- 如需添加自定义 Component、Property（不与主模板冲突的）可在此处添加 -->
+  </Fragment>
+
+</Wix>

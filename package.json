@@ -1,0 +1,49 @@
+{
+  "name": "espsmith",
+  "private": true,
+  "version": "0.1.3",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "node scripts/run-tauri.mjs",
+    "sync-version": "node scripts/sync-version.js",
+    "generate-latest-json": "node scripts/generate-latest-json.js"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.6.0",
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-fs": "^2.2.0",
+    "@tauri-apps/plugin-process": "^2.2.0",
+    "@tauri-apps/plugin-shell": "^2.2.0",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "clsx": "^2.1.1",
+    "i18next": "^26.2.0",
+    "lucide-react": "^1.16.0",
+    "monaco-editor": "^0.55.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.8",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^2.1.7",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.5.5",
+    "tailwindcss": "^4.3.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/cli": "^2.2.2",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

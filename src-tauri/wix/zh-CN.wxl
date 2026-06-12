@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization Culture="zh-CN" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="LANG">2052</String>
+  <String Id="TauriLanguage">2052</String>
+  <String Id="TauriCodepage">936</String>
+  <String Id="LaunchApp">启动 EspSmith</String>
+  <String Id="DowngradeErrorMessage">已安装更新版本的 EspSmith。</String>
+  <String Id="PathEnvVarFeature">将 EspSmith 安装目录添加到 PATH 系统环境变量，以便在命令行中直接调用 espsmith.exe。</String>
+  <String Id="InstallAppFeature">安装 EspSmith。</String>
+  <String Id="WelcomeDlgTitle">{\WixUI_Font_Bigger}欢迎使用 EspSmith 安装向导</String>
+  <String Id="WelcomeDlgDescription">安装向导将引导您完成 EspSmith 的安装过程。EspSmith 是一款 AI 驱动的 ESP32 开发环境，集成了智能代码补全、一键烧录和硬件调试功能。点击「下一步」继续。</String>
+  <String Id="LicenseAgreementDlgTitle">{\WixUI_Font_Bigger}最终用户许可协议</String>
+  <String Id="LicenseAgreementDlgDescription">请仔细阅读以下许可协议。</String>
+  <String Id="InstallDirDlgTitle">{\WixUI_Font_Bigger}选择安装目录</String>
+  <String Id="InstallDirDlgDescription">请选择 EspSmith 的安装目录，然后点击「下一步」继续。</String>
+  <String Id="InstallDirDlgFolderLabel">安装到:</String>
+  <String Id="VerifyReadyDlgTitle">{\WixUI_Font_Bigger}准备安装</String>
+  <String Id="VerifyReadyDlgDescription">安装向导已准备好开始安装 EspSmith，点击「安装」开始。</String>
+  <String Id="VerifyReadyDlgInstallTitle">{\WixUI_Font_Bigger}准备安装</String>
+  <String Id="VerifyReadyDlgInstallText">点击「安装」开始安装，点击「上一步」查看或更改设置。</String>
+  <String Id="ProgressDlgTitle">{\WixUI_Font_Bigger}正在安装 EspSmith</String>
+  <String Id="ProgressDlgDescription">请稍候，正在将 EspSmith 安装到您的计算机...</String>
+  <String Id="ExitDialogTitle">{\WixUI_Font_Bigger}安装完成</String>
+  <String Id="ExitDialogDescription">EspSmith 已成功安装到您的计算机。</String>
+  <String Id="WixUINext">下一步(&amp;N)</String>
+  <String Id="WixUIBack">上一步(&amp;B)</String>
+  <String Id="WixUICancel">取消</String>
+  <String Id="WixUIFinish">完成(&amp;F)</String>
+  <String Id="WixUIInstall">安装(&amp;I)</String>
+  <String Id="WixUIChange">更改(&amp;C)</String>
+  <String Id="WixUIRepair">修复(&amp;R)</String>
+  <String Id="WixUIRemove">移除(&amp;M)</String>
+  <String Id="WixUIBrowse">浏览(&amp;R)...</String>
+  <String Id="WixUIOK">确定</String>
+  <String Id="DiskCostDlgTitle">{\WixUI_Font_Bigger}磁盘空间需求</String>
+  <String Id="DiskCostDlgDescription">安装所选功能所需的磁盘空间。</String>
+  <String Id="MaintenanceTypeDlgTitle">{\WixUI_Font_Bigger}更改、修复或移除安装</String>
+  <String Id="MaintenanceTypeDlgDescription">选择要执行的操作。</String>
+  <String Id="MaintenanceTypeDlgChangeText">更改安装中安装的功能。</String>
+  <String Id="MaintenanceTypeDlgRepairText">修复最近安装中的错误。</String>
+  <String Id="MaintenanceTypeDlgRemoveText">从计算机中移除 EspSmith。</String>
+  <String Id="FatalErrorTitle">{\WixUI_Font_Bigger}安装失败</String>
+  <String Id="FatalErrorDescription">EspSmith 安装过早结束，未对系统进行任何修改。</String>
+  <String Id="UserExitTitle">{\WixUI_Font_Bigger}安装已中断</String>
+  <String Id="UserExitDescription">EspSmith 安装已中断，系统未被修改。</String>
+</WixLocalization>

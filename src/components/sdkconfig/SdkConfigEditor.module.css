@@ -1,0 +1,226 @@
+/* SdkConfigEditor.module.css — matches Menuconfig.vue layout */
+
+.container {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.topBar > :first-child {
+  flex: 1;
+}
+
+.closeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.closeBtn:hover {
+  background-color: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-errorForeground);
+}
+
+.gridContainer {
+  display: grid;
+  grid-template-columns: auto 4px 1fr;
+  height: 90vh;
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+}
+
+.resizeHandle {
+  width: 4px;
+  background-color: transparent;
+  cursor: col-resize;
+  transition: background-color 0.1s;
+  z-index: 1;
+  position: relative;
+}
+
+.resizeHandle:hover {
+  background-color: var(--vscode-sash-hoverBorder);
+}
+
+.resizeHandle.dragging {
+  background-color: var(--vscode-sash-activeBorder);
+}
+
+.resizeHandle::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 0;
+  width: 12px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.configList {
+  overflow: auto;
+  color: var(--vscode-foreground);
+  min-width: 300px;
+  max-width: 800px;
+  padding: 0 0.5rem;
+}
+
+.sectionDivider {
+  height: 1px;
+  width: 100%;
+  background: var(--vscode-panel-border);
+  opacity: 0.8;
+  margin: 6px 0;
+}
+
+.sidenav {
+  overflow: auto;
+  height: 90vh;
+  border-right: 1px solid var(--vscode-panel-border);
+  padding: 0 0.5rem;
+}
+
+/* Loading state */
+.loadingContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 13px;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+  color: var(--vscode-textLink-foreground);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Error state */
+.errorContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.errorTitle {
+  color: var(--vscode-errorForeground);
+  font-size: 14px;
+  margin: 0;
+}
+
+.errorMessage {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.errorButtons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btnPrimary {
+  padding: 4px 12px;
+  font-size: 13px;
+  color: var(--vscode-button-foreground);
+  background-color: var(--vscode-button-background);
+  border: 1px solid var(--vscode-button-border);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.btnPrimary:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.btnSecondary {
+  padding: 4px 12px;
+  font-size: 13px;
+  color: var(--vscode-button-secondaryForeground);
+  background-color: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-button-secondaryBorder);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.btnSecondary:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* Empty state */
+.emptyState {
+  text-align: center;
+  padding: 40px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 13px;
+}
+
+/* Override Bulma's margin between fields */
+:global(.field:not(:last-child)) {
+  margin-bottom: 0 !important;
+}
+
+/* Help text */
+:global(.help-kconfig-title) {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+  word-wrap: break-word;
+  box-sizing: border-box;
+}
+
+:global(.sidenav ul li) {
+  cursor: pointer;
+}
+
+:global(.sidenav ul p) {
+  text-decoration: none;
+  display: block;
+}
+
+:global(.sidenav ul p:hover) {
+  color: var(--vscode-textLink-activeForeground);
+}
+
+:global(ul > li) {
+  list-style-type: none;
+}
+
+:global(.content ul li) {
+  list-style-type: disc;
+}

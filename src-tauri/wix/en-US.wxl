@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization Culture="en-US" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="LANG">1033</String>
+  <String Id="TauriLanguage">1033</String>
+  <String Id="TauriCodepage">1252</String>
+  <String Id="LaunchApp">Launch EspSmith</String>
+  <String Id="DowngradeErrorMessage">A newer version of EspSmith is already installed.</String>
+  <String Id="PathEnvVarFeature">Add the EspSmith installation directory to the PATH system environment variable, allowing espsmith.exe to be called from any command prompt.</String>
+  <String Id="InstallAppFeature">Install EspSmith.</String>
+  <String Id="WelcomeDlgTitle">{\WixUI_Font_Bigger}Welcome to the EspSmith Setup Wizard</String>
+  <String Id="WelcomeDlgDescription">This wizard will guide you through the installation of EspSmith.EspSmith is an AI-powered ESP32 development environment with smart code completion, one-click flashing, and hardware debugging.Click Next to continue.</String>
+  <String Id="LicenseAgreementDlgTitle">{\WixUI_Font_Bigger}End-User License Agreement</String>
+  <String Id="LicenseAgreementDlgDescription">Please read the following license agreement carefully.</String>
+  <String Id="InstallDirDlgTitle">{\WixUI_Font_Bigger}Choose Install Location</String>
+  <String Id="InstallDirDlgDescription">Choose the folder in which to install EspSmith, then click Next.</String>
+  <String Id="InstallDirDlgFolderLabel">Install to:</String>
+  <String Id="VerifyReadyDlgTitle">{\WixUI_Font_Bigger}Ready to Install</String>
+  <String Id="VerifyReadyDlgDescription">The wizard is ready to begin installing EspSmith. Click Install to begin.</String>
+  <String Id="VerifyReadyDlgInstallTitle">{\WixUI_Font_Bigger}Ready to Install</String>
+  <String Id="VerifyReadyDlgInstallText">Click Install to begin the installation. Click Back to review or change any of your installation settings.</String>
+  <String Id="ProgressDlgTitle">{\WixUI_Font_Bigger}Installing EspSmith</String>
+  <String Id="ProgressDlgDescription">Please wait while EspSmith is being installed...</String>
+  <String Id="ExitDialogTitle">{\WixUI_Font_Bigger}Installation Complete</String>
+  <String Id="ExitDialogDescription">EspSmith has been successfully installed on your computer.</String>
+  <String Id="WixUINext">&amp;Next</String>
+  <String Id="WixUIBack">&amp;Back</String>
+  <String Id="WixUICancel">Cancel</String>
+  <String Id="WixUIFinish">&amp;Finish</String>
+  <String Id="WixUIInstall">&amp;Install</String>
+  <String Id="WixUIChange">&amp;Change</String>
+  <String Id="WixUIRepair">&amp;Repair</String>
+  <String Id="WixUIRemove">&amp;Remove</String>
+  <String Id="WixUIBrowse">B&amp;rowse...</String>
+  <String Id="WixUIOK">OK</String>
+  <String Id="DiskCostDlgTitle">{\WixUI_Font_Bigger}Disk Space Requirements</String>
+  <String Id="DiskCostDlgDescription">The disk space required for the installation of the selected features.</String>
+  <String Id="MaintenanceTypeDlgTitle">{\WixUI_Font_Bigger}Change, Repair, or Remove Installation</String>
+  <String Id="MaintenanceTypeDlgDescription">Select the operation you wish to perform.</String>
+  <String Id="MaintenanceTypeDlgChangeText">Change which program features are installed.</String>
+  <String Id="MaintenanceTypeDlgRepairText">Repair errors in the most recent installation.</String>
+  <String Id="MaintenanceTypeDlgRemoveText">Remove EspSmith from your computer.</String>
+  <String Id="FatalErrorTitle">{\WixUI_Font_Bigger}Installation Failed</String>
+  <String Id="FatalErrorDescription">EspSmith setup ended prematurely because of an error. Your system has not been modified.</String>
+  <String Id="UserExitTitle">{\WixUI_Font_Bigger}Installation Interrupted</String>
+  <String Id="UserExitDescription">EspSmith setup was interrupted. Your system has not been modified.</String>
+</WixLocalization>
