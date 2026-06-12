@@ -74,7 +74,7 @@ const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
     { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash' },
   ],
   mimo: [
-    { id: 'xiaomi/mimo-v2.5', label: 'MiMo V2.5 (免费)', model: 'xiaomi/mimo-v2.5' },
+    { id: 'mimo/mimo-auto', label: 'MiMo Auto (限免)', model: 'mimo/mimo-auto' },
   ],
   ollama: [
     { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
@@ -91,7 +91,7 @@ function getCurrentToolchainId(): string {
 function getCurrentModelId(): string {
   const s = useSettingsStore.getState().settings;
   if (s.aiModel === 'ollama') return 'ollama';
-  if (s.aiModel === 'mimo') return s.mimoModel || 'xiaomi/mimo-v2.5';
+  if (s.aiModel === 'mimo') return s.mimoModel || 'mimo/mimo-auto';
   return s.deepseekModel || 'deepseek-v4-pro';
 }
 

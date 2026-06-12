@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     useDocker: false,
     aiModel: 'deepseek',
     deepseekModel: 'deepseek-v4-pro',
-    mimoModel: 'xiaomi/mimo-v2.5',
+    mimoModel: 'mimo/mimo-auto',
     deepseekApiKey: undefined,
     ollamaEndpoint: 'http://localhost:11434',
     reviewMode: true,
