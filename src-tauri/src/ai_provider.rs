@@ -244,10 +244,12 @@ impl AIProvider for MiMoCodeProvider {
     }
 
     fn api_key_env(&self, config: &AIConfig) -> Option<(String, String)> {
-        match config.ai_provider.as_str() {
-            "ollama" => None,
-            _ => config.api_key.as_ref().map(|k| ("DEEPSEEK_API_KEY".into(), k.clone())),
+        // MiMo-Code 内置免费通道（xiaomi/mimo-v2.5），无需 API Key
+        // 只有使用第三方模型（如 deepseek/*）时才需要
+        if config.model.starts_with("xiaomi/") {
+            return None;
         }
+        config.api_key.as_ref().map(|k| ("DEEPSEEK_API_KEY".into(), k.clone()))
     }
 
     fn supports_session(&self) -> bool {
@@ -264,5 +266,127 @@ pub fn select_provider(config: &AIConfig) -> Box<dyn AIProvider> {
     match ProviderKind::from_str(&config.ai_provider) {
         ProviderKind::MiMoCode => Box::new(MiMoCodeProvider),
         ProviderKind::CodeWhale => Box::new(CodeWhaleProvider),
+    }
+}
+
+// ─── MiMo-Code 事件格式转换 ────────────────────────────────────────────
+//
+// MiMo-Code `--format json` 输出格式与 CodeWhale `--output-format stream-json` 不同。
+// 此函数将 MiMo-Code 事件转换为 CodeWhale 兼容格式，使 ai_assistant.rs 的解析逻辑无需修改。
+//
+// MiMo-Code 事件格式:
+//   {"type":"text","timestamp":...,"sessionID":"...","part":{"type":"text","text":"..."}}
+//   {"type":"tool_use","timestamp":...,"sessionID":"...","part":{"type":"tool","tool":"bash","callID":"...","state":{"status":"completed","input":{...},"output":"..."}}}
+//   {"type":"step_start","timestamp":...,"sessionID":"...","part":{...}}
+//   {"type":"step_finish","timestamp":...,"sessionID":"...","part":{"type":"step-finish","tokens":{...},"cost":...}}
+//   {"type":"error","timestamp":...,"sessionID":"...","error":{...}}
+//
+// CodeWhale 兼容格式:
+//   {"type":"content","content":"..."}
+//   {"type":"tool_use","name":"...","id":"...","input":{...}}
+//   {"type":"tool_result","id":"...","output":"..."}
+//   {"type":"usage","input_tokens":...,"output_tokens":...}
+//   {"type":"done","session_id":"..."}
+
+pub fn convert_mimo_event(raw: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    let event_type = raw["type"].as_str().unwrap_or("");
+    let mut results = Vec::new();
+
+    match event_type {
+        "text" => {
+            // MiMo: {"type":"text","part":{"type":"text","text":"..."}}
+            // CodeWhale: {"type":"content","content":"..."}
+            if let Some(text) = raw["part"]["text"].as_str() {
+                if !text.is_empty() {
+                    results.push(serde_json::json!({
+                        "type": "content",
+                        "content": text
+                    }));
+                }
+            }
+        }
+        "tool_use" => {
+            // MiMo: {"type":"tool_use","part":{"type":"tool","tool":"bash","callID":"...","state":{"status":"completed","input":{...},"output":"..."}}}
+            // CodeWhale: {"type":"tool_use","name":"...","id":"...","input":{...}} + {"type":"tool_result","id":"...","output":"..."}
+            let part = &raw["part"];
+            let tool_name = part["tool"].as_str().unwrap_or("unknown");
+            let call_id = part["callID"].as_str().unwrap_or("");
+            let state = &part["state"];
+            let input = state.get("input").cloned().unwrap_or(serde_json::json!({}));
+
+            results.push(serde_json::json!({
+                "type": "tool_use",
+                "name": tool_name,
+                "id": call_id,
+                "input": input
+            }));
+
+            // 如果工具已完成，同时发出 tool_result
+            let status = state["status"].as_str().unwrap_or("");
+            if status == "completed" {
+                let output = state["output"].as_str().unwrap_or("");
+                results.push(serde_json::json!({
+                    "type": "tool_result",
+                    "id": call_id,
+                    "output": output
+                }));
+            } else if status == "error" {
+                let error = state["error"].as_str().unwrap_or("unknown error");
+                results.push(serde_json::json!({
+                    "type": "tool_result",
+                    "id": call_id,
+                    "output": format!("Error: {}", error)
+                }));
+            }
+        }
+        "step_finish" => {
+            // MiMo: {"type":"step_finish","part":{"type":"step-finish","tokens":{"input":...,"output":...,"cache":{"read":...,"write":...}},"cost":...}}
+            // CodeWhale: {"type":"usage","input_tokens":...,"output_tokens":...} + {"type":"done","session_id":"..."}
+            let part = &raw["part"];
+            let tokens = &part["tokens"];
+            let input_tokens = tokens["input"].as_u64().unwrap_or(0);
+            let output_tokens = tokens["output"].as_u64().unwrap_or(0);
+            let cache_read = tokens["cache"]["read"].as_u64().unwrap_or(0);
+
+            results.push(serde_json::json!({
+                "type": "usage",
+                "input_tokens": input_tokens + cache_read,
+                "output_tokens": output_tokens,
+                "cached_tokens": cache_read
+            }));
+
+            // step_finish 表示一轮完成
+            let session_id = raw["sessionID"].as_str().unwrap_or("");
+            results.push(serde_json::json!({
+                "type": "done",
+                "session_id": session_id
+            }));
+        }
+        "error" => {
+            // MiMo: {"type":"error","error":{...}}
+            // 转为 stderr 风格的错误，让 ai_assistant 能捕获
+            let error_msg = if let Some(msg) = raw["error"]["data"]["message"].as_str() {
+                msg.to_string()
+            } else if let Some(name) = raw["error"]["name"].as_str() {
+                name.to_string()
+            } else {
+                "Unknown MiMo-Code error".to_string()
+            };
+            tracing::error!("MiMo-Code error: {}", error_msg);
+            // 不产生 CodeWhale 兼容事件，错误通过 stderr 捕获
+        }
+        "step_start" | "reasoning" => {
+            // step_start 和 reasoning 不需要转换为 CodeWhale 格式
+        }
+        _ => {
+            // 未知事件类型，原样传递（让 ai_assistant 的默认分支处理）
+            results.push(raw.clone());
+        }
+    }
+
+    if results.is_empty() {
+        None
+    } else {
+        Some(results)
     }
 }

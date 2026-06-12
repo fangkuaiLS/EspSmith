@@ -395,11 +395,15 @@ pub async fn ai_send_message(
 ) -> Result<String, String> {
     let (model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, _ai_provider, permission_mode, chip_changed) = {
         let client = AI_CLIENT.lock().await;
-        let _key = client
-            .config
-            .api_key
-            .clone()
-            .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+        // MiMo-Code 免费通道不需要 API Key
+        let needs_api_key = client.config.ai_provider != "mimo";
+        if needs_api_key {
+            let _key = client
+                .config
+                .api_key
+                .clone()
+                .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+        }
         (
             client.config.model.clone(),
             client.config.project_path.clone(),
@@ -546,6 +550,15 @@ pub async fn ai_send_message(
                         let cleaned = strip_ansi_escapes(&line);
                         match serde_json::from_str::<serde_json::Value>(&cleaned) {
                             Ok(event) => {
+                                // MiMo-Code 事件格式转换：将 MiMo 事件转为 CodeWhale 兼容格式
+                                let events_to_process = if provider.kind() == crate::ai_provider::ProviderKind::MiMoCode {
+                                    crate::ai_provider::convert_mimo_event(&event)
+                                        .unwrap_or_else(|| vec![event])
+                                } else {
+                                    vec![event]
+                                };
+
+                                for event in events_to_process {
                                 let event_type = event["type"].as_str().unwrap_or("");
                                 match event_type {
                                     "content" => {
@@ -901,6 +914,7 @@ pub async fn ai_send_message(
                                         );
                                     }
                                 }
+                                } // for event in events_to_process
                             }
                             Err(e) => {
                                 tracing::warn!(
