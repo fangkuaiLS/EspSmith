@@ -77,9 +77,7 @@ const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
     { id: 'xiaomi/mimo-v2.5', label: 'MiMo V2.5 (免费)', model: 'xiaomi/mimo-v2.5' },
     { id: 'xiaomi/mimo-v2-pro', label: 'MiMo V2 Pro', model: 'xiaomi/mimo-v2-pro' },
     { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek/deepseek-v4-flash' },
-    { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro', model: 'deepseek/deepseek-v4-pro' },
-    { id: 'openai/gpt-4.1', label: 'GPT-4.1', model: 'openai/gpt-4.1' },
-    { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4', model: 'anthropic/claude-sonnet-4' },
+    { id: 'deepseek/deepseek-reasoner', label: 'DeepSeek R1', model: 'deepseek/deepseek-reasoner' },
   ],
   ollama: [
     { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
