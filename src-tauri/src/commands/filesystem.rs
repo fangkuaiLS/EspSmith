@@ -130,25 +130,23 @@ pub async fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
     let entries = fs::read_dir(&path).map_err(|e| e.to_string())?;
     let mut files: Vec<FileEntry> = Vec::new();
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let metadata = entry.metadata().ok();
-            let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let size = metadata.map(|m| m.len()).unwrap_or(0);
+    for entry in entries.flatten() {
+        let metadata = entry.metadata().ok();
+        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size = metadata.map(|m| m.len()).unwrap_or(0);
 
-            if let Some(name) = entry.file_name().to_str() {
-                // 跳过隐藏文件（除了 .espsmith）
-                if name.starts_with('.') && name != ".espsmith" {
-                    continue;
-                }
-
-                files.push(FileEntry {
-                    name: name.to_string(),
-                    path: entry.path().to_string_lossy().to_string(),
-                    is_dir,
-                    size,
-                });
+        if let Some(name) = entry.file_name().to_str() {
+            // 跳过隐藏文件（除了 .espsmith）
+            if name.starts_with('.') && name != ".espsmith" {
+                continue;
             }
+
+            files.push(FileEntry {
+                name: name.to_string(),
+                path: entry.path().to_string_lossy().to_string(),
+                is_dir,
+                size,
+            });
         }
     }
 
