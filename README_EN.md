@@ -20,13 +20,13 @@
 
 ## Project Overview
 
-EspSmith is a modern integrated development environment (IDE) for ESP32 series chips, deeply integrating AI large models into the embedded development workflow. By integrating AI services like DeepSeek / Ollama, developers can describe requirements in natural language, and AI automatically completes the full closed-loop of code writing, IDF compilation, firmware flashing, and serial verification. For development boards supporting USB-JTAG, it also provides advanced debugging capabilities including hardware breakpoints, variable monitoring, and register analysis.
+EspSmith is a modern integrated development environment (IDE) for ESP32 series chips, deeply integrating AI large models into the embedded development workflow. By integrating AI services like **CodeWhale (DeepSeek)** / **MiMo-Code**, developers can describe requirements in natural language, and AI automatically completes the full closed-loop of code writing, IDF compilation, firmware flashing, and serial verification. For development boards supporting USB-JTAG, it also provides advanced debugging capabilities including hardware breakpoints, variable monitoring, and register analysis.
 
 ### Core Features
 
 | Category | Feature |
 | -------- | ------- |
-| **AI Intelligent Programming** | Integrated DeepSeek / Ollama local models, natural language driven full closed-loop development |
+| **AI Intelligent Programming** | Integrated CodeWhale (DeepSeek) / MiMo-Code dual engine, natural language driven full closed-loop development |
 | **Code Editor** | Based on Monaco Editor, supports C/C++ syntax highlighting, ESP-IDF code snippets, multi-tab management |
 | **ESP-IDF Integration** | Auto-detect IDF environment, one-click compile/flash/monitor/config, supports all ESP32 series chips |
 | **JTAG Hardware Debugging** | USB-JTAG auto-recognition, supports breakpoints/single-step/variable monitoring/register/call stack/CoreDump analysis |
@@ -42,7 +42,7 @@ EspSmith is a modern integrated development environment (IDE) for ESP32 series c
 
 ## Software Download
 
-Latest Version: **v0.1.3**
+Latest Version: **v0.1.4**
 
 - 🔗 **Release Page**: [GitHub Releases](https://github.com/fangkuaiLS/EspSmith/releases)
 
@@ -103,7 +103,8 @@ Backend Rust Module Structure:
 | ------ | ---- | -------------- |
 | `commands/` | `src-tauri/src/commands/` | Project, file, hardware, build, flash, serial, GDB debug, Git commands |
 | `idf.rs` | `src-tauri/src/idf.rs` | ESP-IDF toolchain wrapper, auto-detection, command execution, error parsing |
-| `ai_assistant.rs` | `src-tauri/src/ai_assistant.rs` | DeepSeek/Ollama AI integration, CodeWhale Agent process management, Token usage statistics |
+| `ai_assistant.rs` | `src-tauri/src/ai_assistant.rs` | CodeWhale (DeepSeek) / MiMo-Code AI integration, multi-Provider abstraction, Token usage statistics |
+| `ai_provider.rs` | `src-tauri/src/ai_provider.rs` | AI Provider abstraction layer (CodeWhale / MiMo-Code), unified event stream conversion |
 | `mcp.rs` | `src-tauri/src/mcp.rs` | MCP (Model Context Protocol) server, provides tool calling capability for AI Agent |
 | `connection.rs` | `src-tauri/src/connection.rs` | USB-JTAG/UART auto-detection, chip identification, connection mode management |
 | `self_healing/` | `src-tauri/src/self_healing/` | Closed-loop self-healing engine (plan → preflight → build → flash → verify) |
@@ -268,14 +269,15 @@ User inputs natural language requirement
 | **Node.js** | ≥ 18 | Frontend build toolchain |
 | **Rust** | ≥ 1.77 | Tauri backend compilation (1.77+ includes UTF-8 process fix, avoids Chinese Windows compile errors) |
 | **ESP-IDF** | v5.0+ | ESP32 development framework (optional but recommended) |
-| **CodeWhale** | latest | AI Agent CLI (required for AI features) |
+| **CodeWhale** | latest | AI Agent CLI (DeepSeek model, required for AI features) |
+| **MiMo-Code** | latest | AI Agent CLI (multi-model support, optional) |
 
 ### Installation Steps
 
 #### 1. Clone Project
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/fangkuaiLS/EspSmith.git
 cd espsmith
 ```
 
@@ -307,27 +309,31 @@ Build artifacts located at `src-tauri/target/release/bundle/`.
 
 ### AI Feature Configuration
 
-EspSmith connects to AI services through CodeWhale CLI Agent.
+EspSmith supports dual AI engines, managed through a unified Provider abstraction layer:
 
-#### Configure API Key
+| Engine | Model | Features | Cost |
+| ------ | ----- | -------- | ---- |
+| **CodeWhale** | deepseek-v4-pro / deepseek-v4-flash | DeepSeek official API, fast response, supports thought process display | Lower |
+| **MiMo-Code** | mimo/mimo-auto and more models | Multi-model support, built-in tool calling (file read/write, compile/flash), strong closed-loop capability | Free (limited time) |
+
+#### Configure CodeWhale (DeepSeek)
 
 In EspSmith settings panel, fill in:
 
-- **AI Provider**: DeepSeek or Ollama
+- **AI Provider**: CodeWhale
+- **Model**: deepseek-v4-pro (recommended) or deepseek-v4-flash (fast)
 - **API Key**: DeepSeek API Key (get from [platform.deepseek.com](https://platform.deepseek.com))
-- **ESP-IDF Path**: ESP-IDF installation directory (e.g., E:.espressif\v0.1.3\esp-idf)
+- **ESP-IDF Path**: ESP-IDF installation directory
 
-#### Using Ollama Local Model
+#### Configure MiMo-Code
 
-```bash
-# Install Ollama
-# Download: https://ollama.com
+In EspSmith settings panel, fill in:
 
-# Pull model
-ollama pull qwen2.5-coder:7b
+- **AI Provider**: MiMo-Code
+- **Model**: mimo-auto (recommended) or other supported models
+- **ESP-IDF Path**: ESP-IDF installation directory
 
-# Select Ollama as AI Provider in EspSmith settings
-```
+> MiMo-Code has built-in tool calling capabilities for file read/write, compile/flash, etc. No additional API Key configuration required.
 
 ### ESP-IDF Deployment
 
@@ -370,23 +376,105 @@ openocd --version
 
 ***
 
+## Project Directory Structure
+
+```
+esp-ai-studio/
+├── src/                          # Frontend source
+│   ├── App.tsx                   # Main app component (four-region layout)
+│   ├── main.tsx                  # Frontend entry point
+│   ├── components/
+│   │   ├── editor/               # Monaco code editor + tabs
+│   │   ├── filetree/             # File tree browser
+│   │   ├── chat/                 # AI chat panel
+│   │   ├── hardware/             # Hardware configuration store
+│   │   ├── debug/                # Build output / serial / debug panel
+│   │   ├── git/                  # Git panel
+│   │   ├── settings/             # Settings dialog
+│   │   ├── search/               # Global search
+│   │   └── ui/                   # Common UI components (Toast, InputDialog, etc.)
+│   ├── stores/                   # Zustand state management
+│   │   ├── projectStore.ts       # Project state
+│   │   ├── fileStore.ts          # File / editor state
+│   │   ├── chatStore.ts          # AI chat state
+│   │   ├── hardwareStore.ts      # Hardware configuration state
+│   │   └── settingsStore.ts      # Settings state
+│   ├── hooks/                    # Custom hooks
+│   │   ├── useBuildOutput.ts     # Build output management
+│   │   └── useSerialMonitor.ts   # Serial monitor
+│   ├── types/                    # TypeScript type definitions
+│   ├── i18n/                     # Internationalization language packs
+│   └── lib/                      # Utility libraries
+│       ├── invoke.ts             # Tauri IPC safe wrapper
+│       └── api.ts                # API call utilities
+├── src-tauri/                    # Rust backend source
+│   ├── src/
+│   │   ├── main.rs               # App entry point (GUI / CLI / MCP mode)
+│   │   ├── lib.rs                # Tauri command registration
+│   │   ├── connection.rs         # JTAG/UART connection detection
+│   │   ├── idf.rs                # ESP-IDF tool wrapper
+│   │   ├── ai_assistant.rs       # AI assistant integration
+│   │   ├── ai_provider.rs        # AI Provider abstraction layer (CodeWhale / MiMo-Code)
+│   │   ├── mcp.rs                # MCP protocol server
+│   │   ├── commands/             # Tauri command modules
+│   │   ├── self_healing/         # Closed-loop self-healing engine
+│   │   ├── adapters/             # Adapter abstraction layer
+│   │   ├── instruments/          # Instrument abstraction layer
+│   │   └── experience/           # Experience accumulation engine
+│   ├── Cargo.toml                # Rust dependency config
+│   └── tauri.conf.json           # Tauri application config
+├── package.json                  # Frontend dependency config
+├── vite.config.ts                # Vite build config
+├── tsconfig.json                 # TypeScript config
+└── tailwind.config.js            # Tailwind CSS config (v4)
+```
+
+***
+
+## Development Scripts
+
+| Command | Description |
+| ------- | ----------- |
+| `npm run dev` | Start Vite dev server (browser mode) |
+| `npm run build` | TypeScript check + Vite production build |
+| `npm run preview` | Preview production build |
+| `npm run tauri -- dev` | Start Tauri desktop app (dev mode), smart MSVC/GNU toolchain detection |
+| `npm run tauri -- build` | Build production release package |
+
+***
+
+<br />
+
+## Core Toolchain
+
+| Project | Purpose | License |
+| ------- | ------- | ------- |
+| **[ESP-IDF](https://github.com/espressif/esp-idf)** | ESP32 official development framework | Apache-2.0 |
+| **[OpenOCD](https://openocd.org/)** | On-chip debugger (JTAG debug core) | GPL-2.0 |
+| **[DeepSeek](https://www.deepseek.com/)** | Large Language Model API | - |
+| **[CodeWhale](https://github.com/anthropics/codewhale)** | AI Agent CLI (DeepSeek engine) | - |
+| **[MiMo-Code](https://github.com/mimocode/mimo-code)** | AI Agent CLI (multi-model engine) | - |
+
+***
+
 ## Inspiration
 
-This project draws inspiration from the following excellent open-source projects:
+This project draws inspiration from the following excellent tools:
 
 - **[AEL (AI Embedded Lab)](https://github.com/nicekwell/AI-Instrument-Closed-Loop)** — Multi-instrument closed-loop debugging system, inspired the Self-Healing engine and Experience engine design
 - **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — Official ESP-IDF extension, inspired IDF workflow and serial management
-- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI tool, provides AI capability support
+- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI tool, provides DeepSeek AI capability support
+- **[MiMo-Code](https://github.com/mimocode/mimo-code)** — AI Agent CLI tool, provides multi-model AI capability and built-in tool calling support
 - **[ESP-IDF](https://github.com/espressif/esp-idf)** — Espressif official ESP32 development framework, provides complete development toolchain
 
 ***
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
+This project is open source under the [Apache-2.0](LICENSE) license.
 
 ***
 
 <p align="center">
-  <strong>Made with ❤️ for ESP32 Developers</strong>
+  <sub>Built with ❤️ by the EspSmith Team</sub>
 </p>

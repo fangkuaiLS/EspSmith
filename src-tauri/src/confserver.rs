@@ -142,7 +142,8 @@ impl ConfserverProcess {
             .join("tools").join("kconfig_new").join("prepare_kconfig_files.py");
         if prepare_py.exists() {
             info!("[confserver] Running prepare_kconfig_files.py");
-            let prepare_output = Command::new(&python)
+            let mut prepare_cmd = Command::new(&python);
+            prepare_cmd
                 .arg(&prepare_py)
                 .arg("--list-separator=semicolon")
                 .arg("--env-file").arg(config_env)
@@ -152,9 +153,9 @@ impl ConfserverProcess {
                 .env("PATH", &new_path)
                 .current_dir(project_path)
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .creation_flags(0x08000000)
-                .spawn()
+                .stderr(Stdio::piped());
+            #[cfg(windows)] { prepare_cmd.creation_flags(0x08000000); }
+            let prepare_output = prepare_cmd.spawn()
                 .and_then(|c| c.wait_with_output())
                 .map_err(|e| format!("Failed to run prepare_kconfig_files.py: {}", e))?;
             if !prepare_output.status.success() {
