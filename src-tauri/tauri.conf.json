@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["msi"],
+    "targets": ["msi", "nsis", "app", "dmg", "deb", "appimage"],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"
