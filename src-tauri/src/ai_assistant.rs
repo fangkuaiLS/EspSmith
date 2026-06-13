@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Mutex as StdMutex};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tauri::Emitter;
 use tracing::info;
@@ -537,9 +538,18 @@ pub async fn ai_send_message(
     let current_model = model.clone();
     let mut pending_write_path: Option<String> = None;
 
+    // Inactivity timeout: if the subprocess produces no output for this duration,
+    // it is likely stuck (e.g. read_file hanging). Kill it and return an error.
+    // 300s is generous enough for long-running build/flash operations while still
+    // catching genuinely stuck tool calls.
+    let inactivity_timeout = Duration::from_secs(300);
+    let inactivity_timer = tokio::time::sleep(inactivity_timeout);
+    tokio::pin!(inactivity_timer);
+
     loop {
         tokio::select! {
             result = stdout_reader.next_line() => {
+                inactivity_timer.as_mut().reset(tokio::time::Instant::now() + inactivity_timeout);
                 match result {
                     Ok(Some(line)) => {
                         if line.trim().is_empty() {
@@ -577,8 +587,8 @@ pub async fn ai_send_message(
                                                 content.len(),
                                                 &content[..content.len().min(120)]);
                                             output.push_str(content);
-                                            // MiMo-Code 在文本完成后才发一次 text 事件（非逐 token 流式），
-                                            // 直接一次性 emit 全文，由前端做打字动画展示
+                                            // CodeWhale stream-json: 逐 token 增量
+                                            // MiMo-Code --format json: 整段文本完成后一次发出
                                             let _ = app_handle.emit("ai-chunk", content);
                                         }
                                     }
@@ -637,9 +647,10 @@ pub async fn ai_send_message(
                                             let mut status = AI_STATUS.lock().unwrap();
                                             *status = new_status;
                                         }
+                                        let tool_use_id_str = extract_id_as_string(&event, "id");
                                         let _ = app_handle.emit("ai-tool-use", serde_json::json!({
                                             "name": name,
-                                            "id": event["id"],
+                                            "id": tool_use_id_str,
                                             "input": event["input"],
                                         }));
                                         if name == "exec_shell" {
@@ -647,7 +658,7 @@ pub async fn ai_send_message(
                                                 .and_then(|v| v.get("command"))
                                                 .and_then(|v| v.as_str())
                                                 .unwrap_or("");
-                                            let tool_use_id = event["id"].as_str().unwrap_or("");
+                                            let tool_use_id = tool_use_id_str.clone();
                                             // 判断当前是否为 JTAG 模式
                                             // 基于用户选择的 flash_port 检测，而非全局缓存
                                             let is_jtag = {
@@ -669,7 +680,7 @@ pub async fn ai_send_message(
                                                 "[AIAssistant] Connection mode detection: is_jtag={}",
                                                 is_jtag
                                             );
-                                            if let Some(progress) = detect_jtag_operation(cmd, tool_use_id, is_jtag) {
+                                            if let Some(progress) = detect_jtag_operation(cmd, &tool_use_id, is_jtag) {
                                                 tracing::info!(
                                                     "[AIAssistant] Detected operation: type={}, steps={}, tool_use_id={}",
                                                     progress.operation_type,
@@ -705,9 +716,15 @@ pub async fn ai_send_message(
                                     }
                                     "tool_result" => {
                                         // CodeWhale uses "tool_use_id" and "content" (not "id"/"output")
-                                        let tool_use_id = event["tool_use_id"].as_str()
-                                            .or_else(|| event["id"].as_str())
-                                            .unwrap_or("");
+                                        // Normalize ID to string for consistent frontend Map key matching
+                                        let tool_use_id = {
+                                            let id = extract_id_as_string(&event, "tool_use_id");
+                                            if id.is_empty() {
+                                                extract_id_as_string(&event, "id")
+                                            } else {
+                                                id
+                                            }
+                                        };
                                         // Extract text from content (array or plain string), output, or result
                                         let output_text = event["content"].as_array()
                                             .and_then(|arr| arr.first())
@@ -946,6 +963,7 @@ pub async fn ai_send_message(
                 }
             }
             result = stderr_reader.next_line() => {
+                inactivity_timer.as_mut().reset(tokio::time::Instant::now() + inactivity_timeout);
                 match result {
                     Ok(Some(line)) => {
                         if !line.trim().is_empty() {
@@ -957,12 +975,24 @@ pub async fn ai_send_message(
                     Err(e) => tracing::error!("Failed to read stderr: {}", e),
                 }
             }
+            _ = &mut inactivity_timer => {
+                tracing::warn!(
+                    "{} inactivity timeout ({}s) — subprocess produced no output, likely stuck. Killing process.",
+                    provider_name, inactivity_timeout.as_secs()
+                );
+                kill_running_child().await;
+                let _ = app_handle.emit("ai-chunk", &format!(
+                    "\n\n⏱ AI 响应超时（{}秒无输出），已自动终止。这通常是因为工具调用（如 read_file）卡住。请重试或检查文件是否被占用。",
+                    inactivity_timeout.as_secs()
+                ));
+                break;
+            }
         }
     }
 
     // Flush: give Tauri event system time to deliver all ai-chunk events
     // to the frontend before invoke returns and the listener is unregistered.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     {
         let mut guard = RUNNING_CHILD.lock().await;
@@ -1224,6 +1254,18 @@ fn strip_ansi_escapes(input: &str) -> String {
         }
     }
     String::from_utf8(result).unwrap_or_else(|_| input.to_string())
+}
+
+/// Extract a JSON value as a string, handling both string and numeric types.
+/// CodeWhale may emit tool IDs as numbers (e.g. `"id": 123`) while tool_result
+/// always uses strings. JavaScript Map treats `123` and `"123"` as different keys,
+/// so we normalize to string here to ensure consistent frontend matching.
+fn extract_id_as_string(event: &serde_json::Value, key: &str) -> String {
+    event.get(key)
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .or_else(|| event.get(key).and_then(|v| v.as_u64().map(|n| n.to_string())))
+        .or_else(|| event.get(key).and_then(|v| v.as_i64().map(|n| n.to_string())))
+        .unwrap_or_default()
 }
 
 fn build_hardware_hint(project_path: Option<&str>) -> String {
