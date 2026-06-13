@@ -568,7 +568,24 @@ pub async fn ai_send_message(
                                                 content.len(),
                                                 &content[..content.len().min(120)]);
                                             output.push_str(content);
-                                            let _ = app_handle.emit("ai-chunk", content);
+                                            // MiMo-Code 在文本完成后才发一次 text 事件（非逐 token 流式），
+                                            // 将大块文本按字符分片并加小延迟，模拟流式打字效果
+                                            if provider.kind() == crate::ai_provider::ProviderKind::MiMoCode && content.len() > 20 {
+                                                let chars: Vec<char> = content.chars().collect();
+                                                let mut i = 0;
+                                                while i < chars.len() {
+                                                    let end = (i + 4).min(chars.len());
+                                                    let chunk: String = chars[i..end].iter().collect();
+                                                    let _ = app_handle.emit("ai-chunk", &chunk as &str);
+                                                    i = end;
+                                                    // 每 4 个字符延迟 15ms，约 267 字符/秒
+                                                    if i < chars.len() {
+                                                        std::thread::sleep(std::time::Duration::from_millis(15));
+                                                    }
+                                                }
+                                            } else {
+                                                let _ = app_handle.emit("ai-chunk", content);
+                                            }
                                         }
                                     }
                                     "tool_use" => {
