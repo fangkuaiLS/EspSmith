@@ -1258,29 +1258,30 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
     let target_arg = if chip_changed && target_chip.is_some() { format!(" --target {}", target_chip.unwrap()) } else { String::new() };
     let hw_hint = build_hardware_hint(project_path);
 
-    // Resolve espsmith-cli.exe path: same directory as current exe, or in binaries/ subdirectory.
-    // In dev mode, espsmith-cli.exe is compiled by beforeDevCommand and placed in target/debug/.
-    // Falls back to espsmith.exe itself if espsmith-cli.exe is not found (legacy dev mode).
+    // Resolve espsmith-cli path: same directory as current exe, or in binaries/ subdirectory.
+    // In dev mode, espsmith-cli is compiled by beforeDevCommand and placed in target/debug/.
+    // Falls back to espsmith itself if espsmith-cli is not found (legacy dev mode).
+    let cli_binary_name = if cfg!(windows) { "espsmith-cli.exe" } else { "espsmith-cli" };
     let cli_exe = std::env::current_exe()
         .ok()
         .and_then(|exe| {
             let dir = exe.parent()?.to_path_buf();
-            // Try same directory first (production: espsmith-cli.exe alongside espsmith.exe;
+            // Try same directory first (production: espsmith-cli alongside espsmith;
             // dev: both in target/debug/)
-            let same_dir = dir.join("espsmith-cli.exe");
+            let same_dir = dir.join(cli_binary_name);
             if same_dir.exists() {
-                tracing::info!("[AIAssistant] Found espsmith-cli.exe at {}", same_dir.display());
+                tracing::info!("[AIAssistant] Found espsmith-cli at {}", same_dir.display());
                 return Some(same_dir);
             }
             // Try binaries/ subdirectory (production layout)
-            let bin_dir = dir.join("binaries").join("espsmith-cli.exe");
+            let bin_dir = dir.join("binaries").join(cli_binary_name);
             if bin_dir.exists() {
-                tracing::info!("[AIAssistant] Found espsmith-cli.exe at {}", bin_dir.display());
+                tracing::info!("[AIAssistant] Found espsmith-cli at {}", bin_dir.display());
                 return Some(bin_dir);
             }
-            // Fallback: use espsmith.exe itself (works in legacy dev mode where espsmith-cli isn't compiled)
+            // Fallback: use espsmith itself (works in legacy dev mode where espsmith-cli isn't compiled)
             tracing::warn!(
-                "[AIAssistant] espsmith-cli.exe not found in {} or {}, falling back to espsmith.exe (GUI subsystem — exec_shell may not capture output)",
+                "[AIAssistant] espsmith-cli not found in {} or {}, falling back to espsmith (GUI subsystem — exec_shell may not capture output)",
                 dir.display(),
                 dir.join("binaries").display()
             );
@@ -1295,7 +1296,7 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
                 s
             }
         })
-        .unwrap_or_else(|| "espsmith-cli.exe".to_string());
+        .unwrap_or_else(|| cli_binary_name.to_string());
 
     let build_cmd = format!("{cli} build --project \"{project}\" --idf \"{idf}\"{target_arg}", cli=cli_exe, project=project, idf=idf, target_arg=target_arg);
     let flash_cmd = format!("{cli} flash --project \"{project}\" --idf \"{idf}\" --port \"{port}\"", cli=cli_exe, project=project, idf=idf, port=port);

@@ -6,6 +6,7 @@
 //! - 执行 idf.py 命令（通过虚拟环境 Python，不再依赖 export.bat）
 
 use std::io::{BufRead, BufReader};
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -799,25 +800,27 @@ fn run_with_eim_python(
     info!("EIM env: IDF_PATH={}, IDF_TOOLS_PATH={}, IDF_PYTHON_ENV_PATH={}, ESP_IDF_VERSION={}",
         idf_path, tools_path, idf_python_env_path, get_idf_version_for_env(idf_path));
 
-    let output = Command::new(&python_path)
-        .arg(idf_py)
-        .args(args)
-        .current_dir(project_path)
-        .env("IDF_PATH", idf_path)
-        .env("IDF_TOOLS_PATH", tools_path)
-        .env("IDF_PYTHON_ENV_PATH", &idf_python_env_path)
-        .env("ESP_IDF_VERSION", get_idf_version_for_env(idf_path))
-        .env("IDF_COMPONENT_MANAGER", "1")
-        .env("PATH", &new_path)
-        .env("PYTHONPATH", format!("{};{}", &idf_tools_dir, std::env::var("PYTHONPATH").unwrap_or_default()))
-        .env("OPENOCD_SCRIPTS", format!("{}\\openocd-esp32", tools_path))
-        .env("ESP_ROM_ELF_DIR", format!("{}\\components\\esp_rom\\{}", idf_path,
-            detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
-        .and_then(|child| child.wait_with_output())
+    let output = {
+        let mut cmd = Command::new(&python_path);
+        cmd.arg(idf_py)
+            .args(args)
+            .current_dir(project_path)
+            .env("IDF_PATH", idf_path)
+            .env("IDF_TOOLS_PATH", tools_path)
+            .env("IDF_PYTHON_ENV_PATH", &idf_python_env_path)
+            .env("ESP_IDF_VERSION", get_idf_version_for_env(idf_path))
+            .env("IDF_COMPONENT_MANAGER", "1")
+            .env("PATH", &new_path)
+            .env("PYTHONPATH", format!("{};{}", &idf_tools_dir, std::env::var("PYTHONPATH").unwrap_or_default()))
+            .env("OPENOCD_SCRIPTS", format!("{}\\openocd-esp32", tools_path))
+            .env("ESP_ROM_ELF_DIR", format!("{}\\components\\esp_rom\\{}", idf_path,
+                detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        cmd.spawn()
+    }
+    .and_then(|child| child.wait_with_output())
         .map_err(|e| format!("Failed to execute idf.py via EIM python: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -968,8 +971,8 @@ pub fn run_idf_command_streaming(
                .env("ESP_ROM_ELF_DIR", format!("{}\\components\\esp_rom\\{}", idf_path,
                    detect_target_from_project(&project_path).unwrap_or_else(|| "esp32".to_string())))
                .stdout(Stdio::piped())
-               .stderr(Stdio::piped())
-               .creation_flags(0x08000000); // CREATE_NO_WINDOW
+               .stderr(Stdio::piped());
+            #[cfg(windows)] { cmd.creation_flags(0x08000000); }
 
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
@@ -1032,13 +1035,15 @@ pub fn run_idf_command_streaming(
             );
             info!("Streaming cmd: {}", cmd_str);
 
-            let mut child = match Command::new("cmd")
-                .args(["/C", &cmd_str])
-                .current_dir(&project_path)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .spawn()
+            let mut child = match {
+                let mut cmd = Command::new("cmd");
+                cmd.args(["/C", &cmd_str])
+                    .current_dir(&project_path)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+                cmd.spawn()
+            }
             {
                 Ok(c) => c,
                 Err(e) => {
@@ -1870,10 +1875,10 @@ pub fn doctor_internal(project_path: Option<String>, idf_path: Option<String>) -
                 fail += 1;
             }
         } else {
-            let python_result = Command::new("python")
-                .arg("--version")
-                .creation_flags(0x08000000)
-                .output();
+            let mut python_cmd = Command::new("python");
+            python_cmd.arg("--version");
+            #[cfg(windows)] { python_cmd.creation_flags(0x08000000); }
+            let python_result = python_cmd.output();
             match python_result {
                 Ok(o) if o.status.success() => {
                     let ver = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -2012,9 +2017,9 @@ pub fn run_idf_command_live(
             .env("OPENOCD_SCRIPTS", format!("{}\\openocd-esp32", tools_path))
             .env("ESP_ROM_ELF_DIR", format!("{}\\components\\esp_rom\\{}", idf_path_str,
                 detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())))
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
 
         return spawn_and_stream_live(cmd);
     }
@@ -2037,9 +2042,9 @@ pub fn run_idf_command_live(
         let mut cmd = Command::new("cmd");
         cmd.args(["/C", &cmd_str])
             .current_dir(project_path)
-            .creation_flags(0x08000000)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
         return spawn_and_stream_live(cmd);
     }
 
@@ -2065,11 +2070,10 @@ pub fn run_idf_command_live(
 
 /// 启动子进程，实时打印 stdout/stderr，最后返回完整输出摘要
 fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .creation_flags(0x08000000)
-        .spawn()
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn process: {}", e))?;
 
     let stdout_reader = child.stdout.take().map(|s| BufReader::new(s));

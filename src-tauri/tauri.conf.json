@@ -33,7 +33,8 @@
     "targets": ["msi", "nsis", "app", "dmg", "deb", "appimage"],
     "icon": [
       "icons/icon.png",
-      "icons/icon.ico"
+      "icons/icon.ico",
+      "icons/icon.icns"
     ],
     "resources": {
       "scripts/kconfig_dump.py": "scripts/",
@@ -51,6 +52,12 @@
         "template": "wix/main.wxs",
         "fragmentPaths": ["wix/ui-theme.wxs"]
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "maintainer": "EspSmith Team"
     }
   },
   "plugins": {
