@@ -576,16 +576,18 @@ pub async fn ai_send_message(
                                         if let Some(text) = event.get("content").and_then(|v| v.as_str())
                                             .or_else(|| event.get("text").and_then(|v| v.as_str()))
                                         {
-                                            info!("{} reasoning ({} chars): {}", provider_name, text.len(), &text[..text.len().min(120)]);
+                                            let preview: String = text.chars().take(120).collect();
+                                            info!("{} reasoning ({} chars): {}", provider_name, text.len(), preview);
                                             let _ = app_handle.emit("ai-reasoning", text);
                                         }
                                     }
                                     "content" => {
                                         if let Some(content) = event["content"].as_str() {
+                                            let preview: String = content.chars().take(120).collect();
                                             info!("{} content ({} chars): {}",
                                                 provider_name,
                                                 content.len(),
-                                                &content[..content.len().min(120)]);
+                                                preview);
                                             output.push_str(content);
                                             // CodeWhale stream-json: 逐 token 增量
                                             // MiMo-Code --format json: 整段文本完成后一次发出
@@ -935,12 +937,13 @@ pub async fn ai_send_message(
                                         break;
                                     }
                                     _ => {
+                                        let line_preview: String = line.chars().take(300).collect();
                                         info!(
                                             "{} unknown event type: '{}' keys=[{}] line={}",
                                             provider_name,
                                             event_type,
                                             event.as_object().map(|o| o.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default(),
-                                            &line[..line.len().min(300)]
+                                            line_preview
                                         );
                                     }
                                 }
@@ -950,7 +953,7 @@ pub async fn ai_send_message(
                                 tracing::warn!(
                                     "Failed to parse CodeWhale stream JSON: {} - {}",
                                     e,
-                                    &line[..line.len().min(200)]
+                                    line.chars().take(200).collect::<String>()
                                 );
                             }
                         }
