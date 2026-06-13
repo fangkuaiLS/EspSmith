@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { translateBackendString } from '../../i18n';
-import { Bot, Send, StopCircle, Plus, User, Code, Terminal, ChevronDown, ChevronRight, ExternalLink, Undo2, Coins, Copy, Check, Pencil, Clock, Trash2, Shield, ShieldAlert, Cpu, Loader, CheckCircle2, Circle, XCircle, Brain } from 'lucide-react';
+import { Send, StopCircle, Plus, User, Code, Terminal, ChevronDown, ChevronRight, ExternalLink, Undo2, Coins, Copy, Check, Pencil, Clock, Trash2, Shield, ShieldAlert, Cpu, Loader, CheckCircle2, Circle, XCircle, Brain } from 'lucide-react';
 import { useChatStore, useSettingsStore } from '../../stores';
 import { useProjectStore } from '../../stores/projectStore';
 import type { ChatSession } from '../../stores/chatStore';
@@ -964,7 +964,6 @@ function doCopy(text: string, setter: (v: boolean) => void) {
 }
 
 function MessageItem({ message }: { message: ChatMessage }) {
-  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [localCopied, setLocalCopied] = useState(false);
   const [userCopied, setUserCopied] = useState(false);
