@@ -7,7 +7,6 @@ authors = ["EspSmith Team"]
 license = "Apache-2.0"
 repository = "https://github.com/fangkuaiLS/EspSmith"
 rust-version = "1.77"
-default-run = "espsmith"
 
 [package.metadata]
 tauri-winres = { FileDescription = "EspSmith - AI-powered ESP32 development studio", ProductName = "EspSmith" }
