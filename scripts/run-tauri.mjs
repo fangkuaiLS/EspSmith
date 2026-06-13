@@ -1,7 +1,7 @@
 import { spawn, execSync } from 'child_process';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, statSync } from 'fs';
 import { platform, homedir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -152,7 +152,6 @@ if (args.includes('dev')) {
   const cliExePath = join(projectRoot, 'src-tauri', 'target', 'debug', 'espsmith-cli.exe');
   // 检查是否需要重新编译：文件不存在，或者 lib.rs 比 cli.exe 更新
   const needsCompile = !existsSync(cliExePath) || (() => {
-    const { statSync } = require('fs');
     try {
       const cliTime = statSync(cliExePath).mtimeMs;
       const libTime = statSync(join(projectRoot, 'src-tauri', 'src', 'lib.rs')).mtimeMs;

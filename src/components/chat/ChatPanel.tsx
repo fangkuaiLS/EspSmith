@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { translateBackendString } from '../../i18n';
-import { Bot, Send, StopCircle, Plus, User, Code, Terminal, ChevronDown, ChevronRight, ExternalLink, Undo2, Coins, Copy, Check, Pencil, Clock, Trash2, Shield, ShieldAlert, Cpu, Loader, CheckCircle2, Circle, XCircle } from 'lucide-react';
+import { Bot, Send, StopCircle, Plus, User, Code, Terminal, ChevronDown, ChevronRight, ExternalLink, Undo2, Coins, Copy, Check, Pencil, Clock, Trash2, Shield, ShieldAlert, Cpu, Loader, CheckCircle2, Circle, XCircle, Brain } from 'lucide-react';
 import { useChatStore, useSettingsStore } from '../../stores';
 import { useProjectStore } from '../../stores/projectStore';
 import type { ChatSession } from '../../stores/chatStore';
@@ -49,22 +49,50 @@ const STATUS_CONFIG: Record<AIStatus, { labelKey: string; dotClass: string }> = 
 
 
 
+interface ToolchainOption {
+  id: string;
+  label: string;
+  aiModel: 'deepseek' | 'ollama' | 'mimo';
+}
+
+const TOOLCHAIN_OPTIONS: ToolchainOption[] = [
+  { id: 'codewhale', label: 'CodeWhale', aiModel: 'deepseek' },
+  { id: 'mimo', label: 'MiMo-Code', aiModel: 'mimo' },
+  // Ollama 暂时禁用，待独立实现
+  // { id: 'ollama', label: 'Ollama', aiModel: 'ollama' },
+];
+
 interface ModelOption {
   id: string;
   label: string;
-  provider: 'deepseek' | 'ollama';
   model: string;
 }
 
-const MODEL_OPTIONS: ModelOption[] = [
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'deepseek', model: 'deepseek-v4-pro' },
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', provider: 'deepseek', model: 'deepseek-v4-flash' },
-  { id: 'ollama', label: 'Ollama (Local)', provider: 'ollama', model: 'ollama' },
-];
+// 每个工具链对应的模型列表
+const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
+  codewhale: [
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', model: 'deepseek-v4-pro' },
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash' },
+  ],
+  mimo: [
+    { id: 'mimo/mimo-auto', label: 'MiMo Auto（MiMo-V2.5 限免中）', model: 'mimo/mimo-auto' },
+  ],
+  ollama: [
+    { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
+  ],
+};
+
+function getCurrentToolchainId(): string {
+  const s = useSettingsStore.getState().settings;
+  if (s.aiModel === 'mimo') return 'mimo';
+  if (s.aiModel === 'ollama') return 'ollama';
+  return 'codewhale';
+}
 
 function getCurrentModelId(): string {
   const s = useSettingsStore.getState().settings;
   if (s.aiModel === 'ollama') return 'ollama';
+  if (s.aiModel === 'mimo') return s.mimoModel || 'mimo/mimo-auto';
   return s.deepseekModel || 'deepseek-v4-pro';
 }
 
@@ -119,6 +147,8 @@ export function ChatPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
+  const [toolchainOpen, setToolchainOpen] = useState(false);
+  const toolchainDropdownRef = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyDropdownRef = useRef<HTMLDivElement>(null);
   const [permOpen, setPermOpen] = useState(false);
@@ -131,7 +161,6 @@ export function ChatPanel() {
   const { messages, status, pendingRollback, usage, sessions, permissionMode, pendingPermission, activeOperation, sendMessage, startAI, stopAI, clearMessages, confirmRollback, cancelRollback, loadSessions, loadSession, deleteSession, setPermissionMode } = useChatStore();
   const { settings, setSettings } = useSettingsStore();
   const projectPath = useProjectStore((s) => s.currentProject?.path);
-  const currentModelId = getCurrentModelId();
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -196,22 +225,36 @@ export function ChatPanel() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [stopAI, clearMessages, startAI, loadSessions]);
 
-  const handleModelChange = useCallback(async (option: ModelOption) => {
-    setModelOpen(false);
-    if (option.id === currentModelId) return;
+  const handleToolchainChange = useCallback(async (option: ToolchainOption) => {
+    setToolchainOpen(false);
+    const currentToolchain = getCurrentToolchainId();
+    if (option.id === currentToolchain) return;
     const newSettings = { ...settings };
-    if (option.provider === 'deepseek') {
-      newSettings.aiModel = 'deepseek';
-      newSettings.deepseekModel = option.model as 'deepseek-v4-pro' | 'deepseek-v4-flash';
+    newSettings.aiModel = option.aiModel;
+    setSettings(newSettings);
+    stopAI();
+    clearMessages(true);
+    loadSessions();
+    setTimeout(() => { startAI(); }, 150);
+  }, [settings, setSettings, stopAI, clearMessages, startAI, loadSessions]);
+
+  const handleModelSelect = useCallback(async (option: ModelOption) => {
+    setModelOpen(false);
+    const currentModel = getCurrentModelId();
+    if (option.id === currentModel) return;
+    const newSettings = { ...settings };
+    const toolchain = getCurrentToolchainId();
+    if (toolchain === 'mimo') {
+      newSettings.mimoModel = option.model;
     } else {
-      newSettings.aiModel = 'ollama';
+      newSettings.deepseekModel = option.model as 'deepseek-v4-pro' | 'deepseek-v4-flash';
     }
     setSettings(newSettings);
     stopAI();
     clearMessages(true);
     loadSessions();
     setTimeout(() => { startAI(); }, 150);
-  }, [settings, setSettings, stopAI, clearMessages, startAI, currentModelId, loadSessions]);
+  }, [settings, setSettings, stopAI, clearMessages, startAI, loadSessions]);
 
   const handleNewTask = () => {
     stopAI();
@@ -312,44 +355,42 @@ export function ChatPanel() {
       {/* Header */}
       <div className="px-4 py-3 border-b border-border-default flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-accent-muted flex items-center justify-center">
-            <Bot size={17} className="text-accent" />
+          <div className="h-7 w-28 flex items-center justify-center rounded-md bg-white/90 dark:bg-white/80 p-1">
+            <img src={`/icons/${getCurrentToolchainId() === 'mimo' ? 'mimo-code' : getCurrentToolchainId()}.svg`} alt="" className="w-full h-full object-contain" />
           </div>
-          <div>
-            <h3 className="text-[13px] font-semibold">{t('chat.aiAssistant')}</h3>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${statusConfig.dotClass}`} />
-              <span className="text-[11px] text-text-tertiary">{t(statusConfig.labelKey)}</span>
-            </div>
+          <div className="flex items-center gap-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full ${statusConfig.dotClass}`} />
+            <span className="text-[11px] text-text-tertiary">{t(statusConfig.labelKey)}</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="relative" ref={modelDropdownRef}>
+          {/* 工具链选择 */}
+          <div className="relative" ref={toolchainDropdownRef}>
             <button
-              onClick={() => setModelOpen(!modelOpen)}
+              onClick={() => setToolchainOpen(!toolchainOpen)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-overlay border border-border-subtle text-[11px] text-text-secondary hover:text-text-primary hover:border-border-default transition-all"
-              title={t('chat.switchModel')}
+              title="切换工具链"
             >
               <span className="max-w-[100px] truncate">
-                {MODEL_OPTIONS.find(o => o.id === currentModelId)?.label || currentModelId}
+                {TOOLCHAIN_OPTIONS.find(o => o.id === getCurrentToolchainId())?.label || 'CodeWhale'}
               </span>
-              <ChevronDown size={11} className={`transition-transform ${modelOpen ? 'rotate-180' : ''}`} />
+              <ChevronDown size={11} className={`transition-transform ${toolchainOpen ? 'rotate-180' : ''}`} />
             </button>
-            {modelOpen && (
-              <div className="absolute right-0 top-full mt-1 w-[200px] bg-surface-elevated border border-border-default rounded-lg shadow-lg z-50 py-1 animate-scale-in origin-top-right">
-                {MODEL_OPTIONS.map((option) => (
+            {toolchainOpen && (
+              <div className="absolute right-0 top-full mt-1 w-[180px] bg-surface-elevated border border-border-default rounded-lg shadow-lg z-50 py-1 animate-scale-in origin-top-right">
+                {TOOLCHAIN_OPTIONS.map((option) => (
                   <button
                     key={option.id}
-                    onClick={() => handleModelChange(option)}
+                    onClick={() => handleToolchainChange(option)}
                     className={`w-full flex items-center gap-2 px-3 py-2 text-[12px] transition-colors ${
-                      option.id === currentModelId
+                      option.id === getCurrentToolchainId()
                         ? 'bg-accent-muted text-accent'
                         : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
                     }`}
                   >
-                    <div className={`w-2 h-2 rounded-full ${option.id === currentModelId ? 'bg-accent' : 'bg-text-disabled'}`} />
+                    <div className={`w-2 h-2 rounded-full ${option.id === getCurrentToolchainId() ? 'bg-accent' : 'bg-text-disabled'}`} />
                     <span>{option.label}</span>
-                    {option.id === currentModelId && <Check size={12} className="ml-auto text-accent" />}
+                    {option.id === getCurrentToolchainId() && <Check size={12} className="ml-auto text-accent" />}
                   </button>
                 ))}
               </div>
@@ -437,24 +478,8 @@ export function ChatPanel() {
         {activeOperation && (
           <OperationTimeline operation={activeOperation} />
         )}
-        {/* Typing indicator */}
-        {showTyping && (
-          <div className="flex justify-start">
-            <div className="bg-surface-overlay rounded-2xl rounded-bl-md px-4 py-3 border border-border-subtle">
-              <div className="flex items-center gap-1">
-                {[0, 1, 2].map((i) => (
-                  <div
-                    key={i}
-                    className="w-1.5 h-1.5 rounded-full bg-text-tertiary"
-                    style={{
-                      animation: `typing-dot 1.4s ease-in-out ${i * 0.15}s infinite`,
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Thinking Block — AI 响应期间始终显示，可折叠查看详情 */}
+        {showTyping && <ThinkingBlock status={status} messages={messages} />}
         <div ref={messagesEndRef} />
       </div>
 
@@ -473,7 +498,42 @@ export function ChatPanel() {
             style={{ minHeight: '36px', maxHeight: '200px' }}
           />
           <div className="flex items-center justify-between px-2 py-1.5">
-            <div className="relative" ref={permDropdownRef}>
+            <div className="flex items-center gap-1">
+              {/* 模型选择 */}
+              <div className="relative" ref={modelDropdownRef}>
+                <button
+                  onClick={() => setModelOpen(!modelOpen)}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all"
+                  title="切换模型"
+                >
+                  <Cpu size={12} />
+                  <span className="max-w-[80px] truncate">
+                    {MODELS_BY_TOOLCHAIN[getCurrentToolchainId()]?.find(o => o.id === getCurrentModelId())?.label || getCurrentModelId()}
+                  </span>
+                  <ChevronDown size={10} className={`transition-transform ${modelOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {modelOpen && (
+                  <div className="absolute left-0 bottom-full mb-1 w-[200px] bg-surface-elevated border border-border-default rounded-lg shadow-lg z-50 py-1 animate-scale-in origin-bottom-left">
+                    {MODELS_BY_TOOLCHAIN[getCurrentToolchainId()]?.map((option) => (
+                      <button
+                        key={option.id}
+                        onClick={() => handleModelSelect(option)}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-[12px] transition-colors ${
+                          option.id === getCurrentModelId()
+                            ? 'bg-accent-muted text-accent'
+                            : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                        }`}
+                      >
+                        <div className={`w-2 h-2 rounded-full ${option.id === getCurrentModelId() ? 'bg-accent' : 'bg-text-disabled'}`} />
+                        <span>{option.label}</span>
+                        {option.id === getCurrentModelId() && <Check size={12} className="ml-auto text-accent" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* 权限模式 */}
+              <div className="relative" ref={permDropdownRef}>
               <button
                 onClick={() => setPermOpen(!permOpen)}
                 className={`flex items-center gap-1 px-2 py-1 text-[11px] rounded-md transition-all ${
@@ -521,6 +581,7 @@ export function ChatPanel() {
                   </button>
                 </div>
               )}
+            </div>
             </div>
             <button
               onClick={isBusy ? stopAI : handleSend}
@@ -797,6 +858,105 @@ function TerminalPanel({ command, output }: { command: string; output: string })
   );
 }
 
+/**
+ * ThinkingBlock — AI 思考/推理过程的可折叠展示块
+ * 在 AI 响应期间（showTyping）显示，替代原来的三个跳动圆点
+ * 参考 MiMO-Code TUI 的 "- Thought: [title] · 22ms" 风格
+ * 只展示 AI 的 reasoning/thinking 内容，不重复展示工具调用（工具调用已有 OperationTimeline）
+ */
+function ThinkingBlock({ status, messages }: { status: AIStatus; messages: ChatMessage[] }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const prevThinkingRef = useRef('');
+
+  // 从最后一条 assistant 消息中获取 reasoning 内容（仅当前轮次）
+  const thinkingContent = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') {
+        // 只看最后一条 assistant 消息，避免显示上一轮的 thinking
+        return messages[i].thinkingContent || '';
+      }
+    }
+    return '';
+  }, [messages]);
+
+  // thinking 内容到达时自动展开
+  useEffect(() => {
+    if (thinkingContent && thinkingContent !== prevThinkingRef.current) {
+      prevThinkingRef.current = thinkingContent;
+      if (!expanded) setExpanded(true);
+    }
+    // 新一轮对话 thinking 被清空时，折叠
+    if (!thinkingContent && prevThinkingRef.current) {
+      prevThinkingRef.current = '';
+      setExpanded(false);
+    }
+  }, [thinkingContent]);
+
+  // 解析 reasoning 文本：提取 **标题** 和正文（MiMO 格式）
+  const { title, body } = useMemo(() => {
+    const text = thinkingContent?.trim() || '';
+    const match = text.match(/^\*\*([^*\n]+)\*\*(?:\r?\n\r?\n|$)/);
+    if (match) {
+      return { title: match[1].trim(), body: text.slice(match[0].length).trimEnd() };
+    }
+    return { title: null, body: text };
+  }, [thinkingContent]);
+
+  const hasThinking = !!thinkingContent;
+
+  return (
+    <div className="flex justify-start animate-slide-up">
+      <div className="max-w-[85%]">
+        <div className="border border-border-subtle rounded-xl overflow-hidden bg-surface-overlay/80 backdrop-blur-sm">
+          {/* Header — 一行展示 */}
+          <button
+            onClick={() => hasThinking && setExpanded(!expanded)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[12px] transition-colors ${hasThinking ? 'hover:bg-surface-hover cursor-pointer' : 'cursor-default'}`}
+          >
+            {/* 状态图标 */}
+            <Brain size={13} className={`shrink-0 ${status === 'thinking' ? 'text-accent animate-pulse' : 'text-text-tertiary'}`} />
+
+            {/* 标题文字 */}
+            <span className="text-text-secondary font-medium">
+              {hasThinking ? (
+                <>Thought{title && <>: </>}<span className="text-accent/90">{title || (body.slice(0, 40) + (body.length > 40 ? '...' : ''))}</span></>
+              ) : (
+                <span>{t('chat.thinking')}</span>
+              )}
+            </span>
+
+            {/* 动画点 */}
+            <div className="flex items-center gap-0.5 ml-auto mr-0.5">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="w-1 h-1 rounded-full bg-accent/40"
+                  style={{ animation: `typing-dot 1.4s ease-in-out ${i * 0.15}s infinite` }}
+                />
+              ))}
+            </div>
+
+            {/* 展开/折叠箭头 */}
+            {hasThinking && (
+              expanded ? <ChevronDown size={12} className="text-text-disabled shrink-0" /> : <ChevronRight size={12} className="text-text-disabled shrink-0" />
+            )}
+          </button>
+
+          {/* 展开内容：仅显示 Reasoning 正文 */}
+          {expanded && hasThinking && (
+            <div className="border-t border-border-subtle max-h-[300px] overflow-y-auto">
+              <div className="px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap bg-surface-elevated text-text-secondary">
+                {body || thinkingContent}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function doCopy(text: string, setter: (v: boolean) => void) {
   navigator.clipboard.writeText(text);
   setter(true);
@@ -809,9 +969,12 @@ function MessageItem({ message }: { message: ChatMessage }) {
   const [localCopied, setLocalCopied] = useState(false);
   const [userCopied, setUserCopied] = useState(false);
   const [toolMsgCopied, setToolMsgCopied] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [thinkingCopied, setThinkingCopied] = useState(false);
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isTool = !!message.toolData;
+  const hasThinking = !!message.thinkingContent;
 
   // 工具调用消息 - 可折叠
   if (isTool) {
@@ -922,24 +1085,21 @@ function MessageItem({ message }: { message: ChatMessage }) {
   }
 
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-slide-up`}>
+    <div className={`flex flex-col group ${isUser ? 'items-end' : 'items-start'} animate-slide-up gap-2.5`}>
       {/* Avatar */}
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-        isUser ? 'bg-accent' : 'bg-surface-overlay border border-border-subtle'
-      }`}>
-        {isUser
-          ? <User size={13} className="text-white" />
-          : <Bot size={13} className="text-accent" />
-        }
-      </div>
+      {isUser
+        ? <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center shrink-0"><User size={13} className="text-white" /></div>
+        : <div className="h-7 w-28 rounded-lg flex items-center justify-center shrink-0 overflow-hidden bg-white/90 dark:bg-white/80 p-1">
+            <img src={`/icons/${getCurrentToolchainId() === 'mimo' ? 'mimo-code' : getCurrentToolchainId()}.svg`} alt="" className="w-full h-full object-contain" />
+          </div>
+      }
 
-      {/* Bubble */}
-      <div className={`max-w-[80%] ${isUser ? 'items-end' : 'items-start'}`}>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-[11px] font-medium text-text-secondary">
-            {isUser ? t('chat.you') : t('chat.assistant')}
-          </span>
-          {isUser && message.id.startsWith('user-') && (
+      {/* Bubble — 按钮在左/右，内容在另一侧 */}
+      <div className={`max-w-[80%] flex items-start flex-row gap-2`}>
+        {/* 操作按钮 */}
+        {isUser && (
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 pt-1">
+          {message.id.startsWith('user-') && (
             <button
               onClick={() => useChatStore.getState().prepareRollback(message.id)}
               className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-warning hover:bg-warning-muted rounded transition-all"
@@ -949,7 +1109,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
               回退
             </button>
           )}
-          {isUser && message.id.startsWith('user-') && (
+          {message.id.startsWith('user-') && (
             <button
               onClick={() => {
                 const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
@@ -965,16 +1125,49 @@ function MessageItem({ message }: { message: ChatMessage }) {
               <Pencil size={10} />
             </button>
           )}
-          {isUser && (
+          <button
+            onClick={() => doCopy(message.content, setUserCopied)}
+            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded transition-all"
+            title="复制消息"
+          >
+            {userCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
+          </button>
+          </div>
+        )}
+
+        {/* 内容区 */}
+        <div className={`min-w-0 ${isUser ? 'items-end' : 'items-start'}`}>
+        {/* Thinking / Reasoning Block — 可折叠展示 AI 推理过程 */}
+        {hasThinking && !isUser && (
+          <div className="mb-2">
             <button
-              onClick={() => doCopy(message.content, setUserCopied)}
-              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded transition-all"
-              title="复制消息"
+              onClick={() => setThinkingExpanded(!thinkingExpanded)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all group/think w-full"
             >
-              {userCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
+              <Brain size={12} className="text-accent/70 shrink-0" />
+              <span className="font-medium">思考过程</span>
+              <span className="text-text-disabled ml-1">({message.thinkingContent!.length > 0 ? Math.round(message.thinkingContent!.length / 2) : '...'} 字)</span>
+              {thinkingExpanded
+                ? <ChevronDown size={12} className="ml-auto shrink-0" />
+                : <ChevronRight size={12} className="ml-auto shrink-0" />
+              }
+              <button
+                onClick={(e) => { e.stopPropagation(); doCopy(message.thinkingContent!, setThinkingCopied); }}
+                className="opacity-0 group-hover/think:opacity-100 transition-opacity shrink-0"
+                title="复制思考内容"
+              >
+                {thinkingCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
+              </button>
             </button>
-          )}
-        </div>
+            {thinkingExpanded && (
+              <div className="mt-1 mx-3 px-3 py-2.5 bg-[var(--color-thinking-bg,#1a1625)] border border-border-subtle rounded-lg text-[12px] text-text-tertiary leading-relaxed max-h-[300px] overflow-y-auto">
+                <div className="[&_p]:mb-2 [&_p:last-of-type]:mb-0 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 whitespace-pre-wrap">
+                  {message.thinkingContent}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className={`px-4 py-2.5 text-[13px] leading-relaxed ${
           isUser
             ? 'bg-accent text-white rounded-2xl rounded-tr-sm'
@@ -999,6 +1192,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
             <span>↑{formatTokens(message.usage.inputTokens)} ↓{formatTokens(message.usage.outputTokens)}</span>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

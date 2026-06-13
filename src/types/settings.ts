@@ -13,8 +13,9 @@ export interface AppSettings {
   gdbPort: string;
   openOcdScript?: string;
   useDocker: boolean;
-  aiModel: 'deepseek' | 'ollama';
+  aiModel: 'deepseek' | 'ollama' | 'mimo';
   deepseekModel: 'deepseek-v4-pro' | 'deepseek-v4-flash';
+  mimoModel?: string;
   deepseekApiKey?: string;
   ollamaEndpoint?: string;
   reviewMode: boolean;
@@ -31,6 +32,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     useDocker: false,
     aiModel: 'deepseek',
     deepseekModel: 'deepseek-v4-pro',
+    mimoModel: 'mimo/mimo-auto',
     deepseekApiKey: undefined,
     ollamaEndpoint: 'http://localhost:11434',
     reviewMode: true,

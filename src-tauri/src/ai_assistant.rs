@@ -2,10 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Mutex as StdMutex};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tauri::Emitter;
 use tracing::info;
 use crate::connection::ConnectionMode;
+use crate::ai_provider::AIProvider;
 
 /// 内嵌的 CodeWhale 二进制目录路径（由 lib.rs 在 setup 时初始化）
 static BUNDLED_CODEWHALE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -328,21 +330,27 @@ pub async fn ai_start(config: AIConfig) -> Result<String, String> {
     }
     client.session_id = None;
 
-    let _ = client
-        .config
-        .api_key
-        .clone()
-        .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+    // Ollama 和 MiMo 不需要 API Key
+    let needs_api_key = client.config.ai_provider != "ollama" && client.config.ai_provider != "mimo";
+    if needs_api_key {
+        let _key = client
+            .config
+            .api_key
+            .clone()
+            .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+    }
 
     if client.config.enable_tool_use {
         info!("MCP server check skipped — using exec_shell-only mode");
     }
 
-    ensure_codewhale_ready().map_err(|e| {
+    // 根据 ai_provider 选择对应的 Provider 并检查就绪状态
+    let provider = crate::ai_provider::select_provider(&client.config);
+    provider.ensure_ready().map_err(|e| {
         format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
     })?;
 
-    Ok("CodeWhale Agent is ready".into())
+    Ok(format!("{} Agent is ready", provider.display_name()))
 }
 
 #[tauri::command]
@@ -390,15 +398,18 @@ pub async fn ai_send_message(
     message: String,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let (api_key, model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, ai_provider, permission_mode, chip_changed) = {
+    let (model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, _ai_provider, permission_mode, chip_changed) = {
         let client = AI_CLIENT.lock().await;
-        let key = client
-            .config
-            .api_key
-            .clone()
-            .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+        // MiMo-Code 免费通道不需要 API Key
+        let needs_api_key = client.config.ai_provider != "mimo";
+        if needs_api_key {
+            let _key = client
+                .config
+                .api_key
+                .clone()
+                .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+        }
         (
-            key,
             client.config.model.clone(),
             client.config.project_path.clone(),
             client.config.idf_path.clone(),
@@ -427,19 +438,8 @@ pub async fn ai_send_message(
         ensure_project_agent_instructions(project_path.as_deref(), idf_path.as_deref())?;
     }
 
-    let binary = ensure_codewhale_ready()?;
-    let mut cmd = tokio::process::Command::new(&binary);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    cmd.args(["--model", &model, "exec", "--auto", "--output-format", "stream-json"]);
-
-    if let Some(ref sid) = session_id {
-        cmd.arg("--session-id").arg(sid);
-    }
-
-    if let Some(ref _pp) = project_path {
+    // 初始化经验库
+    if project_path.is_some() {
         let exp_dir = dirs_next::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("espsmith")
@@ -447,7 +447,18 @@ pub async fn ai_send_message(
         crate::experience::init(exp_dir);
     }
 
-    cmd.arg(build_short_agent_prompt(&message, project_path.as_deref(), idf_path.as_deref(), target_chip.as_deref(), flash_port.as_deref(), chip_changed));
+    // 选择 AI Provider（CodeWhale / MiMo-Code）
+    let provider = crate::ai_provider::select_provider(&{
+        let client = AI_CLIENT.lock().await;
+        client.config.clone()
+    });
+    let provider_name = provider.display_name();
+
+    let binary = provider.ensure_ready().map_err(|e| {
+        format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
+    })?;
+
+    let prompt = build_short_agent_prompt(&message, project_path.as_deref(), idf_path.as_deref(), target_chip.as_deref(), flash_port.as_deref(), chip_changed);
 
     // Clear chip_changed flag after it's been consumed by the prompt
     if chip_changed {
@@ -455,45 +466,49 @@ pub async fn ai_send_message(
         client.config.chip_changed = false;
     }
 
-    match ai_provider.as_str() {
-        "ollama" => {
-            info!("Using Ollama local model: {}", model);
-        }
-        _ => {
-            cmd.env("DEEPSEEK_API_KEY", &api_key);
-            info!("Using DeepSeek API with model: {}", model);
-        }
+    let config_snapshot = {
+        let client = AI_CLIENT.lock().await;
+        client.config.clone()
+    };
+
+    let mut provider_cmd = provider.build_command(
+        &binary,
+        &config_snapshot,
+        &prompt,
+        session_id.as_deref(),
+    );
+
+    // 设置 API Key 环境变量
+    if let Some((env_key, env_val)) = provider.api_key_env(&config_snapshot) {
+        provider_cmd.cmd.env(&env_key, &env_val);
+        info!("Using API key env: {} with model: {}", env_key, model);
     }
 
-    // 显式传递 IPC 管道地址给 CodeWhale，确保其 exec_shell 启动的子进程能委托主进程执行闭环
+    // 显式传递 IPC 管道地址给 AI Provider，确保其 exec_shell 启动的子进程能委托主进程执行闭环
     if let Ok(pipe_addr) = std::env::var(crate::self_healing::ipc::ENV_PIPE_NAME) {
-        cmd.env(crate::self_healing::ipc::ENV_PIPE_NAME, &pipe_addr);
-        info!("Passing IPC pipe address to CodeWhale: {}", pipe_addr);
+        provider_cmd.cmd.env(crate::self_healing::ipc::ENV_PIPE_NAME, &pipe_addr);
+        info!("Passing IPC pipe address to {}: {}", provider_name, pipe_addr);
     }
 
     if let Some(ref path) = project_path {
-        cmd.current_dir(path);
-        info!("CodeWhale working directory: {}", path);
+        provider_cmd.cmd.current_dir(path);
+        info!("{} working directory: {}", provider_name, path);
     }
 
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
+    info!("Starting {} run (session: {:?})", provider_name, session_id);
 
-    info!("Starting CodeWhale exec (session: {:?})", session_id);
-
-    let mut child = cmd
+    let mut child = provider_cmd.cmd
         .spawn()
         .map_err(|e| format!("i18n:aiBackend.codewhaleStartFailed|path={}|error={}", binary.display(), e))?;
 
     let stdout = child
         .stdout
         .take()
-        .ok_or("Failed to read CodeWhale stdout")?;
+        .ok_or_else(|| format!("Failed to read {} stdout", provider_name))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or("Failed to read CodeWhale stderr")?;
+        .ok_or_else(|| format!("Failed to read {} stderr", provider_name))?;
 
     {
         let mut guard = RUNNING_CHILD.lock().await;
@@ -527,9 +542,18 @@ pub async fn ai_send_message(
     let current_model = model.clone();
     let mut pending_write_path: Option<String> = None;
 
+    // Inactivity timeout: if the subprocess produces no output for this duration,
+    // it is likely stuck (e.g. read_file hanging). Kill it and return an error.
+    // 300s is generous enough for long-running build/flash operations while still
+    // catching genuinely stuck tool calls.
+    let inactivity_timeout = Duration::from_secs(300);
+    let inactivity_timer = tokio::time::sleep(inactivity_timeout);
+    tokio::pin!(inactivity_timer);
+
     loop {
         tokio::select! {
             result = stdout_reader.next_line() => {
+                inactivity_timer.as_mut().reset(tokio::time::Instant::now() + inactivity_timeout);
                 match result {
                     Ok(Some(line)) => {
                         if line.trim().is_empty() {
@@ -540,14 +564,35 @@ pub async fn ai_send_message(
                         let cleaned = strip_ansi_escapes(&line);
                         match serde_json::from_str::<serde_json::Value>(&cleaned) {
                             Ok(event) => {
+                                // MiMo-Code 事件格式转换：将 MiMo 事件转为 CodeWhale 兼容格式
+                                let events_to_process = if provider.kind() == crate::ai_provider::ProviderKind::MiMoCode {
+                                    crate::ai_provider::convert_mimo_event(&event)
+                                        .unwrap_or_else(|| vec![event])
+                                } else {
+                                    vec![event]
+                                };
+
+                                for event in events_to_process {
                                 let event_type = event["type"].as_str().unwrap_or("");
                                 match event_type {
+                                    "reasoning" => {
+                                        // AI 推理/思考过程内容，转发到前端显示
+                                        if let Some(text) = event.get("content").and_then(|v| v.as_str())
+                                            .or_else(|| event.get("text").and_then(|v| v.as_str()))
+                                        {
+                                            info!("{} reasoning ({} chars): {}", provider_name, text.len(), &text[..text.char_indices().take(120).last().map(|(i,c)| i+c.len_utf8()).unwrap_or(0)]);
+                                            let _ = app_handle.emit("ai-reasoning", text);
+                                        }
+                                    }
                                     "content" => {
                                         if let Some(content) = event["content"].as_str() {
-                                            info!("CodeWhale content ({} chars): {}",
+                                            info!("{} content ({} chars): {}",
+                                                provider_name,
                                                 content.len(),
-                                                &content[..content.len().min(120)]);
+                                                &content[..content.char_indices().take(120).last().map(|(i,c)| i+c.len_utf8()).unwrap_or(0)]);
                                             output.push_str(content);
+                                            // CodeWhale stream-json: 逐 token 增量
+                                            // MiMo-Code --format json: 整段文本完成后一次发出
                                             let _ = app_handle.emit("ai-chunk", content);
                                         }
                                     }
@@ -584,7 +629,7 @@ pub async fn ai_send_message(
                                                 }
                                             }
                                         }
-                                        info!("CodeWhale tool call: {}", name);
+                                        info!("{} tool call: {}", provider_name, name);
                                         // 跟踪 write_file / apply_patch 调用的路径
                                         if name == "write_file" || name == "apply_patch" {
                                             pending_write_path = event.get("input")
@@ -606,9 +651,10 @@ pub async fn ai_send_message(
                                             let mut status = AI_STATUS.lock().unwrap();
                                             *status = new_status;
                                         }
+                                        let tool_use_id_str = extract_id_as_string(&event, "id");
                                         let _ = app_handle.emit("ai-tool-use", serde_json::json!({
                                             "name": name,
-                                            "id": event["id"],
+                                            "id": tool_use_id_str,
                                             "input": event["input"],
                                         }));
                                         if name == "exec_shell" {
@@ -616,7 +662,7 @@ pub async fn ai_send_message(
                                                 .and_then(|v| v.get("command"))
                                                 .and_then(|v| v.as_str())
                                                 .unwrap_or("");
-                                            let tool_use_id = event["id"].as_str().unwrap_or("");
+                                            let tool_use_id = tool_use_id_str.clone();
                                             // 判断当前是否为 JTAG 模式
                                             // 基于用户选择的 flash_port 检测，而非全局缓存
                                             let is_jtag = {
@@ -638,7 +684,7 @@ pub async fn ai_send_message(
                                                 "[AIAssistant] Connection mode detection: is_jtag={}",
                                                 is_jtag
                                             );
-                                            if let Some(progress) = detect_jtag_operation(cmd, tool_use_id, is_jtag) {
+                                            if let Some(progress) = detect_jtag_operation(cmd, &tool_use_id, is_jtag) {
                                                 tracing::info!(
                                                     "[AIAssistant] Detected operation: type={}, steps={}, tool_use_id={}",
                                                     progress.operation_type,
@@ -674,9 +720,15 @@ pub async fn ai_send_message(
                                     }
                                     "tool_result" => {
                                         // CodeWhale uses "tool_use_id" and "content" (not "id"/"output")
-                                        let tool_use_id = event["tool_use_id"].as_str()
-                                            .or_else(|| event["id"].as_str())
-                                            .unwrap_or("");
+                                        // Normalize ID to string for consistent frontend Map key matching
+                                        let tool_use_id = {
+                                            let id = extract_id_as_string(&event, "tool_use_id");
+                                            if id.is_empty() {
+                                                extract_id_as_string(&event, "id")
+                                            } else {
+                                                id
+                                            }
+                                        };
                                         // Extract text from content (array or plain string), output, or result
                                         let output_text = event["content"].as_array()
                                             .and_then(|arr| arr.first())
@@ -791,11 +843,11 @@ pub async fn ai_send_message(
                                     "session_capture" => {
                                         if let Some(sid) = event["content"].as_str() {
                                             new_session_id = Some(sid.to_string());
-                                            info!("CodeWhale session: {}", sid);
+                                            info!("{} session: {}", provider_name, sid);
                                         }
                                     }
                                     "usage" => {
-                                        info!("CodeWhale usage event: {}", serde_json::to_string(&event).unwrap_or_default());
+                                        info!("{} usage event: {}", provider_name, serde_json::to_string(&event).unwrap_or_default());
                                         let input = event["input_tokens"].as_u64()
                                             .or_else(|| event["inputTokens"].as_u64())
                                             .or_else(|| event["usage"]["input_tokens"].as_u64())
@@ -818,13 +870,13 @@ pub async fn ai_send_message(
                                             msg_input_tokens = input;
                                             msg_output_tokens = output;
                                             msg_cached_tokens = cached;
-                                            info!("CodeWhale usage: input={} output={} cached={}", input, output, cached);
+                                            info!("{} usage: input={} output={} cached={}", provider_name, input, output, cached);
                                         }
                                     }
                                     "metadata" => {
-                                        info!("CodeWhale metadata event: {}", serde_json::to_string(&event).unwrap_or_default());
+                                        info!("{} metadata event: {}", provider_name, serde_json::to_string(&event).unwrap_or_default());
                                         if let Some(model) = event["meta"]["model"].as_str() {
-                                            info!("CodeWhale model: {}", model);
+                                            info!("{} model: {}", provider_name, model);
                                         }
                                         let meta_input = event["meta"]["input_tokens"].as_u64()
                                             .or_else(|| event["meta"]["usage"]["input_tokens"].as_u64())
@@ -842,7 +894,70 @@ pub async fn ai_send_message(
                                             msg_input_tokens = meta_input;
                                             msg_output_tokens = meta_output;
                                             msg_cached_tokens = meta_cached;
-                                            info!("CodeWhale metadata usage: input={} output={} cached={}", meta_input, meta_output, meta_cached);
+                                            info!("{} metadata usage: input={} output={} cached={}", provider_name, meta_input, meta_output, meta_cached);
+                                        }
+                                    }
+                                    "step_done" => {
+                                        // MiMo-Code 单轮完成（step_finish），不是最终完成
+                                        // 更新 session_id，发送 usage
+                                        if let Some(sid) = event["session_id"].as_str() {
+                                            new_session_id = Some(sid.to_string());
+                                            info!("{} step_done, session: {}", provider_name, sid);
+                                        }
+                                        // 发送当前轮次的 usage
+                                        {
+                                            let mut client = AI_CLIENT.lock().await;
+                                            client.add_usage(msg_input_tokens, msg_output_tokens, msg_cached_tokens, &current_model);
+                                            let last_cost = calculate_cost_rmb(msg_input_tokens, msg_output_tokens, msg_cached_tokens, &current_model);
+                                            let emit_usage = AICumulativeUsage {
+                                                session: AIUsage {
+                                                    input_tokens: client.cumulative_input_tokens,
+                                                    output_tokens: client.cumulative_output_tokens,
+                                                    cached_tokens: client.cumulative_cached_tokens,
+                                                    total_tokens: client.cumulative_input_tokens + client.cumulative_output_tokens,
+                                                    cost_rmb: client.cumulative_cost_rmb,
+                                                    model: current_model.clone(),
+                                                },
+                                                last_message: AIUsage {
+                                                    input_tokens: msg_input_tokens,
+                                                    output_tokens: msg_output_tokens,
+                                                    cached_tokens: msg_cached_tokens,
+                                                    total_tokens: msg_input_tokens + msg_output_tokens,
+                                                    cost_rmb: last_cost,
+                                                    model: current_model.clone(),
+                                                },
+                                                message_count: client.message_count,
+                                            };
+                                            let _ = app_handle.emit("ai-usage", emit_usage);
+                                        }
+                                        // 重置当前轮次计数
+                                        msg_input_tokens = 0;
+                                        msg_output_tokens = 0;
+                                        msg_cached_tokens = 0;
+                                        // 检查子进程是否已退出，如果已退出则视为完成
+                                        {
+                                            let mut guard = RUNNING_CHILD.lock().await;
+                                            if let Some(ref mut child) = *guard {
+                                                match child.try_wait() {
+                                                    Ok(Some(_status)) => {
+                                                        info!("{} step_done + process exited, treating as final done", provider_name);
+                                                        *guard = None;
+                                                        drop(guard);
+                                                        {
+                                                            let mut s = AI_STATUS.lock().unwrap();
+                                                            *s = AIStatus::Idle;
+                                                        }
+                                                        break;
+                                                    }
+                                                    Ok(None) => {
+                                                        // 进程还在运行，继续等待下一轮
+                                                        info!("{} step_done but process still running, waiting for next step", provider_name);
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!("{} step_done: try_wait error: {}", provider_name, e);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     "done" => {
@@ -853,9 +968,9 @@ pub async fn ai_send_message(
                                         if let Some(done_content) = event["content"].as_str() {
                                             output.push_str(done_content);
                                             let _ = app_handle.emit("ai-chunk", done_content);
-                                            info!("CodeWhale done (with content, {} chars)", done_content.len());
+                                            info!("{} done (with content, {} chars)", provider_name, done_content.len());
                                         } else {
-                                            info!("CodeWhale done (no content in done event)");
+                                            info!("{} done (no content in done event)", provider_name);
                                         }
                                         // 在 break 前立即发送 usage，避免时序竞争
                                         {
@@ -888,13 +1003,15 @@ pub async fn ai_send_message(
                                     }
                                     _ => {
                                         info!(
-                                            "CodeWhale unknown event type: '{}' keys=[{}] line={}",
+                                            "{} unknown event type: '{}' keys=[{}] line={}",
+                                            provider_name,
                                             event_type,
                                             event.as_object().map(|o| o.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default(),
                                             &line[..line.len().min(300)]
                                         );
                                     }
                                 }
+                                } // for event in events_to_process
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -913,10 +1030,11 @@ pub async fn ai_send_message(
                 }
             }
             result = stderr_reader.next_line() => {
+                inactivity_timer.as_mut().reset(tokio::time::Instant::now() + inactivity_timeout);
                 match result {
                     Ok(Some(line)) => {
                         if !line.trim().is_empty() {
-                            tracing::warn!("CodeWhale stderr: {}", line);
+                            tracing::warn!("{} stderr: {}", provider_name, line);
                             stderr_lines.push(line);
                         }
                     }
@@ -924,12 +1042,24 @@ pub async fn ai_send_message(
                     Err(e) => tracing::error!("Failed to read stderr: {}", e),
                 }
             }
+            _ = &mut inactivity_timer => {
+                tracing::warn!(
+                    "{} inactivity timeout ({}s) — subprocess produced no output, likely stuck. Killing process.",
+                    provider_name, inactivity_timeout.as_secs()
+                );
+                kill_running_child().await;
+                let _ = app_handle.emit("ai-chunk", &format!(
+                    "\n\n⏱ AI 响应超时（{}秒无输出），已自动终止。这通常是因为工具调用（如 read_file）卡住。请重试或检查文件是否被占用。",
+                    inactivity_timeout.as_secs()
+                ));
+                break;
+            }
         }
     }
 
     // Flush: give Tauri event system time to deliver all ai-chunk events
     // to the frontend before invoke returns and the listener is unregistered.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     {
         let mut guard = RUNNING_CHILD.lock().await;
@@ -950,9 +1080,9 @@ pub async fn ai_send_message(
         let mut status = AI_STATUS.lock().unwrap();
         *status = AIStatus::Error;
         if !stderr_lines.is_empty() {
-            return Err(format!("CodeWhale error:\n{}", stderr_lines.join("\n")));
+            return Err(format!("{} error:\n{}", provider_name, stderr_lines.join("\n")));
         }
-        return Err("CodeWhale returned no response. Check the API key and network access.".into());
+        return Err(format!("{} returned no response. Check the API key and network access.", provider_name));
     }
 
     {
@@ -1193,6 +1323,18 @@ fn strip_ansi_escapes(input: &str) -> String {
     String::from_utf8(result).unwrap_or_else(|_| input.to_string())
 }
 
+/// Extract a JSON value as a string, handling both string and numeric types.
+/// CodeWhale may emit tool IDs as numbers (e.g. `"id": 123`) while tool_result
+/// always uses strings. JavaScript Map treats `123` and `"123"` as different keys,
+/// so we normalize to string here to ensure consistent frontend matching.
+fn extract_id_as_string(event: &serde_json::Value, key: &str) -> String {
+    event.get(key)
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .or_else(|| event.get(key).and_then(|v| v.as_u64().map(|n| n.to_string())))
+        .or_else(|| event.get(key).and_then(|v| v.as_i64().map(|n| n.to_string())))
+        .unwrap_or_default()
+}
+
 fn build_hardware_hint(project_path: Option<&str>) -> String {
     match project_path {
         Some(p) if !p.trim().is_empty() => {
@@ -1219,29 +1361,30 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
     let target_arg = if chip_changed && target_chip.is_some() { format!(" --target {}", target_chip.unwrap()) } else { String::new() };
     let hw_hint = build_hardware_hint(project_path);
 
-    // Resolve espsmith-cli.exe path: same directory as current exe, or in binaries/ subdirectory.
-    // In dev mode, espsmith-cli.exe is compiled by beforeDevCommand and placed in target/debug/.
-    // Falls back to espsmith.exe itself if espsmith-cli.exe is not found (legacy dev mode).
+    // Resolve espsmith-cli path: same directory as current exe, or in binaries/ subdirectory.
+    // In dev mode, espsmith-cli is compiled by beforeDevCommand and placed in target/debug/.
+    // Falls back to espsmith itself if espsmith-cli is not found (legacy dev mode).
+    let cli_binary_name = if cfg!(windows) { "espsmith-cli.exe" } else { "espsmith-cli" };
     let cli_exe = std::env::current_exe()
         .ok()
         .and_then(|exe| {
             let dir = exe.parent()?.to_path_buf();
-            // Try same directory first (production: espsmith-cli.exe alongside espsmith.exe;
+            // Try same directory first (production: espsmith-cli alongside espsmith;
             // dev: both in target/debug/)
-            let same_dir = dir.join("espsmith-cli.exe");
+            let same_dir = dir.join(cli_binary_name);
             if same_dir.exists() {
-                tracing::info!("[AIAssistant] Found espsmith-cli.exe at {}", same_dir.display());
+                tracing::info!("[AIAssistant] Found espsmith-cli at {}", same_dir.display());
                 return Some(same_dir);
             }
             // Try binaries/ subdirectory (production layout)
-            let bin_dir = dir.join("binaries").join("espsmith-cli.exe");
+            let bin_dir = dir.join("binaries").join(cli_binary_name);
             if bin_dir.exists() {
-                tracing::info!("[AIAssistant] Found espsmith-cli.exe at {}", bin_dir.display());
+                tracing::info!("[AIAssistant] Found espsmith-cli at {}", bin_dir.display());
                 return Some(bin_dir);
             }
-            // Fallback: use espsmith.exe itself (works in legacy dev mode where espsmith-cli isn't compiled)
+            // Fallback: use espsmith itself (works in legacy dev mode where espsmith-cli isn't compiled)
             tracing::warn!(
-                "[AIAssistant] espsmith-cli.exe not found in {} or {}, falling back to espsmith.exe (GUI subsystem — exec_shell may not capture output)",
+                "[AIAssistant] espsmith-cli not found in {} or {}, falling back to espsmith (GUI subsystem — exec_shell may not capture output)",
                 dir.display(),
                 dir.join("binaries").display()
             );
@@ -1256,7 +1399,7 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
                 s
             }
         })
-        .unwrap_or_else(|| "espsmith-cli.exe".to_string());
+        .unwrap_or_else(|| cli_binary_name.to_string());
 
     let build_cmd = format!("{cli} build --project \"{project}\" --idf \"{idf}\"{target_arg}", cli=cli_exe, project=project, idf=idf, target_arg=target_arg);
     let flash_cmd = format!("{cli} flash --project \"{project}\" --idf \"{idf}\" --port \"{port}\"", cli=cli_exe, project=project, idf=idf, port=port);
@@ -1276,9 +1419,16 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         "烧录串口未配置,烧录前请先让用户在工具栏选择。"
     } else { "" };
 
-    // 基于用户选择的 flash_port 检测连接模式，而非全局缓存
-    // 确保多设备场景下 AI 使用的是当前选中端口对应的模式
-    let conn_info = crate::connection::detect_connection_mode(flash_port);
+    // 基于用户选择的 flash_port 检测连接模式
+    // 优先使用缓存，避免每次请求都枚举串口（50-300ms 开销）
+    let conn_info = {
+        let cached = crate::connection::get_cached_connection_info();
+        if cached.mode != ConnectionMode::Unknown {
+            cached
+        } else {
+            crate::connection::detect_connection_mode(flash_port)
+        }
+    };
     let is_jtag = conn_info.mode.is_jtag();
     let detected_port = conn_info.port.as_deref().unwrap_or(port);
 
@@ -1721,14 +1871,7 @@ fn ensure_project_agent_instructions(
 - **必须回复**: 每次工具调用完成后，必须用中文向用户汇报结果
 - 失败时根据返回的错误信息修复代码后重试
 - 所有文件修改限制在项目目录内
-{end}"#,
-        idf_ver = idf_ver,
-        idf_path = idf_path.unwrap_or("(not configured)")
-    );
 
-    // Append Experience Engine section
-    let experience_section = format!(
-        r#"
 <!-- EXPERIENCE-ENGINE:START -->
 # Experience 经验引擎（AI 疑难杂症积累与自愈）
 
@@ -1771,21 +1914,48 @@ fn ensure_project_agent_instructions(
 - `scope` 应填写具体的 ESP32 芯片型号（如 `esp32`、`esp32s3`、`esp32c3`）
 - 重复犯相同疑难错误是严重问题，经验引擎的核心目的就是避免此类情况
 <!-- EXPERIENCE-ENGINE:END -->
-"#
+{end}"#,
+        idf_ver = idf_ver,
+        idf_path = idf_path.unwrap_or("(not configured)")
     );
 
-    let block = format!("{block}{experience_section}");
-
-    let updated = if let (Some(start_idx), Some(end_idx)) = (existing.find(start), existing.find(end)) {
+    let updated = if existing.contains(start) && existing.contains(end) {
+        // 替换 ESPSMITH 块（从 START 到 END）
+        let start_idx = existing.find(start).unwrap();
+        let end_idx = existing.find(end).unwrap();
         let after_end = end_idx + end.len();
-        format!("{}{}{}", &existing[..start_idx], block, &existing[after_end..])
+        let after_section = &existing[after_end..];
+
+        // 只清理 ESPSMITH:END 之后的残留 EXPERIENCE-ENGINE 块（旧格式遗留）
+        // 不清理新 ESPSMITH 块内的 EXPERIENCE-ENGINE（它是正确内容）
+        let mut cleaned_after = after_section.to_string();
+        while let Some(s) = cleaned_after.find("<!-- EXPERIENCE-ENGINE:START -->") {
+            if let Some(e) = cleaned_after[s..].find("<!-- EXPERIENCE-ENGINE:END -->") {
+                let after = s + e + "<!-- EXPERIENCE-ENGINE:END -->".len();
+                let before = cleaned_after[..s].trim_end_matches('\n').trim_end_matches('\r').to_string();
+                let after_str = cleaned_after[after..].trim_start_matches('\n').trim_start_matches('\r').to_string();
+                cleaned_after = if after_str.is_empty() {
+                    before
+                } else {
+                    format!("{}\n\n{}", before, after_str)
+                };
+            } else {
+                break;
+            }
+        }
+
+        format!("{}{}{}", &existing[..start_idx], block, cleaned_after)
     } else if existing.trim().is_empty() {
         format!("{block}\n")
     } else {
         format!("{}\n\n{}\n", existing.trim_end(), block)
     };
 
-    std::fs::write(&agents_path, updated).map_err(|e| e.to_string())
+    // 仅在内容变更时写入，避免不必要的文件 I/O
+    if updated != existing {
+        std::fs::write(&agents_path, updated).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[allow(dead_code)] // MCP Server模式预留
@@ -2087,7 +2257,7 @@ fn get_codewhale_local_dir() -> PathBuf {
     base.join("espsmith").join("codewhale")
 }
 
-fn get_local_codewhale_binary() -> PathBuf {
+pub fn get_local_codewhale_binary() -> PathBuf {
     if cfg!(windows) {
         get_codewhale_local_dir().join("codewhale.cmd")
     } else {
@@ -2096,7 +2266,7 @@ fn get_local_codewhale_binary() -> PathBuf {
 }
 
 /// 获取内嵌的 CodeWhale 二进制路径
-fn get_bundled_codewhale_binary() -> Option<PathBuf> {
+pub fn get_bundled_codewhale_binary() -> Option<PathBuf> {
     BUNDLED_CODEWHALE_DIR.get().map(|dir| {
         if cfg!(windows) {
             dir.join("codewhale.exe")
@@ -2113,7 +2283,26 @@ fn has_executable_extension(path: &Path) -> bool {
     }
 }
 
-fn which_cmd(cmd: &str) -> Option<PathBuf> {
+pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
+    use std::sync::Mutex;
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(cached) = guard.get(cmd) {
+            return cached.clone();
+        }
+    }
+
+    let result = _which_cmd_uncached(cmd);
+
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(cmd.to_string(), result.clone());
+    }
+
+    result
+}
+
+fn _which_cmd_uncached(cmd: &str) -> Option<PathBuf> {
     if cfg!(windows) {
         let output = std::process::Command::new("where")
             .arg(cmd)
@@ -2125,9 +2314,9 @@ fn which_cmd(cmd: &str) -> Option<PathBuf> {
                 .map(|s| PathBuf::from(s.trim()))
                 .filter(|p| p.is_file() && has_executable_extension(p))
                 .collect();
-            if let Some(path) = paths.into_iter().next() {
-                return Some(path);
-            }
+            paths.into_iter().next()
+        } else {
+            None
         }
     } else {
         let output = std::process::Command::new("which")
@@ -2135,15 +2324,16 @@ fn which_cmd(cmd: &str) -> Option<PathBuf> {
             .output()
             .ok()?;
         if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout)
+            String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .next()
                 .map(|s| s.trim().to_string())
-                .filter(|s| Path::new(s).is_file())?;
-            return Some(PathBuf::from(path));
+                .filter(|s| Path::new(s).is_file())
+                .map(PathBuf::from)
+        } else {
+            None
         }
     }
-    None
 }
 
 /// 检查 CodeWhale 安装状态
@@ -2166,6 +2356,35 @@ pub async fn check_codewhale_status() -> Result<String, String> {
     }
 
     Ok("missing".into())
+}
+
+/// 检查 MiMo-Code 安装状态
+#[tauri::command]
+pub async fn check_mimo_status() -> Result<String, String> {
+    let provider = crate::ai_provider::MiMoCodeProvider;
+    Ok(provider.check_status())
+}
+
+/// 根据 ai_provider 检查对应 AI 后端的安装状态
+#[tauri::command]
+pub async fn check_ai_backend_status(ai_provider: String) -> Result<serde_json::Value, String> {
+    let kind = crate::ai_provider::ProviderKind::from_str(&ai_provider);
+    let (codewhale, mimo) = match kind {
+        crate::ai_provider::ProviderKind::CodeWhale => {
+            let cw = crate::ai_provider::CodeWhaleProvider.check_status();
+            (cw, crate::ai_provider::MiMoCodeProvider.check_status())
+        }
+        crate::ai_provider::ProviderKind::MiMoCode => {
+            let cw = crate::ai_provider::CodeWhaleProvider.check_status();
+            let mimo = crate::ai_provider::MiMoCodeProvider.check_status();
+            (cw, mimo)
+        }
+    };
+    Ok(serde_json::json!({
+        "activeProvider": kind.as_str(),
+        "codewhale": codewhale,
+        "mimo": mimo,
+    }))
 }
 
 /// 自动安装 CodeWhale（内嵌版本直接返回已安装，无需额外操作）
@@ -2227,7 +2446,7 @@ pub async fn setup_codewhale(app_handle: tauri::AppHandle) -> Result<String, Str
 }
 
 /// 确保 CodeWhale 可用 (内部函数，在 ai_send_message 中调用)
-fn ensure_codewhale_ready() -> Result<PathBuf, String> {
+pub fn ensure_codewhale_ready() -> Result<PathBuf, String> {
     // 优先使用内嵌二进制
     if let Some(bundled) = get_bundled_codewhale_binary() {
         if bundled.exists() {

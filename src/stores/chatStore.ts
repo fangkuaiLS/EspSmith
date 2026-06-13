@@ -82,6 +82,8 @@ export interface ChatMessage {
     status?: AIStatus;
     toolData?: ToolData;
     usage?: { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number; costRmb: number };
+    /** AI 推理/思考过程内容（独立于正式回复，可折叠展示） */
+    thinkingContent?: string;
 }
 
 export interface RollbackInfo {
@@ -256,6 +258,7 @@ interface ChatStore {
     clearMessages: (saveSession?: boolean) => void;
     addMessage: (message: ChatMessage) => void;
     appendToLastAssistant: (chunk: string) => void;
+    appendToLastThinking: (chunk: string) => void;
     setLastAssistantContent: (content: string) => void;
     updateToolMessage: (id: string, result: string) => void;
     prepareRollback: (userMessageId: string) => Promise<void>;
@@ -285,7 +288,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     activeOperation: null,
 
     sendMessage: async (content: string) => {
-        const { addMessage, updateStatus, appendToLastAssistant, setLastAssistantContent, updateToolMessage } = get();
+        const { addMessage, updateStatus, appendToLastAssistant, appendToLastThinking, setLastAssistantContent, updateToolMessage } = get();
 
         currentAbortController = new AbortController();
         const signal = currentAbortController.signal;
@@ -315,6 +318,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         let unlistenUsage: (() => void) | undefined;
         let unlistenOpProgress: (() => void) | undefined;
         let unlistenOpDone: (() => void) | undefined;
+        let unlistenReasoning: (() => void) | undefined;
         // Pending "activeOperation → null" clear. Cancellable so that a new
         // ai-operation-progress arriving within 3s (or the user stopping
         // the run) does not wipe a freshly-started op.
@@ -344,7 +348,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                     updateStatus('tool_call');
                 }
                 const toolMsgId = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-                toolMsgMap.set(event.payload.id, toolMsgId);
+                toolMsgMap.set(String(event.payload.id), toolMsgId);
                 addMessage({
                     id: toolMsgId,
                     role: 'system',
@@ -399,7 +403,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             unlistenToolResult = await listen<{ id: string; status: string; output?: string }>('ai-tool-result', (event) => {
                 if (signal.aborted) return;
                 updateStatus('thinking');
-                const toolMsgId = toolMsgMap.get(event.payload.id);
+                const toolMsgId = toolMsgMap.get(String(event.payload.id));
                 if (toolMsgId && event.payload.output) {
                     const truncated = event.payload.output.length > 3000
                         ? event.payload.output.slice(0, 3000) + '\n... (结果已截断)'
@@ -466,6 +470,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                     if (!signal.aborted) set({ activeOperation: null });
                 }, 3000);
             });
+            unlistenReasoning = await listen<string>('ai-reasoning', (event) => {
+                if (signal.aborted) return;
+                console.log('[Thinking] reasoning event received:', event.payload?.slice(0, 100));
+                appendToLastThinking(event.payload);
+            });
         }
 
         try {
@@ -517,6 +526,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             unlistenUsage?.();
             unlistenOpProgress?.();
             unlistenOpDone?.();
+            unlistenReasoning?.();
             const currentStatus = get().status;
             if (currentStatus === 'thinking' || currentStatus === 'tool_call') {
                 updateStatus('idle');
@@ -621,6 +631,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                     messages[i] = {
                         ...messages[i],
                         content: messages[i].content + chunk,
+                    };
+                    break;
+                }
+            }
+            return { messages };
+        });
+    },
+
+    appendToLastThinking: (chunk: string) => {
+        set((state) => {
+            const messages = [...state.messages];
+            for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].role === 'assistant') {
+                    const prevThinking = messages[i].thinkingContent || '';
+                    messages[i] = {
+                        ...messages[i],
+                        thinkingContent: prevThinking + chunk,
                     };
                     break;
                 }

@@ -58,6 +58,8 @@ export async function startAI(): Promise<void> {
 
         if (settings.aiModel === 'ollama') {
             model = 'ollama';
+        } else if (settings.aiModel === 'mimo') {
+            model = settings.mimoModel || 'mimo/mimo-auto';
         }
 
         await invoke('ai_start', {

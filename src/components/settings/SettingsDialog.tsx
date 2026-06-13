@@ -26,6 +26,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [saved, setSaved] = useState(false);
   const [currentLang, setCurrentLang] = useState(getCurrentLanguage());
   const [codewhaleStatus, setCodewhaleStatus] = useState<'local' | 'system' | 'missing' | 'checking'>('checking');
+  const [mimoStatus, setMimoStatus] = useState<'local' | 'system' | 'missing' | 'checking'>('checking');
   const [isInstallingCodewhale, setIsInstallingCodewhale] = useState(false);
   const [codewhaleInstallError, setCodewhaleInstallError] = useState<string | null>(null);
   const [pythonValidating, setPythonValidating] = useState(false);
@@ -50,7 +51,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     setCodewhaleStatus((status === 'local' || status === 'system' || status === 'missing') ? status : 'missing');
   };
 
-  useEffect(() => { checkCodewhaleStatus(); }, []);
+  const checkMimoStatus = async () => {
+    setMimoStatus('checking');
+    const status = await safeInvoke<string>('check_mimo_status');
+    setMimoStatus((status === 'local' || status === 'system' || status === 'missing') ? status : 'missing');
+  };
+
+  useEffect(() => { checkCodewhaleStatus(); checkMimoStatus(); }, []);
 
   const loadExpStats = async () => {
     setExpLoading(true);
@@ -369,7 +376,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                         <AlertTriangle size={14} className="text-warning" />
                       )}
                       <span className="text-[13px] text-text-secondary">
-                        {codewhaleStatus === 'checking'
+                        CodeWhale: {codewhaleStatus === 'checking'
                           ? '...'
                           : codewhaleStatus === 'local'
                           ? t('settings.codewhaleInstalled')
@@ -414,6 +421,45 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
                   {codewhaleStatus === 'local' && !codewhaleInstallError && (
                     <p className="text-[11px] text-success mt-2">{t('settings.codewhaleInstallSuccess')}</p>
+                  )}
+                </div>
+
+                {/* MiMo-Code 后端状态 */}
+                <div className="border-t border-border-subtle pt-5">
+                  <h3 className="text-[13px] font-semibold mb-3">MiMo-Code</h3>
+
+                  <div className="flex items-center justify-between p-3 bg-surface-overlay rounded-lg border border-border-subtle">
+                    <div className="flex items-center gap-2">
+                      {mimoStatus === 'checking' ? (
+                        <Loader2 size={14} className="text-text-tertiary animate-spin" />
+                      ) : mimoStatus === 'system' ? (
+                        <Check size={14} className="text-success" />
+                      ) : (
+                        <AlertTriangle size={14} className="text-warning" />
+                      )}
+                      <span className="text-[13px] text-text-secondary">
+                        MiMo-Code: {mimoStatus === 'checking'
+                          ? '...'
+                          : mimoStatus === 'system'
+                          ? '已安装 (系统)'
+                          : '未安装'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={checkMimoStatus}
+                      className="flex items-center gap-1 px-2 py-1 text-[11px] bg-surface-hover border border-border-subtle rounded-md text-text-tertiary hover:text-text-primary transition-colors"
+                    >
+                      <RefreshCw size={11} />
+                      {t('settings.refreshDetection')}
+                    </button>
+                  </div>
+
+                  {mimoStatus === 'missing' && (
+                    <div className="mt-3">
+                      <p className="text-[12px] text-text-tertiary mb-2">
+                        请通过 npm 全局安装 MiMo-Code: <code className="px-1 py-0.5 bg-surface-overlay rounded text-[11px] font-mono">npm install -g @xiaomi/mimocode</code>
+                      </p>
+                    </div>
                   )}
                 </div>
 

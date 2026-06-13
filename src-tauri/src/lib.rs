@@ -19,12 +19,14 @@ mod idf;
 mod sdkconfig;
 mod sdkconfig_loader;
 mod ai_assistant;
+mod ai_provider;
 mod self_healing;
 mod instruments;
 mod experience;
 mod adapters;
 mod confserver;
 
+use std::io::Write;
 use std::sync::Mutex;
 
 /// Commands that need the global lock (long-running operations that must not
@@ -300,6 +302,8 @@ pub fn run() {
             ai_assistant::ai_get_permission_mode,
             ai_assistant::ai_respond_permission,
             ai_assistant::check_codewhale_status,
+            ai_assistant::check_mimo_status,
+            ai_assistant::check_ai_backend_status,
             ai_assistant::setup_codewhale,
             // Experience 经验库管理
             ai_assistant::experience_open_dir,
@@ -420,11 +424,13 @@ pub fn run_cli() -> Result<(), String> {
     match result {
         Ok(val) => {
             println!("{}", serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()));
+            let _ = std::io::stdout().flush();
             Ok(())
         }
         Err(err) => {
             let output = serde_json::json!({"success": false, "error": err});
             println!("{}", serde_json::to_string_pretty(&output).unwrap_or_else(|_| format!("{{\"success\":false,\"error\":\"{}\"}}", err)));
+            let _ = std::io::stdout().flush();
             Err(err)
         }
     }
