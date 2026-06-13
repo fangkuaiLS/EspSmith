@@ -165,6 +165,86 @@ fn is_external_jtag_probe(vid: u16, pid: u16) -> Option<&'static str> {
 pub fn detect_connection_mode(target_port: Option<&str>) -> ConnectionInfo {
     let ports = serialport::available_ports().unwrap_or_default();
 
+    // ── 第一优先级：精确匹配用户选择的端口 ──
+    // 当指定了 target_port 时，先定位该端口并识别其模式，
+    // 确保多设备场景下始终以用户选择的端口为准。
+    if let Some(tp) = target_port {
+        if let Some(info) = identify_single_port(&ports, tp) {
+            return cache_and_log(info);
+        }
+        // 目标端口未找到（可能已断开），回退到全端口扫描
+        warn!("Target port {} not found in available ports, falling back to scan-all", tp);
+    }
+
+    // ── 回退：扫描所有端口，选择最佳匹配（无 target_port 或目标端口不存在时） ──
+    scan_best_match(&ports)
+}
+
+/// 识别单个指定端口的连接模式（用于 target_port 精确匹配）。
+fn identify_single_port(ports: &[serialport::SerialPortInfo], target: &str) -> Option<ConnectionInfo> {
+    let port_info = ports.iter().find(|p| p.port_name == target)?;
+
+    if let serialport::SerialPortType::UsbPort(ref usb_info) = port_info.port_type {
+        let vid = usb_info.vid;
+        let pid = usb_info.pid;
+
+        // Espressif 内置 USB-JTAG
+        if is_espressif_usb_device(vid) {
+            let hint = chip_from_pid(pid);
+            let target_idf = idf_target_from_vid_pid(vid, pid);
+            let (chip_hint_label, capabilities, recommendation) = if let Some(name) = hint {
+                (
+                    Some(name.to_string()),
+                    vec!["flash".into(), "debug".into(), "breakpoints".into(),
+                         "watchpoints".into(), "registers".into(), "backtrace".into(), "coredump".into()],
+                    format!("{} 通过 USB-JTAG 连接 — 推荐使用 JTAG 模式（支持硬件断点、变量监视、调用栈分析）。", name),
+                )
+            } else {
+                (
+                    Some("ESP32-USB-JTAG".to_string()),
+                    vec!["flash".into(), "debug".into(), "breakpoints".into(),
+                         "watchpoints".into(), "registers".into(), "backtrace".into(), "coredump".into()],
+                    "ESP32-S3/C3/C6/H2 通过 USB-JTAG 连接 — 推荐使用 JTAG 模式。".to_string(),
+                )
+            };
+            return Some(make_info(
+                ConnectionMode::Jtag,
+                target, vid, pid,
+                chip_hint_label, target_idf.map(|s| s.to_string()),
+                capabilities, recommendation,
+            ));
+        }
+
+        // 外部 JTAG 探头
+        if let Some(probe_name) = is_external_jtag_probe(vid, pid) {
+            return Some(make_info(
+                ConnectionMode::Jtag,
+                target, vid, pid,
+                Some(probe_name.to_string()), None,
+                vec!["flash".into(), "debug".into(), "breakpoints".into(),
+                     "watchpoints".into(), "registers".into(), "backtrace".into()],
+                format!("检测到外部 JTAG 探头: {}。请确保 OpenOCD 已配置且支持此探头。", probe_name),
+            ));
+        }
+
+        // 纯 UART 串口
+        if is_cp210x(vid, pid) || is_ch340(vid) || is_ftdi_uart(vid, pid) {
+            return Some(make_info(
+                ConnectionMode::Uart,
+                target, vid, pid,
+                None, None,
+                vec!["flash".into(), "monitor".into()],
+                "串口连接 (UART 模式)。如需 JTAG 调试功能，请使用内置 USB-JTAG 的开发板或连接外部 JTAG 探头。".to_string(),
+            ));
+        }
+    }
+
+    // USB 信息不可识别（如 PCI/Bluetooth 等非标准串口）
+    None
+}
+
+/// 扫描所有端口选择最佳匹配（无 target_port 或目标端口不存在时的回退策略）。
+fn scan_best_match(ports: &[serialport::SerialPortInfo]) -> ConnectionInfo {
     let mut best_mode = ConnectionMode::Unknown;
     let mut best_port: Option<String> = None;
     let mut best_vid: Option<String> = None;
@@ -174,35 +254,16 @@ pub fn detect_connection_mode(target_port: Option<&str>) -> ConnectionInfo {
     let mut capabilities: Vec<String> = Vec::new();
     let mut recommendation = String::new();
 
-    for port_info in &ports {
-        let is_target = target_port.map_or(true, |tp| port_info.port_name == tp);
-
+    for port_info in ports {
         if let serialport::SerialPortType::UsbPort(ref usb_info) = port_info.port_type {
             let vid = usb_info.vid;
             let pid = usb_info.pid;
 
             // ── 优先级 1: Espressif 内置 USB-JTAG (VID=0x303A) ──
             if is_espressif_usb_device(vid) {
-                let hint = chip_from_pid(pid);
-                let target = idf_target_from_vid_pid(vid, pid);
-                if is_target && hint.is_some() {
-                    best_mode = ConnectionMode::Jtag;
-                    best_port = Some(port_info.port_name.clone());
-                    best_vid = Some(format!("{:04X}", vid));
-                    best_pid = Some(format!("{:04X}", pid));
-                    chip_hint = hint;
-                    idf_target = target;
-                    capabilities = vec![
-                        "flash".into(), "debug".into(), "breakpoints".into(),
-                        "watchpoints".into(), "registers".into(), "backtrace".into(), "coredump".into(),
-                    ];
-                    recommendation = format!(
-                        "{} 通过 USB-JTAG 连接 — 推荐使用 JTAG 模式（支持硬件断点、变量监视、调用栈分析）。",
-                        hint.unwrap_or("ESP 芯片")
-                    );
-                    break;
-                }
-                if best_mode == ConnectionMode::Unknown && hint.is_some() {
+                if best_mode == ConnectionMode::Unknown {
+                    let hint = chip_from_pid(pid);
+                    let target = idf_target_from_vid_pid(vid, pid);
                     best_mode = ConnectionMode::Jtag;
                     best_port = Some(port_info.port_name.clone());
                     best_vid = Some(format!("{:04X}", vid));
@@ -221,7 +282,7 @@ pub fn detect_connection_mode(target_port: Option<&str>) -> ConnectionInfo {
 
             // ── 优先级 2: 外部 JTAG 探头 (J-Link / DAP-Link / ST-Link / FTDI JTAG) ──
             } else if let Some(probe_name) = is_external_jtag_probe(vid, pid) {
-                if is_target || best_mode == ConnectionMode::Unknown {
+                if best_mode == ConnectionMode::Unknown {
                     best_mode = ConnectionMode::Jtag;
                     best_port = Some(port_info.port_name.clone());
                     best_vid = Some(format!("{:04X}", vid));
@@ -235,42 +296,64 @@ pub fn detect_connection_mode(target_port: Option<&str>) -> ConnectionInfo {
                         "检测到外部 JTAG 探头: {}。请确保 OpenOCD 已配置且支持此探头，并在项目设置中选择正确的芯片型号。",
                         probe_name
                     );
-                    if is_target { break; }
                 }
 
             // ── 优先级 3: 纯 UART 串口 (CP210x / CH340 / FTDI UART) ──
-            } else if is_target && (is_cp210x(vid, pid) || is_ch340(vid) || is_ftdi_uart(vid, pid)) {
-                if best_mode == ConnectionMode::Unknown {
-                    best_mode = ConnectionMode::Uart;
-                    best_port = Some(port_info.port_name.clone());
-                    best_vid = Some(format!("{:04X}", vid));
-                    best_pid = Some(format!("{:04X}", pid));
-                    capabilities = vec!["flash".into(), "monitor".into()];
-                    recommendation = "串口连接 (UART 模式)。如需 JTAG 调试功能，请使用内置 USB-JTAG 的开发板或连接外部 JTAG 探头。".into();
-                }
+            } else if best_mode == ConnectionMode::Unknown && (is_cp210x(vid, pid) || is_ch340(vid) || is_ftdi_uart(vid, pid)) {
+                best_mode = ConnectionMode::Uart;
+                best_port = Some(port_info.port_name.clone());
+                best_vid = Some(format!("{:04X}", vid));
+                best_pid = Some(format!("{:04X}", pid));
+                capabilities = vec!["flash".into(), "monitor".into()];
+                recommendation = "串口连接 (UART 模式)。如需 JTAG 调试功能，请使用内置 USB-JTAG 的开发板或连接外部 JTAG 探头。".into();
             }
         }
     }
 
+    make_info(
+        best_mode,
+        best_port.as_deref().unwrap_or(""),
+        best_vid.as_ref().and_then(|v| u16::from_str_radix(v, 16).ok()).unwrap_or(0),
+        best_pid.as_ref().and_then(|p| u16::from_str_radix(p, 16).ok()).unwrap_or(0),
+        chip_hint.map(|s| s.to_string()),
+        idf_target.map(|s| s.to_string()),
+        capabilities,
+        recommendation,
+    )
+}
+
+/// 构造 ConnectionInfo 的辅助函数。
+fn make_info(
+    mode: ConnectionMode,
+    port: &str,
+    vid: u16,
+    pid: u16,
+    chip_hint: Option<String>,
+    idf_target: Option<String>,
+    capabilities: Vec<String>,
+    recommendation: String,
+) -> ConnectionInfo {
     let info = ConnectionInfo {
-        mode: best_mode,
-        mode_label: best_mode.label().to_string(),
-        recommended: best_mode.recommended(),
-        port: best_port,
-        vid: best_vid,
-        pid: best_pid,
-        chip_hint: chip_hint.map(|s| s.to_string()),
-        idf_target: idf_target.map(|s| s.to_string()),
+        mode,
+        mode_label: mode.label().to_string(),
+        recommended: mode.recommended(),
+        port: if port.is_empty() { None } else { Some(port.to_string()) },
+        vid: if vid == 0 { None } else { Some(format!("{:04X}", vid)) },
+        pid: if pid == 0 { None } else { Some(format!("{:04X}", pid)) },
+        chip_hint,
+        idf_target,
         capabilities,
         recommendation,
     };
+    cache_and_log(info)
+}
 
+/// 缓存连接信息到全局状态并记录日志。
+fn cache_and_log(info: ConnectionInfo) -> ConnectionInfo {
     if let Ok(mut guard) = CONNECTION_MODE.lock() {
         *guard = info.clone();
     }
-
-    info!("Connection detected: {:?} on {:?}, idf_target={:?}", best_mode, info.port, info.idf_target);
-
+    info!("Connection detected: {:?} on {:?}, idf_target={:?}", info.mode, info.port, info.idf_target);
     info
 }
 

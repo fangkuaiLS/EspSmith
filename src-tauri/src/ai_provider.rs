@@ -217,6 +217,7 @@ impl AIProvider for MiMoCodeProvider {
 
         cmd.arg("--format").arg("json");
         cmd.arg("--dangerously-skip-permissions");
+        cmd.arg("--thinking"); // 启用 reasoning/thinking 事件输出
 
         // MiMo-Code 的 model 格式为 provider/model
         let model_arg = if config.model.contains('/') {
@@ -341,7 +342,8 @@ pub fn convert_mimo_event(raw: &serde_json::Value) -> Option<Vec<serde_json::Val
         }
         "step_finish" => {
             // MiMo: {"type":"step_finish","part":{"type":"step-finish","tokens":{"input":...,"output":...,"cache":{"read":...,"write":...}},"cost":...}}
-            // CodeWhale: {"type":"usage","input_tokens":...,"output_tokens":...} + {"type":"done","session_id":"..."}
+            // 映射为 usage + step_done（而非 done），因为 MiMo-Code 多轮调用会有多个 step_finish，
+            // 只有子进程退出才是真正的完成。
             let part = &raw["part"];
             let tokens = &part["tokens"];
             let input_tokens = tokens["input"].as_u64().unwrap_or(0);
@@ -355,10 +357,10 @@ pub fn convert_mimo_event(raw: &serde_json::Value) -> Option<Vec<serde_json::Val
                 "cached_tokens": cache_read
             }));
 
-            // step_finish 表示一轮完成
+            // step_done 表示一轮完成但不是最终完成，主循环不会 break
             let session_id = raw["sessionID"].as_str().unwrap_or("");
             results.push(serde_json::json!({
-                "type": "done",
+                "type": "step_done",
                 "session_id": session_id
             }));
         }
@@ -385,8 +387,22 @@ pub fn convert_mimo_event(raw: &serde_json::Value) -> Option<Vec<serde_json::Val
                 "session_id": session_id
             }));
         }
-        "step_start" | "reasoning" => {
-            // step_start 和 reasoning 不需要转换为 CodeWhale 格式
+        "step_start" => {
+            // step_start 不需要转换为 CodeWhale 格式
+        }
+        "reasoning" => {
+            // 将 MiMo-Code 的 reasoning 事件转换为统一格式，供前端显示
+            if let Some(text) = raw.get("part")
+                .and_then(|p| p.get("text"))
+                .or_else(|| raw.get("content"))
+                .or_else(|| raw.get("text"))
+                .and_then(|v| v.as_str())
+            {
+                results.push(serde_json::json!({
+                    "type": "reasoning",
+                    "content": text,
+                }));
+            }
         }
         _ => {
             // 未知事件类型，原样传递（让 ai_assistant 的默认分支处理）

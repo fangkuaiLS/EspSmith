@@ -202,18 +202,34 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
 
 listen<ConnectionInfo>('connection_changed', (event) => {
   const info = event.payload;
-  console.log(
-    '[HardwareStore] connection_changed event:',
-    info.mode,
-    info.chipHint ? `(${info.chipHint})` : '',
-    info.port ? `on ${info.port}` : '',
-    `idfTarget=${info.idfTarget}`
-  );
-  useHardwareStore.setState({
-    connectionInfo: info,
-    connectionMode: info.mode,
-  });
-  // 通知 App 组件进行自动选择（比 useEffect 更可靠）
+  const current = useHardwareStore.getState().connectionInfo;
+
+  // 只在端口匹配时更新连接信息，避免多设备场景下
+  // 非选中设备的信息覆盖用户选择的端口模式显示。
+  // 规则：info.port 与当前一致 → 更新；当前无端口 → 更新（首次检测）；
+  //       端口不同但模式从 unknown 变为已知 → 也更新（用户可能刚切换了选择）
+  const portMatch = !current.port || !info.port || current.port === info.port;
+  const modeUpgrading = current.mode === 'unknown' && info.mode !== 'unknown';
+
+  if (portMatch || modeUpgrading) {
+    console.log(
+      '[HardwareStore] connection_changed event:',
+      info.mode,
+      info.chipHint ? `(${info.chipHint})` : '',
+      info.port ? `on ${info.port}` : '',
+      `idfTarget=${info.idfTarget}`
+    );
+    useHardwareStore.setState({
+      connectionInfo: info,
+      connectionMode: info.mode,
+    });
+  } else {
+    console.log(
+      `[HardwareStore] connection_changed skipped: event port=${info.port} != current port=${current.port}, mode unchanged`
+    );
+  }
+
+  // 始终通知 App 组件（它有自己的端口匹配逻辑）
   window.dispatchEvent(new CustomEvent('esp-device-detected', { detail: info }));
 }).then(() => {
   console.log('[HardwareStore] Port watcher listener registered');

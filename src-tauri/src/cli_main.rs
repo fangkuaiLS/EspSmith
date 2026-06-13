@@ -11,5 +11,11 @@
 // pipes can capture its stdout/stderr correctly.
 
 fn main() {
-    let _ = esp_smith_lib::run_cli();
+    let result = esp_smith_lib::run_cli();
+    // Force flush stdout/stderr before exiting, and use process::exit to ensure
+    // the process terminates immediately even if background threads or TCP
+    // connections (IPC delegate) are still cleaning up. Without this, the AI's
+    // bash tool may hang waiting for the process to exit.
+    let code = if result.is_ok() { 0 } else { 1 };
+    std::process::exit(code);
 }

@@ -58,7 +58,8 @@ interface ToolchainOption {
 const TOOLCHAIN_OPTIONS: ToolchainOption[] = [
   { id: 'codewhale', label: 'CodeWhale', aiModel: 'deepseek' },
   { id: 'mimo', label: 'MiMo-Code', aiModel: 'mimo' },
-  { id: 'ollama', label: 'Ollama', aiModel: 'ollama' },
+  // Ollama 暂时禁用，待独立实现
+  // { id: 'ollama', label: 'Ollama', aiModel: 'ollama' },
 ];
 
 interface ModelOption {
@@ -354,15 +355,12 @@ export function ChatPanel() {
       {/* Header */}
       <div className="px-4 py-3 border-b border-border-default flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-accent-muted flex items-center justify-center">
-            <Bot size={17} className="text-accent" />
+          <div className="h-7 w-28 flex items-center justify-center rounded-md bg-white/90 dark:bg-white/80 p-1">
+            <img src={`/icons/${getCurrentToolchainId() === 'mimo' ? 'mimo-code' : getCurrentToolchainId()}.svg`} alt="" className="w-full h-full object-contain" />
           </div>
-          <div>
-            <h3 className="text-[13px] font-semibold">{t('chat.aiAssistant')}</h3>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${statusConfig.dotClass}`} />
-              <span className="text-[11px] text-text-tertiary">{t(statusConfig.labelKey)}</span>
-            </div>
+          <div className="flex items-center gap-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full ${statusConfig.dotClass}`} />
+            <span className="text-[11px] text-text-tertiary">{t(statusConfig.labelKey)}</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -481,7 +479,7 @@ export function ChatPanel() {
           <OperationTimeline operation={activeOperation} />
         )}
         {/* Thinking Block — AI 响应期间始终显示，可折叠查看详情 */}
-        {showTyping && <ThinkingBlock status={status} messages={messages} t={t} />}
+        {showTyping && <ThinkingBlock status={status} messages={messages} />}
         <div ref={messagesEndRef} />
       </div>
 
@@ -864,20 +862,36 @@ function TerminalPanel({ command, output }: { command: string; output: string })
  * ThinkingBlock — AI 思考/推理过程的可折叠展示块
  * 在 AI 响应期间（showTyping）显示，替代原来的三个跳动圆点
  * 参考 MiMO-Code TUI 的 "- Thought: [title] · 22ms" 风格
+ * 只展示 AI 的 reasoning/thinking 内容，不重复展示工具调用（工具调用已有 OperationTimeline）
  */
 function ThinkingBlock({ status, messages }: { status: AIStatus; messages: ChatMessage[] }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const statusConfig = STATUS_CONFIG[status];
+  const prevThinkingRef = useRef('');
 
-  // 从当前正在构建的 assistant 消息中获取 reasoning 内容
+  // 从最后一条 assistant 消息中获取 reasoning 内容（仅当前轮次）
   const thinkingContent = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'assistant' && messages[i].thinkingContent) {
-        return messages[i].thinkingContent;
+      if (messages[i].role === 'assistant') {
+        // 只看最后一条 assistant 消息，避免显示上一轮的 thinking
+        return messages[i].thinkingContent || '';
       }
     }
     return '';
   }, [messages]);
+
+  // thinking 内容到达时自动展开
+  useEffect(() => {
+    if (thinkingContent && thinkingContent !== prevThinkingRef.current) {
+      prevThinkingRef.current = thinkingContent;
+      if (!expanded) setExpanded(true);
+    }
+    // 新一轮对话 thinking 被清空时，折叠
+    if (!thinkingContent && prevThinkingRef.current) {
+      prevThinkingRef.current = '';
+      setExpanded(false);
+    }
+  }, [thinkingContent]);
 
   // 解析 reasoning 文本：提取 **标题** 和正文（MiMO 格式）
   const { title, body } = useMemo(() => {
@@ -889,28 +903,16 @@ function ThinkingBlock({ status, messages }: { status: AIStatus; messages: ChatM
     return { title: null, body: text };
   }, [thinkingContent]);
 
-  // 收集工具调用步骤
-  const toolSteps = useMemo(() => {
-    return messages
-      .filter(m => m.toolData && m.role === 'system')
-      .map(m => ({
-        label: m.content.replace(/^🔧 /, ''),
-        hasResult: !!m.toolData?.result,
-      }));
-  }, [messages]);
-
   const hasThinking = !!thinkingContent;
-  const hasTools = toolSteps.length > 0;
-  const canExpand = hasThinking || hasTools;
 
   return (
     <div className="flex justify-start animate-slide-up">
       <div className="max-w-[85%]">
         <div className="border border-border-subtle rounded-xl overflow-hidden bg-surface-overlay/80 backdrop-blur-sm">
-          {/* Header — 一行展示，可点击展开 */}
+          {/* Header — 一行展示 */}
           <button
-            onClick={() => canExpand && setExpanded(!expanded)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[12px] transition-colors ${canExpand ? 'hover:bg-surface-hover cursor-pointer' : 'cursor-default'}`}
+            onClick={() => hasThinking && setExpanded(!expanded)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[12px] transition-colors ${hasThinking ? 'hover:bg-surface-hover cursor-pointer' : 'cursor-default'}`}
           >
             {/* 状态图标 */}
             <Brain size={13} className={`shrink-0 ${status === 'thinking' ? 'text-accent animate-pulse' : 'text-text-tertiary'}`} />
@@ -920,14 +922,9 @@ function ThinkingBlock({ status, messages }: { status: AIStatus; messages: ChatM
               {hasThinking ? (
                 <>Thought{title && <>: </>}<span className="text-accent/90">{title || (body.slice(0, 40) + (body.length > 40 ? '...' : ''))}</span></>
               ) : (
-                t => t('chat.thinking')
+                <span>{t('chat.thinking')}</span>
               )}
             </span>
-
-            {/* 工具步骤计数 */}
-            {hasTools && !expanded && (
-              <span className="text-text-disabled">· {toolSteps.length} 步</span>
-            )}
 
             {/* 动画点 */}
             <div className="flex items-center gap-0.5 ml-auto mr-0.5">
@@ -941,35 +938,17 @@ function ThinkingBlock({ status, messages }: { status: AIStatus; messages: ChatM
             </div>
 
             {/* 展开/折叠箭头 */}
-            {canExpand && (
+            {hasThinking && (
               expanded ? <ChevronDown size={12} className="text-text-disabled shrink-0" /> : <ChevronRight size={12} className="text-text-disabled shrink-0" />
             )}
           </button>
 
-          {/* 展开内容 */}
-          {expanded && (
-            <div className="border-t border-border-subtle max-h-[280px] overflow-y-auto">
-              {/* Reasoning 正文 */}
-              {hasThinking && (
-                <div className="px-3 py-2.5 text-[12px] text-text-tertiary leading-relaxed whitespace-pre-wrap bg-[var(--color-thinking-bg,#1a1625)]/30">
-                  {body || thinkingContent}
-                </div>
-              )}
-
-              {/* 工具调用步骤列表 */}
-              {hasTools && (
-                <div className="px-3 py-2 space-y-1 border-t border-border-subtle/50">
-                  {toolSteps.map((step, idx) => (
-                    <div key={idx} className="flex items-start gap-2 text-[11px]">
-                      <span className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full bg-surface-elevated text-[9px] text-text-disabled mt-0.5">
-                        {idx + 1}
-                      </span>
-                      <span className="text-text-secondary break-all flex-1">{step.label}</span>
-                      {step.hasResult && <Check size={10} className="text-success shrink-0 mt-0.5" />}
-                    </div>
-                  ))}
-                </div>
-              )}
+          {/* 展开内容：仅显示 Reasoning 正文 */}
+          {expanded && hasThinking && (
+            <div className="border-t border-border-subtle max-h-[300px] overflow-y-auto">
+              <div className="px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap bg-surface-elevated text-text-secondary">
+                {body || thinkingContent}
+              </div>
             </div>
           )}
         </div>
@@ -1106,24 +1085,21 @@ function MessageItem({ message }: { message: ChatMessage }) {
   }
 
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} animate-slide-up`}>
+    <div className={`flex flex-col group ${isUser ? 'items-end' : 'items-start'} animate-slide-up gap-2.5`}>
       {/* Avatar */}
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-        isUser ? 'bg-accent' : 'bg-surface-overlay border border-border-subtle'
-      }`}>
-        {isUser
-          ? <User size={13} className="text-white" />
-          : <Bot size={13} className="text-accent" />
-        }
-      </div>
+      {isUser
+        ? <div className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center shrink-0"><User size={13} className="text-white" /></div>
+        : <div className="h-7 w-28 rounded-lg flex items-center justify-center shrink-0 overflow-hidden bg-white/90 dark:bg-white/80 p-1">
+            <img src={`/icons/${getCurrentToolchainId() === 'mimo' ? 'mimo-code' : getCurrentToolchainId()}.svg`} alt="" className="w-full h-full object-contain" />
+          </div>
+      }
 
-      {/* Bubble */}
-      <div className={`max-w-[80%] ${isUser ? 'items-end' : 'items-start'}`}>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-[11px] font-medium text-text-secondary">
-            {isUser ? t('chat.you') : t('chat.assistant')}
-          </span>
-          {isUser && message.id.startsWith('user-') && (
+      {/* Bubble — 按钮在左/右，内容在另一侧 */}
+      <div className={`max-w-[80%] flex items-start flex-row gap-2`}>
+        {/* 操作按钮 */}
+        {isUser && (
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 pt-1">
+          {message.id.startsWith('user-') && (
             <button
               onClick={() => useChatStore.getState().prepareRollback(message.id)}
               className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-warning hover:bg-warning-muted rounded transition-all"
@@ -1133,7 +1109,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
               回退
             </button>
           )}
-          {isUser && message.id.startsWith('user-') && (
+          {message.id.startsWith('user-') && (
             <button
               onClick={() => {
                 const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
@@ -1149,16 +1125,18 @@ function MessageItem({ message }: { message: ChatMessage }) {
               <Pencil size={10} />
             </button>
           )}
-          {isUser && (
-            <button
-              onClick={() => doCopy(message.content, setUserCopied)}
-              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded transition-all"
-              title="复制消息"
-            >
-              {userCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
-            </button>
-          )}
-        </div>
+          <button
+            onClick={() => doCopy(message.content, setUserCopied)}
+            className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded transition-all"
+            title="复制消息"
+          >
+            {userCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
+          </button>
+          </div>
+        )}
+
+        {/* 内容区 */}
+        <div className={`min-w-0 ${isUser ? 'items-end' : 'items-start'}`}>
         {/* Thinking / Reasoning Block — 可折叠展示 AI 推理过程 */}
         {hasThinking && !isUser && (
           <div className="mb-2">
@@ -1214,6 +1192,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
             <span>↑{formatTokens(message.usage.inputTokens)} ↓{formatTokens(message.usage.outputTokens)}</span>
           </div>
         )}
+        </div>
       </div>
     </div>
   );

@@ -330,11 +330,15 @@ pub async fn ai_start(config: AIConfig) -> Result<String, String> {
     }
     client.session_id = None;
 
-    let _ = client
-        .config
-        .api_key
-        .clone()
-        .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+    // Ollama 和 MiMo 不需要 API Key
+    let needs_api_key = client.config.ai_provider != "ollama" && client.config.ai_provider != "mimo";
+    if needs_api_key {
+        let _key = client
+            .config
+            .api_key
+            .clone()
+            .ok_or_else(|| "Please configure an API Key in Settings first".to_string())?;
+    }
 
     if client.config.enable_tool_use {
         info!("MCP server check skipped — using exec_shell-only mode");
@@ -576,18 +580,16 @@ pub async fn ai_send_message(
                                         if let Some(text) = event.get("content").and_then(|v| v.as_str())
                                             .or_else(|| event.get("text").and_then(|v| v.as_str()))
                                         {
-                                            let preview: String = text.chars().take(120).collect();
-                                            info!("{} reasoning ({} chars): {}", provider_name, text.len(), preview);
+                                            info!("{} reasoning ({} chars): {}", provider_name, text.len(), &text[..text.char_indices().take(120).last().map(|(i,c)| i+c.len_utf8()).unwrap_or(0)]);
                                             let _ = app_handle.emit("ai-reasoning", text);
                                         }
                                     }
                                     "content" => {
                                         if let Some(content) = event["content"].as_str() {
-                                            let preview: String = content.chars().take(120).collect();
                                             info!("{} content ({} chars): {}",
                                                 provider_name,
                                                 content.len(),
-                                                preview);
+                                                &content[..content.char_indices().take(120).last().map(|(i,c)| i+c.len_utf8()).unwrap_or(0)]);
                                             output.push_str(content);
                                             // CodeWhale stream-json: 逐 token 增量
                                             // MiMo-Code --format json: 整段文本完成后一次发出
@@ -895,6 +897,69 @@ pub async fn ai_send_message(
                                             info!("{} metadata usage: input={} output={} cached={}", provider_name, meta_input, meta_output, meta_cached);
                                         }
                                     }
+                                    "step_done" => {
+                                        // MiMo-Code 单轮完成（step_finish），不是最终完成
+                                        // 更新 session_id，发送 usage
+                                        if let Some(sid) = event["session_id"].as_str() {
+                                            new_session_id = Some(sid.to_string());
+                                            info!("{} step_done, session: {}", provider_name, sid);
+                                        }
+                                        // 发送当前轮次的 usage
+                                        {
+                                            let mut client = AI_CLIENT.lock().await;
+                                            client.add_usage(msg_input_tokens, msg_output_tokens, msg_cached_tokens, &current_model);
+                                            let last_cost = calculate_cost_rmb(msg_input_tokens, msg_output_tokens, msg_cached_tokens, &current_model);
+                                            let emit_usage = AICumulativeUsage {
+                                                session: AIUsage {
+                                                    input_tokens: client.cumulative_input_tokens,
+                                                    output_tokens: client.cumulative_output_tokens,
+                                                    cached_tokens: client.cumulative_cached_tokens,
+                                                    total_tokens: client.cumulative_input_tokens + client.cumulative_output_tokens,
+                                                    cost_rmb: client.cumulative_cost_rmb,
+                                                    model: current_model.clone(),
+                                                },
+                                                last_message: AIUsage {
+                                                    input_tokens: msg_input_tokens,
+                                                    output_tokens: msg_output_tokens,
+                                                    cached_tokens: msg_cached_tokens,
+                                                    total_tokens: msg_input_tokens + msg_output_tokens,
+                                                    cost_rmb: last_cost,
+                                                    model: current_model.clone(),
+                                                },
+                                                message_count: client.message_count,
+                                            };
+                                            let _ = app_handle.emit("ai-usage", emit_usage);
+                                        }
+                                        // 重置当前轮次计数
+                                        msg_input_tokens = 0;
+                                        msg_output_tokens = 0;
+                                        msg_cached_tokens = 0;
+                                        // 检查子进程是否已退出，如果已退出则视为完成
+                                        {
+                                            let mut guard = RUNNING_CHILD.lock().await;
+                                            if let Some(ref mut child) = *guard {
+                                                match child.try_wait() {
+                                                    Ok(Some(_status)) => {
+                                                        info!("{} step_done + process exited, treating as final done", provider_name);
+                                                        *guard = None;
+                                                        drop(guard);
+                                                        {
+                                                            let mut s = AI_STATUS.lock().unwrap();
+                                                            *s = AIStatus::Idle;
+                                                        }
+                                                        break;
+                                                    }
+                                                    Ok(None) => {
+                                                        // 进程还在运行，继续等待下一轮
+                                                        info!("{} step_done but process still running, waiting for next step", provider_name);
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!("{} step_done: try_wait error: {}", provider_name, e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     "done" => {
                                         {
                                             let mut status = AI_STATUS.lock().unwrap();
@@ -937,13 +1002,12 @@ pub async fn ai_send_message(
                                         break;
                                     }
                                     _ => {
-                                        let line_preview: String = line.chars().take(300).collect();
                                         info!(
                                             "{} unknown event type: '{}' keys=[{}] line={}",
                                             provider_name,
                                             event_type,
                                             event.as_object().map(|o| o.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default(),
-                                            line_preview
+                                            &line[..line.len().min(300)]
                                         );
                                     }
                                 }
@@ -953,7 +1017,7 @@ pub async fn ai_send_message(
                                 tracing::warn!(
                                     "Failed to parse CodeWhale stream JSON: {} - {}",
                                     e,
-                                    line.chars().take(200).collect::<String>()
+                                    &line[..line.len().min(200)]
                                 );
                             }
                         }
@@ -1807,14 +1871,7 @@ fn ensure_project_agent_instructions(
 - **必须回复**: 每次工具调用完成后，必须用中文向用户汇报结果
 - 失败时根据返回的错误信息修复代码后重试
 - 所有文件修改限制在项目目录内
-{end}"#,
-        idf_ver = idf_ver,
-        idf_path = idf_path.unwrap_or("(not configured)")
-    );
 
-    // Append Experience Engine section
-    let experience_section = format!(
-        r#"
 <!-- EXPERIENCE-ENGINE:START -->
 # Experience 经验引擎（AI 疑难杂症积累与自愈）
 
@@ -1857,14 +1914,37 @@ fn ensure_project_agent_instructions(
 - `scope` 应填写具体的 ESP32 芯片型号（如 `esp32`、`esp32s3`、`esp32c3`）
 - 重复犯相同疑难错误是严重问题，经验引擎的核心目的就是避免此类情况
 <!-- EXPERIENCE-ENGINE:END -->
-"#
+{end}"#,
+        idf_ver = idf_ver,
+        idf_path = idf_path.unwrap_or("(not configured)")
     );
 
-    let block = format!("{block}{experience_section}");
-
-    let updated = if let (Some(start_idx), Some(end_idx)) = (existing.find(start), existing.find(end)) {
+    let updated = if existing.contains(start) && existing.contains(end) {
+        // 替换 ESPSMITH 块（从 START 到 END）
+        let start_idx = existing.find(start).unwrap();
+        let end_idx = existing.find(end).unwrap();
         let after_end = end_idx + end.len();
-        format!("{}{}{}", &existing[..start_idx], block, &existing[after_end..])
+        let after_section = &existing[after_end..];
+
+        // 只清理 ESPSMITH:END 之后的残留 EXPERIENCE-ENGINE 块（旧格式遗留）
+        // 不清理新 ESPSMITH 块内的 EXPERIENCE-ENGINE（它是正确内容）
+        let mut cleaned_after = after_section.to_string();
+        while let Some(s) = cleaned_after.find("<!-- EXPERIENCE-ENGINE:START -->") {
+            if let Some(e) = cleaned_after[s..].find("<!-- EXPERIENCE-ENGINE:END -->") {
+                let after = s + e + "<!-- EXPERIENCE-ENGINE:END -->".len();
+                let before = cleaned_after[..s].trim_end_matches('\n').trim_end_matches('\r').to_string();
+                let after_str = cleaned_after[after..].trim_start_matches('\n').trim_start_matches('\r').to_string();
+                cleaned_after = if after_str.is_empty() {
+                    before
+                } else {
+                    format!("{}\n\n{}", before, after_str)
+                };
+            } else {
+                break;
+            }
+        }
+
+        format!("{}{}{}", &existing[..start_idx], block, cleaned_after)
     } else if existing.trim().is_empty() {
         format!("{block}\n")
     } else {

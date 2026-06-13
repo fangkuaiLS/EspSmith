@@ -26,6 +26,7 @@ mod experience;
 mod adapters;
 mod confserver;
 
+use std::io::Write;
 use std::sync::Mutex;
 
 /// Commands that need the global lock (long-running operations that must not
@@ -423,11 +424,13 @@ pub fn run_cli() -> Result<(), String> {
     match result {
         Ok(val) => {
             println!("{}", serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()));
+            let _ = std::io::stdout().flush();
             Ok(())
         }
         Err(err) => {
             let output = serde_json::json!({"success": false, "error": err});
             println!("{}", serde_json::to_string_pretty(&output).unwrap_or_else(|_| format!("{{\"success\":false,\"error\":\"{}\"}}", err)));
+            let _ = std::io::stdout().flush();
             Err(err)
         }
     }

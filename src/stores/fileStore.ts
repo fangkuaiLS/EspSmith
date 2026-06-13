@@ -287,3 +287,29 @@ listen<string>('ai-file-changed', (event) => {
   }
   _debounceTimer = setTimeout(_flushPendingChanges, DEBOUNCE_MS);
 }).catch(() => {});
+
+// ─── 窗口标题跟随当前文件 ──────────────────────────────────────
+function updateWindowTitle() {
+  const { tabs, activeTabId } = useFileStore.getState();
+  const tab = tabs.find((t) => t.id === activeTabId);
+  if (tab) {
+    const title = tab.modified ? `${tab.name} • EspSmith` : `${tab.name} — EspSmith`;
+    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      getCurrentWindow().setTitle(title).catch(() => {});
+    });
+  } else {
+    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+      getCurrentWindow().setTitle('EspSmith').catch(() => {});
+    });
+  }
+}
+
+useFileStore.subscribe((state, prevState) => {
+  if (state.activeTabId === prevState.activeTabId) {
+    // 同一标签页，检查修改状态是否变化
+    const prevTab = prevState.tabs.find((t) => t.id === state.activeTabId);
+    const currTab = state.tabs.find((t) => t.id === state.activeTabId);
+    if (prevTab?.modified === currTab?.modified) return;
+  }
+  updateWindowTitle();
+});

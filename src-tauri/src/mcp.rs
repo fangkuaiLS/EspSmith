@@ -1253,17 +1253,24 @@ impl MCPServer {
         }
 
         experience::record_run(&board, "verify", result.passed);
-        let record = experience::ExperienceRecord {
-            id: format!("{}_{}_{}", plan.name, board, chrono::Utc::now().timestamp()),
-            trigger: format!("closed_loop_{}", if is_jtag { "jtag" } else { "uart" }),
-            fix: format!("Auto-Self-Healing {} on {} ({}: {:?})", plan.name, board, connection_label, conn_info.mode),
-            lesson: format!("Run via {} — {} steps: {} pass / {} fail", connection_label, result.total_steps, result.passed_steps, result.total_steps - result.passed_steps),
-            scope: board.clone(),
-            board_id: None,
-            source_ref: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        };
-        experience::record_skill(record);
+
+        // 只在闭环失败且触发了自愈修复时才记录 skill（真正的疑难杂症），
+        // 成功的运行只更新 stats，不生成无价值的流水账记录。
+        if !result.passed && !result.recovery_applied.is_empty() {
+            let record = experience::ExperienceRecord {
+                id: format!("{}_{}_{}", plan.name, board, chrono::Utc::now().timestamp()),
+                trigger: format!("closed_loop_{}_failed", if is_jtag { "jtag" } else { "uart" }),
+                fix: format!("Self-healing applied on {} ({}: {:?})", board, connection_label, conn_info.mode),
+                lesson: format!("{} steps: {} pass / {} fail. Recovery: {}",
+                    result.total_steps, result.passed_steps, result.total_steps - result.passed_steps,
+                    result.recovery_applied.join("; ")),
+                scope: board.clone(),
+                board_id: None,
+                source_ref: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+            experience::record_skill(record);
+        }
 
         ok(json!({
             "passed": result.passed,

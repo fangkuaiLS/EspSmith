@@ -11,6 +11,8 @@ export interface ChatMessage {
   status?: 'sending' | 'sent' | 'error';
   toolData?: { name: string; input?: unknown; result?: string };
   usage?: { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number; costRmb: number };
+  /** AI 推理/思考过程内容（独立于正式回复，可折叠展示） */
+  thinkingContent?: string;
 }
 
 // AI 状态
