@@ -74,7 +74,7 @@ const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
     { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash' },
   ],
   mimo: [
-    { id: 'mimo/mimo-auto', label: 'MiMo Auto (限免)', model: 'mimo/mimo-auto' },
+    { id: 'mimo/mimo-auto', label: 'MiMo Auto（MiMo-V2.5 限免中）', model: 'mimo/mimo-auto' },
   ],
   ollama: [
     { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
