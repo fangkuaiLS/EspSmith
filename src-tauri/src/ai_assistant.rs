@@ -561,6 +561,15 @@ pub async fn ai_send_message(
                                 for event in events_to_process {
                                 let event_type = event["type"].as_str().unwrap_or("");
                                 match event_type {
+                                    "reasoning" => {
+                                        // AI 推理/思考过程内容，转发到前端显示
+                                        if let Some(text) = event.get("content").and_then(|v| v.as_str())
+                                            .or_else(|| event.get("text").and_then(|v| v.as_str()))
+                                        {
+                                            info!("{} reasoning ({} chars): {}", provider_name, text.len(), &text[..text.len().min(120)]);
+                                            let _ = app_handle.emit("ai-reasoning", text);
+                                        }
+                                    }
                                     "content" => {
                                         if let Some(content) = event["content"].as_str() {
                                             info!("{} content ({} chars): {}",
@@ -569,23 +578,8 @@ pub async fn ai_send_message(
                                                 &content[..content.len().min(120)]);
                                             output.push_str(content);
                                             // MiMo-Code 在文本完成后才发一次 text 事件（非逐 token 流式），
-                                            // 将大块文本按字符分片并加小延迟，模拟流式打字效果
-                                            if provider.kind() == crate::ai_provider::ProviderKind::MiMoCode && content.len() > 20 {
-                                                let chars: Vec<char> = content.chars().collect();
-                                                let mut i = 0;
-                                                while i < chars.len() {
-                                                    let end = (i + 4).min(chars.len());
-                                                    let chunk: String = chars[i..end].iter().collect();
-                                                    let _ = app_handle.emit("ai-chunk", &chunk as &str);
-                                                    i = end;
-                                                    // 每 4 个字符延迟 15ms，约 267 字符/秒
-                                                    if i < chars.len() {
-                                                        std::thread::sleep(std::time::Duration::from_millis(15));
-                                                    }
-                                                }
-                                            } else {
-                                                let _ = app_handle.emit("ai-chunk", content);
-                                            }
+                                            // 直接一次性 emit 全文，由前端做打字动画展示
+                                            let _ = app_handle.emit("ai-chunk", content);
                                         }
                                     }
                                     "tool_use" => {
@@ -968,7 +962,7 @@ pub async fn ai_send_message(
 
     // Flush: give Tauri event system time to deliver all ai-chunk events
     // to the frontend before invoke returns and the listener is unregistered.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     {
         let mut guard = RUNNING_CHILD.lock().await;
@@ -1316,9 +1310,16 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         "烧录串口未配置,烧录前请先让用户在工具栏选择。"
     } else { "" };
 
-    // 基于用户选择的 flash_port 检测连接模式，而非全局缓存
-    // 确保多设备场景下 AI 使用的是当前选中端口对应的模式
-    let conn_info = crate::connection::detect_connection_mode(flash_port);
+    // 基于用户选择的 flash_port 检测连接模式
+    // 优先使用缓存，避免每次请求都枚举串口（50-300ms 开销）
+    let conn_info = {
+        let cached = crate::connection::get_cached_connection_info();
+        if cached.mode != ConnectionMode::Unknown {
+            cached
+        } else {
+            crate::connection::detect_connection_mode(flash_port)
+        }
+    };
     let is_jtag = conn_info.mode.is_jtag();
     let detected_port = conn_info.port.as_deref().unwrap_or(port);
 
@@ -1825,7 +1826,11 @@ fn ensure_project_agent_instructions(
         format!("{}\n\n{}\n", existing.trim_end(), block)
     };
 
-    std::fs::write(&agents_path, updated).map_err(|e| e.to_string())
+    // 仅在内容变更时写入，避免不必要的文件 I/O
+    if updated != existing {
+        std::fs::write(&agents_path, updated).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[allow(dead_code)] // MCP Server模式预留
@@ -2154,6 +2159,25 @@ fn has_executable_extension(path: &Path) -> bool {
 }
 
 pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
+    use std::sync::Mutex;
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(cached) = guard.get(cmd) {
+            return cached.clone();
+        }
+    }
+
+    let result = _which_cmd_uncached(cmd);
+
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(cmd.to_string(), result.clone());
+    }
+
+    result
+}
+
+fn _which_cmd_uncached(cmd: &str) -> Option<PathBuf> {
     if cfg!(windows) {
         let output = std::process::Command::new("where")
             .arg(cmd)
@@ -2165,9 +2189,9 @@ pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
                 .map(|s| PathBuf::from(s.trim()))
                 .filter(|p| p.is_file() && has_executable_extension(p))
                 .collect();
-            if let Some(path) = paths.into_iter().next() {
-                return Some(path);
-            }
+            paths.into_iter().next()
+        } else {
+            None
         }
     } else {
         let output = std::process::Command::new("which")
@@ -2175,15 +2199,16 @@ pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
             .output()
             .ok()?;
         if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout)
+            String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .next()
                 .map(|s| s.trim().to_string())
-                .filter(|s| Path::new(s).is_file())?;
-            return Some(PathBuf::from(path));
+                .filter(|s| Path::new(s).is_file())
+                .map(PathBuf::from)
+        } else {
+            None
         }
     }
-    None
 }
 
 /// 检查 CodeWhale 安装状态

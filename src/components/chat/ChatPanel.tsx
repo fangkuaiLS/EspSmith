@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { translateBackendString } from '../../i18n';
-import { Bot, Send, StopCircle, Plus, User, Code, Terminal, ChevronDown, ChevronRight, ExternalLink, Undo2, Coins, Copy, Check, Pencil, Clock, Trash2, Shield, ShieldAlert, Cpu, Loader, CheckCircle2, Circle, XCircle } from 'lucide-react';
+import { Bot, Send, StopCircle, Plus, User, Code, Terminal, ChevronDown, ChevronRight, ExternalLink, Undo2, Coins, Copy, Check, Pencil, Clock, Trash2, Shield, ShieldAlert, Cpu, Loader, CheckCircle2, Circle, XCircle, Brain } from 'lucide-react';
 import { useChatStore, useSettingsStore } from '../../stores';
 import { useProjectStore } from '../../stores/projectStore';
 import type { ChatSession } from '../../stores/chatStore';
@@ -160,7 +160,6 @@ export function ChatPanel() {
   const { messages, status, pendingRollback, usage, sessions, permissionMode, pendingPermission, activeOperation, sendMessage, startAI, stopAI, clearMessages, confirmRollback, cancelRollback, loadSessions, loadSession, deleteSession, setPermissionMode } = useChatStore();
   const { settings, setSettings } = useSettingsStore();
   const projectPath = useProjectStore((s) => s.currentProject?.path);
-  const currentModelId = getCurrentModelId();
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -481,24 +480,8 @@ export function ChatPanel() {
         {activeOperation && (
           <OperationTimeline operation={activeOperation} />
         )}
-        {/* Typing indicator */}
-        {showTyping && (
-          <div className="flex justify-start">
-            <div className="bg-surface-overlay rounded-2xl rounded-bl-md px-4 py-3 border border-border-subtle">
-              <div className="flex items-center gap-1">
-                {[0, 1, 2].map((i) => (
-                  <div
-                    key={i}
-                    className="w-1.5 h-1.5 rounded-full bg-text-tertiary"
-                    style={{
-                      animation: `typing-dot 1.4s ease-in-out ${i * 0.15}s infinite`,
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Thinking Block — AI 响应期间始终显示，可折叠查看详情 */}
+        {showTyping && <ThinkingBlock status={status} messages={messages} t={t} />}
         <div ref={messagesEndRef} />
       </div>
 
@@ -877,6 +860,124 @@ function TerminalPanel({ command, output }: { command: string; output: string })
   );
 }
 
+/**
+ * ThinkingBlock — AI 思考/推理过程的可折叠展示块
+ * 在 AI 响应期间（showTyping）显示，替代原来的三个跳动圆点
+ * 参考 MiMO-Code TUI 的 "- Thought: [title] · 22ms" 风格
+ */
+function ThinkingBlock({ status, messages }: { status: AIStatus; messages: ChatMessage[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const statusConfig = STATUS_CONFIG[status];
+
+  // 从当前正在构建的 assistant 消息中获取 reasoning 内容
+  const thinkingContent = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && messages[i].thinkingContent) {
+        return messages[i].thinkingContent;
+      }
+    }
+    return '';
+  }, [messages]);
+
+  // 解析 reasoning 文本：提取 **标题** 和正文（MiMO 格式）
+  const { title, body } = useMemo(() => {
+    const text = thinkingContent?.trim() || '';
+    const match = text.match(/^\*\*([^*\n]+)\*\*(?:\r?\n\r?\n|$)/);
+    if (match) {
+      return { title: match[1].trim(), body: text.slice(match[0].length).trimEnd() };
+    }
+    return { title: null, body: text };
+  }, [thinkingContent]);
+
+  // 收集工具调用步骤
+  const toolSteps = useMemo(() => {
+    return messages
+      .filter(m => m.toolData && m.role === 'system')
+      .map(m => ({
+        label: m.content.replace(/^🔧 /, ''),
+        hasResult: !!m.toolData?.result,
+      }));
+  }, [messages]);
+
+  const hasThinking = !!thinkingContent;
+  const hasTools = toolSteps.length > 0;
+  const canExpand = hasThinking || hasTools;
+
+  return (
+    <div className="flex justify-start animate-slide-up">
+      <div className="max-w-[85%]">
+        <div className="border border-border-subtle rounded-xl overflow-hidden bg-surface-overlay/80 backdrop-blur-sm">
+          {/* Header — 一行展示，可点击展开 */}
+          <button
+            onClick={() => canExpand && setExpanded(!expanded)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[12px] transition-colors ${canExpand ? 'hover:bg-surface-hover cursor-pointer' : 'cursor-default'}`}
+          >
+            {/* 状态图标 */}
+            <Brain size={13} className={`shrink-0 ${status === 'thinking' ? 'text-accent animate-pulse' : 'text-text-tertiary'}`} />
+
+            {/* 标题文字 */}
+            <span className="text-text-secondary font-medium">
+              {hasThinking ? (
+                <>Thought{title && <>: </>}<span className="text-accent/90">{title || (body.slice(0, 40) + (body.length > 40 ? '...' : ''))}</span></>
+              ) : (
+                t => t('chat.thinking')
+              )}
+            </span>
+
+            {/* 工具步骤计数 */}
+            {hasTools && !expanded && (
+              <span className="text-text-disabled">· {toolSteps.length} 步</span>
+            )}
+
+            {/* 动画点 */}
+            <div className="flex items-center gap-0.5 ml-auto mr-0.5">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="w-1 h-1 rounded-full bg-accent/40"
+                  style={{ animation: `typing-dot 1.4s ease-in-out ${i * 0.15}s infinite` }}
+                />
+              ))}
+            </div>
+
+            {/* 展开/折叠箭头 */}
+            {canExpand && (
+              expanded ? <ChevronDown size={12} className="text-text-disabled shrink-0" /> : <ChevronRight size={12} className="text-text-disabled shrink-0" />
+            )}
+          </button>
+
+          {/* 展开内容 */}
+          {expanded && (
+            <div className="border-t border-border-subtle max-h-[280px] overflow-y-auto">
+              {/* Reasoning 正文 */}
+              {hasThinking && (
+                <div className="px-3 py-2.5 text-[12px] text-text-tertiary leading-relaxed whitespace-pre-wrap bg-[var(--color-thinking-bg,#1a1625)]/30">
+                  {body || thinkingContent}
+                </div>
+              )}
+
+              {/* 工具调用步骤列表 */}
+              {hasTools && (
+                <div className="px-3 py-2 space-y-1 border-t border-border-subtle/50">
+                  {toolSteps.map((step, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-[11px]">
+                      <span className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full bg-surface-elevated text-[9px] text-text-disabled mt-0.5">
+                        {idx + 1}
+                      </span>
+                      <span className="text-text-secondary break-all flex-1">{step.label}</span>
+                      {step.hasResult && <Check size={10} className="text-success shrink-0 mt-0.5" />}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function doCopy(text: string, setter: (v: boolean) => void) {
   navigator.clipboard.writeText(text);
   setter(true);
@@ -889,9 +990,12 @@ function MessageItem({ message }: { message: ChatMessage }) {
   const [localCopied, setLocalCopied] = useState(false);
   const [userCopied, setUserCopied] = useState(false);
   const [toolMsgCopied, setToolMsgCopied] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [thinkingCopied, setThinkingCopied] = useState(false);
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isTool = !!message.toolData;
+  const hasThinking = !!message.thinkingContent;
 
   // 工具调用消息 - 可折叠
   if (isTool) {
@@ -1055,6 +1159,37 @@ function MessageItem({ message }: { message: ChatMessage }) {
             </button>
           )}
         </div>
+        {/* Thinking / Reasoning Block — 可折叠展示 AI 推理过程 */}
+        {hasThinking && !isUser && (
+          <div className="mb-2">
+            <button
+              onClick={() => setThinkingExpanded(!thinkingExpanded)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all group/think w-full"
+            >
+              <Brain size={12} className="text-accent/70 shrink-0" />
+              <span className="font-medium">思考过程</span>
+              <span className="text-text-disabled ml-1">({message.thinkingContent!.length > 0 ? Math.round(message.thinkingContent!.length / 2) : '...'} 字)</span>
+              {thinkingExpanded
+                ? <ChevronDown size={12} className="ml-auto shrink-0" />
+                : <ChevronRight size={12} className="ml-auto shrink-0" />
+              }
+              <button
+                onClick={(e) => { e.stopPropagation(); doCopy(message.thinkingContent!, setThinkingCopied); }}
+                className="opacity-0 group-hover/think:opacity-100 transition-opacity shrink-0"
+                title="复制思考内容"
+              >
+                {thinkingCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
+              </button>
+            </button>
+            {thinkingExpanded && (
+              <div className="mt-1 mx-3 px-3 py-2.5 bg-[var(--color-thinking-bg,#1a1625)] border border-border-subtle rounded-lg text-[12px] text-text-tertiary leading-relaxed max-h-[300px] overflow-y-auto">
+                <div className="[&_p]:mb-2 [&_p:last-of-type]:mb-0 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 whitespace-pre-wrap">
+                  {message.thinkingContent}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className={`px-4 py-2.5 text-[13px] leading-relaxed ${
           isUser
             ? 'bg-accent text-white rounded-2xl rounded-tr-sm'
