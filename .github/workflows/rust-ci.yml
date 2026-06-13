@@ -50,7 +50,8 @@ jobs:
             librsvg2-dev \
             libgtk-3-dev \
             libjavascriptcoregtk-4.1-dev \
-            libsoup-3.0-dev
+            libsoup-3.0-dev \
+            libudev-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -67,10 +68,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       - name: Check Rust compilation
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        run: cargo check --manifest-path src-tauri/Cargo.toml --lib --bins
 
       - name: Lint with clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --bins -- -D warnings
 
       - name: Check frontend build
         run: npm run build
