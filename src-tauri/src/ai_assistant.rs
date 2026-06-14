@@ -1335,17 +1335,6 @@ fn extract_id_as_string(event: &serde_json::Value, key: &str) -> String {
         .unwrap_or_default()
 }
 
-fn build_hardware_hint(project_path: Option<&str>) -> String {
-    match project_path {
-        Some(p) if !p.trim().is_empty() => {
-            "硬件配置: 用hw_config_add_peripheral添加外设(自动更新hardware_config.json和hardware_pins.h),用get_hardware_config查看当前配置。\
-             禁止直接修改hardware_pins.h,该文件由hardware_config.json自动生成。\
-             修改硬件引脚请编辑.espsmith/hardware_config.json,保存后hardware_pins.h会自动更新".to_string()
-        }
-        _ => String::new(),
-    }
-}
-
 fn sanitize_prompt_for_cmd(prompt: String) -> String {
     prompt
         .replace("\r\n", " ")
@@ -1359,7 +1348,6 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
     let idf = idf_path.unwrap_or("(IDF路径)");
     let port = flash_port.unwrap_or("(先用list-ports查询)");
     let target_arg = if chip_changed && target_chip.is_some() { format!(" --target {}", target_chip.unwrap()) } else { String::new() };
-    let hw_hint = build_hardware_hint(project_path);
 
     // Resolve espsmith-cli path: same directory as current exe, or in binaries/ subdirectory.
     // In dev mode, espsmith-cli is compiled by beforeDevCommand and placed in target/debug/.
@@ -1437,12 +1425,6 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         .map(|ctx| format!("。{}", ctx))
         .unwrap_or_default();
 
-    let direct_rule = if chip_changed {
-        "芯片刚切换,编译命令已包含--target参数,直接执行即可(会自动执行set-target重配置)。set-target较慢请耐心等待。若build失败报告错误即可。烧录前确认编译目标与硬件一致。优先通过组件注册表引入(在main/idf_component.yml声明依赖如espressif/led_strip:\"*\",同时在main/CMakeLists.txt的idf_component_register中添加REQUIRES组件名),build时自动下载集成。回复简要总结结果即可。重要: build/flash/closed-loop是长时间同步命令(可能需要数分钟),exec_shell执行后必须耐心等待结果返回,绝不要在命令运行中重复执行同一命令或尝试跳过,否则会导致进程冲突和崩溃。如果收到\"Another espsmith command is running\"错误,说明上一次命令仍在运行,必须等待其完成,不要重试。"
-    } else {
-        "路径已预配置。编译直接执行build命令即可,不要携带--target参数(除非用户明确要求切换芯片,因为set-target会触发完全重配置非常慢)。若build失败报告错误即可。烧录前确认编译目标与硬件一致。优先通过组件注册表引入(在main/idf_component.yml声明依赖如espressif/led_strip:\"*\",同时在main/CMakeLists.txt的idf_component_register中添加REQUIRES组件名),build时自动下载集成。回复简要总结结果即可。重要: build/flash/closed-loop是长时间同步命令(可能需要数分钟),exec_shell执行后必须耐心等待结果返回,绝不要在命令运行中重复执行同一命令或尝试跳过,否则会导致进程冲突和崩溃。如果收到\"Another espsmith command is running\"错误,说明上一次命令仍在运行,必须等待其完成,不要重试。"
-    };
-
     let resolved_chip = target_chip
         .map(|s| s.to_string())
         .or_else(|| {
@@ -1459,14 +1441,17 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         let jtag_check_cmd = format!("{cli} jtag-runtime-check --project \"{project}\" --idf \"{idf}\" --port \"{port}\" --chip {chip}{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, chip=resolved_chip, ipc=ipc_addr_arg);
         let openocd_start_cmd = format!("{cli} openocd-start --chip {chip}", cli=cli_exe, chip=resolved_chip);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者，当前连接模式={jtag_label}(JTAG)，芯片={chip}。文件: list_directory, read_file, apply_patch(优先用于修改文件，省token), write_file(仅创建新文件)。{direct_rule}{chip_warn}{port_warn}{hw_hint}{civ_context}\n编译: exec_shell {build_cmd}\nJTAG闭环验证(首选): exec_shell {closed_loop_cmd}\n  - closed-loop内部自动处理: OpenOCD启动→烧录→串口验证→GDB PC/堆栈验证，一条命令搞定\n  - 如果closed-loop失败，根据错误信息修复代码后重试，不要手动操作OpenOCD/GDB\nJTAG深度检查(仅限设断点/观察变量时): exec_shell {jtag_check_cmd}\n  - 如果jtag-runtime-check失败，回退到closed-loop即可，不要手动连接GDB\n烧录(UART): exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\nOpenOCD控制: exec_shell {openocd_start_cmd}, exec_shell {cli} openocd-stop, exec_shell {cli} openocd-is-running\n铁律: 绝对不要直接运行openocd.exe/gdb.exe(会卡死/配置不匹配)，只用espsmith-cli子命令。所有验证优先走closed-loop，不要手动搭建GDB调试链路。修改已有文件必须用apply_patch不要用write_file。用户: {msg}",
-            build_cmd=build_cmd, closed_loop_cmd=closed_loop_cmd, jtag_check_cmd=jtag_check_cmd, openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, cli=cli_exe, chip=resolved_chip, msg=user_message,
+            "你是ESP32开发者，连接模式={jtag_label}(JTAG)，芯片={chip}。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: exec_shell {build_cmd}\nJTAG闭环验证: exec_shell {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): exec_shell {jtag_check_cmd}\n烧录(UART): exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\nOpenOCD: exec_shell {openocd_start_cmd}, exec_shell {cli} openocd-stop, exec_shell {cli} openocd-is-running\n用户: {msg}",
+            cli=cli_exe, chip=resolved_chip, msg=user_message,
+            build_cmd=build_cmd, closed_loop_cmd=closed_loop_cmd, jtag_check_cmd=jtag_check_cmd,
+            openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd,
         ))
     } else {
         let uart_closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者。当前连接模式=UART。文件: list_directory, read_file, apply_patch(优先用于修改文件，省token), write_file(仅创建新文件)。{direct_rule}{chip_warn}{port_warn}{hw_hint}{civ_context}\n编译: exec_shell {build_cmd}\n烧录: exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n一键闭环: exec_shell {closed_loop_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\n修改已有文件必须用apply_patch不要用write_file。用户: {msg}",
-            build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, closed_loop_cmd=uart_closed_loop_cmd, cli=cli_exe, msg=user_message,
+            "你是ESP32开发者，连接模式=UART。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: exec_shell {build_cmd}\n烧录: exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n一键闭环: exec_shell {closed_loop_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\n用户: {msg}",
+            cli=cli_exe, msg=user_message,
+            build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, closed_loop_cmd=uart_closed_loop_cmd,
         ))
     }
 }
@@ -1831,6 +1816,8 @@ fn ensure_project_agent_instructions(
 ## 关键规则
 - ESP-IDF 已预配置，无需检查或验证 IDF 路径/工具链，直接构建即可
 - 所有操作均通过 `exec_shell` + `espsmith-cli.exe` 子命令完成（不要用 espsmith.exe）
+- build/flash/closed-loop 是长时间同步命令（可能需要数分钟），exec_shell 执行后必须耐心等待结果返回，绝不要在命令运行中重复执行同一命令或尝试跳过，否则会导致进程冲突和崩溃
+- 如果收到 "Another espsmith command is running" 错误，说明上一次命令仍在运行，必须等待其完成，不要重试
 - **修改已有文件必须优先使用 `apply_patch`**（unified diff 格式），避免 `write_file` 全量写入浪费 token。`apply_patch` 格式示例：
   ```
   --- a/main/main.c
