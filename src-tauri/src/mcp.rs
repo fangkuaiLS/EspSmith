@@ -791,7 +791,7 @@ impl MCPServer {
             }));
         }
 
-        let pattern_match = expected.is_empty() || serial_output.contains(&expected);
+        let pattern_match = expected.is_empty() || serial_output.contains(expected);
 
         timeline.push(json!({"phase": "pattern_check", "matched": pattern_match, "expected": expected, "ms": start_total.elapsed().as_millis()}));
 
@@ -900,7 +900,7 @@ impl MCPServer {
         let recommendation = &conn_info.recommendation;
         let chip_hint = conn_info.chip_hint.as_deref().unwrap_or("unknown");
         let configured_chip = self.detect_board();
-        let chip_mismatch = conn_info.chip_hint.as_deref().map_or(false, |h| {
+        let chip_mismatch = conn_info.chip_hint.as_deref().is_some_and(|h| {
             let hint = h.to_ascii_lowercase().replace('-', "");
             hint != "esp32usbjtag" && hint != configured_chip.to_ascii_lowercase().replace('-', "")
         });
@@ -1041,7 +1041,7 @@ impl MCPServer {
         } else if conn_info.mode.is_jtag() {
             true
         } else {
-            let detected = connection::detect_connection_mode(Some(&port));
+            let detected = connection::detect_connection_mode(Some(port));
             tracing::info!(
                 "closed_loop: cached mode={:?}, re-detected mode={:?}",
                 conn_info.mode,
@@ -1054,7 +1054,7 @@ impl MCPServer {
         let chip_mismatch = if is_jtag {
             let hint = conn_info.chip_hint.as_ref()
                 .map(|h| h.to_ascii_lowercase().replace('-', ""));
-            hint.map_or(false, |h| h != "esp32usbjtag" && h != board.to_ascii_lowercase().replace('-', ""))
+            hint.is_some_and(|h| h != "esp32usbjtag" && h != board.to_ascii_lowercase().replace('-', ""))
         } else {
             false
         };
@@ -1111,6 +1111,7 @@ impl MCPServer {
         let elf_path_clone = elf_path.clone();
         let port_clone = port.to_string();
 
+        #[allow(clippy::type_complexity)]
         let sink_arc: Option<Arc<dyn Fn(&crate::self_healing::types::RunnerEvent) + Send + Sync>> = self.progress_sink.as_ref().map(|s| s.clone());        let collected_events: std::sync::Arc<std::sync::Mutex<Vec<RunnerEvent>>> =             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));        let collected_events_clone = collected_events.clone();        let result = runner::run_plan_with_progress(&plan, &|step, ctx| {
             let start = Instant::now();
 
@@ -1493,6 +1494,7 @@ pub fn call_tool_direct(
 /// attached to the `MCPServer` instance used for this call so that tools
 /// like `closed_loop` can stream `StepStarted` / `StepFailed` /
 /// `RecoveryApplied` events to the caller in real time.
+#[allow(clippy::type_complexity)]
 pub fn call_tool_direct_with_progress(
     project_root: String,
     idf_path: Option<String>,
@@ -1534,16 +1536,13 @@ fn handle_jsonrpc_request(server: &MCPServer, request: Value) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
 
-    if id.is_none() {
-        return None;
-    }
-    let id = id.unwrap();
+    let id = id?;
 
     let result = match method {
         "initialize" => json!({
             "protocolVersion": "2024-11-05",
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "espsmith", "version": "0.1.3" }
+            "serverInfo": { "name": "espsmith", "version": "0.1.4" }
         }),
         "tools/list" => json!({ "tools": server.list_tools() }),
         "tools/call" => {

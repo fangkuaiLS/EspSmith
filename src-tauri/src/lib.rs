@@ -393,7 +393,7 @@ pub fn run_cli() -> Result<(), String> {
             if matches!(c, "closed-loop" | "jtag-runtime-check") {
                 None
             } else {
-                Some(GlobalCommandLock::acquire(c).map_err(|e| e)?)
+                Some(GlobalCommandLock::acquire(c)?)
             }
         }
         _ => None,
@@ -440,19 +440,17 @@ fn parse_named_arg(args: &[String], name: &str) -> Option<String> {
     let target = format!("--{}", name);
     let mut i = 0;
     while i < args.len() {
-        if args[i] == target {
-            if i + 1 < args.len() {
-                let raw = &args[i + 1];
-                let trimmed = raw.trim();
-                let stripped = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-                    || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-                {
-                    trimmed[1..trimmed.len()-1].to_string()
-                } else {
-                    trimmed.to_string()
-                };
-                return Some(stripped);
-            }
+        if args[i] == target && i + 1 < args.len() {
+            let raw = &args[i + 1];
+            let trimmed = raw.trim();
+            let stripped = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+                || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+            {
+                trimmed[1..trimmed.len()-1].to_string()
+            } else {
+                trimmed.to_string()
+            };
+            return Some(stripped);
         }
         i += 1;
     }

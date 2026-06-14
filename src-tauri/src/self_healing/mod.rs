@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 
 /// 全局 RunnerEvent 广播接收器列表。
 /// CLI/Tauri 路径注册回调后，自愈引擎执行时每个事件都会通知所有监听者。
+#[allow(clippy::type_complexity)]
 static BROADCAST_LISTENERS: Mutex<Vec<Arc<dyn Fn(&RunnerEvent) + Send + Sync>>> = Mutex::new(Vec::new());
 
 /// 注册一个全局事件监听器。返回的 Arc 用于后续移除（drop 即可）。

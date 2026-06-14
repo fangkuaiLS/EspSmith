@@ -23,11 +23,7 @@ use std::time::Instant;
 /// 1. Strips the `\\?\` prefix if present
 /// 2. Converts backslashes to forward slashes
 pub fn normalize_path_for_gdb(path: &str) -> String {
-    let stripped = if path.starts_with("\\\\?\\") {
-        &path[4..]
-    } else {
-        path
-    };
+    let stripped = path.strip_prefix("\\\\?\\").unwrap_or(path);
     stripped.replace('\\', "/")
 }
 

@@ -261,7 +261,7 @@ pub fn send_delegate_and_wait_with_addr(command: &str, args: &serde_json::Value,
     let addr = explicit_addr
         .map(|s| s.to_string())
         .or_else(|| std::env::var(ENV_PIPE_NAME).ok())
-        .or_else(|| read_ipc_addr_file())
+        .or_else(read_ipc_addr_file)
         ?;
 
     tracing::info!("[IPC] Connecting to parent at {} for delegate: {}", addr, command);
@@ -312,7 +312,7 @@ pub fn send_delegate_and_wait_with_addr(command: &str, args: &serde_json::Value,
 pub fn send_event_to_parent(event: &RunnerEvent) {
     let addr = match std::env::var(ENV_PIPE_NAME)
         .ok()
-        .or_else(|| read_ipc_addr_file())
+        .or_else(read_ipc_addr_file)
     {
         Some(a) => a,
         None => return,

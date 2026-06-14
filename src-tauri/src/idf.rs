@@ -27,19 +27,14 @@ pub struct IDFEnvironment {
 }
 
 /// 检测来源
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DetectionSource {
     AutoDetected,
     UserConfigured,
     EnvVariable,
     EimDiscovered,
+    #[default]
     Unknown,
-}
-
-impl Default for DetectionSource {
-    fn default() -> Self {
-        DetectionSource::Unknown
-    }
 }
 
 // ==================== EIM 配置读取 ====================
@@ -379,7 +374,7 @@ fn make_chip_label(target: &str) -> String {
     // esp32s3 -> ESP32-S3, esp32c6 -> ESP32-C6, esp32 -> ESP32
     let upper = target.to_uppercase();
     // Insert dash before S/H/C/P number
-    let label = upper
+    upper
         .replace("S3", "-S3")
         .replace("S2", "-S2")
         .replace("C2", "-C2")
@@ -390,8 +385,7 @@ fn make_chip_label(target: &str) -> String {
         .replace("H2", "-H2")
         .replace("H21", "-H21")
         .replace("H4", "-H4")
-        .replace("P4", "-P4");
-    label
+        .replace("P4", "-P4")
 }
 
 fn get_fallback_targets() -> Vec<ChipTargetInfo> {
@@ -514,16 +508,14 @@ pub fn get_idf_version(idf_path: &str) -> String {
     }
 
     // 3. git describe（Command::output() 在 Windows 终端可能 panic，用 catch_unwind 防护）
-    if let Ok(result) = std::panic::catch_unwind(|| {
+    if let Ok(Ok(output)) = std::panic::catch_unwind(|| {
         Command::new("git")
             .args(["-C", idf_path, "describe", "--tags", "--always"])
             .output()
     }) {
-        if let Ok(output) = result {
             if output.status.success() {
                 return String::from_utf8_lossy(&output.stdout).trim().to_string();
             }
-        }
     }
 
     "unknown".to_string()
@@ -538,7 +530,7 @@ fn extract_version_from_path(idf_path: &str) -> Option<String> {
         let folder = parent.file_name()?.to_string_lossy();
         if folder.starts_with('v') || folder.starts_with('V') {
             let ver = &folder[1..]; // 去掉前缀 'v'
-            if ver.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            if ver.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                 return Some(ver.to_string());
             }
         }
@@ -548,7 +540,7 @@ fn extract_version_from_path(idf_path: &str) -> Option<String> {
         let folder = folder.to_string_lossy();
         if folder.starts_with('v') || folder.starts_with('V') {
             let ver = &folder[1..];
-            if ver.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            if ver.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                 return Some(ver.to_string());
             }
         }
@@ -991,20 +983,16 @@ pub fn run_idf_command_streaming(
             if let Some(stdout) = child.stdout.take() {
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
-                    for line in BufReader::new(stdout).lines() {
-                        if let Ok(l) = line {
+                    for l in BufReader::new(stdout).lines().map_while(Result::ok) {
                             let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: false });
-                        }
                     }
                 });
             }
             if let Some(stderr) = child.stderr.take() {
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
-                    for line in BufReader::new(stderr).lines() {
-                        if let Ok(l) = line {
+                    for l in BufReader::new(stderr).lines().map_while(Result::ok) {
                             let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: true });
-                        }
                     }
                 });
             }
@@ -1035,15 +1023,13 @@ pub fn run_idf_command_streaming(
             );
             info!("Streaming cmd: {}", cmd_str);
 
-            let mut child = match {
-                let mut cmd = Command::new("cmd");
-                cmd.args(["/C", &cmd_str])
-                    .current_dir(&project_path)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                #[cfg(windows)] { cmd.creation_flags(0x08000000); }
-                cmd.spawn()
-            }
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/C", &cmd_str])
+                .current_dir(&project_path)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+            let mut child = match cmd.spawn()
             {
                 Ok(c) => c,
                 Err(e) => {
@@ -1058,20 +1044,16 @@ pub fn run_idf_command_streaming(
             if let Some(stdout) = child.stdout.take() {
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
-                    for line in BufReader::new(stdout).lines() {
-                        if let Ok(l) = line {
+                    for l in BufReader::new(stdout).lines().map_while(Result::ok) {
                             let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: false });
-                        }
                     }
                 });
             }
             if let Some(stderr) = child.stderr.take() {
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
-                    for line in BufReader::new(stderr).lines() {
-                        if let Ok(l) = line {
+                    for l in BufReader::new(stderr).lines().map_while(Result::ok) {
                             let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: true });
-                        }
                     }
                 });
             }
@@ -1120,20 +1102,16 @@ pub fn run_idf_command_streaming(
         if let Some(stdout) = child.stdout.take() {
             let app = app_handle.clone();
             std::thread::spawn(move || {
-                for line in BufReader::new(stdout).lines() {
-                    if let Ok(l) = line {
+                for l in BufReader::new(stdout).lines().map_while(Result::ok) {
                         let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: false });
-                    }
                 }
             });
         }
         if let Some(stderr) = child.stderr.take() {
             let app = app_handle.clone();
             std::thread::spawn(move || {
-                for line in BufReader::new(stderr).lines() {
-                    if let Ok(l) = line {
+                for l in BufReader::new(stderr).lines().map_while(Result::ok) {
                         let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: true });
-                    }
                 }
             });
         }
@@ -1200,11 +1178,8 @@ pub fn size(project_path: &str, idf_path: &str) -> Result<String, String> {
     // Try JSON format first (--json size-components), fallback to text
     let json_result = run_idf_command(project_path, idf_path, &["--json", "size-components"]);
     match json_result {
-        Ok(output) if !output.trim().is_empty() => {
-            // Validate it's parsable JSON
-            if serde_json::from_str::<serde_json::Value>(&output).is_ok() {
+        Ok(output) if !output.trim().is_empty() && serde_json::from_str::<serde_json::Value>(&output).is_ok() => {
                 return Ok(output);
-            }
         }
         _ => {}
     }
@@ -1789,7 +1764,7 @@ pub fn idf_find_tests(project_path: String) -> Result<serde_json::Value, String>
         if let Ok(entries) = std::fs::read_dir(&test_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "c" || e == "cpp") {
+                if path.extension().is_some_and(|e| e == "c" || e == "cpp") {
                     let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
                     tests.push(serde_json::json!({
                         "name": name,
@@ -1805,7 +1780,7 @@ pub fn idf_find_tests(project_path: String) -> Result<serde_json::Value, String>
         if let Ok(entries) = std::fs::read_dir(&main_test) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "c" || e == "cpp") {
+                if path.extension().is_some_and(|e| e == "c" || e == "cpp") {
                     let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
                     tests.push(serde_json::json!({
                         "name": name,
@@ -2076,8 +2051,8 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn process: {}", e))?;
 
-    let stdout_reader = child.stdout.take().map(|s| BufReader::new(s));
-    let stderr_reader = child.stderr.take().map(|s| BufReader::new(s));
+    let stdout_reader = child.stdout.take().map(BufReader::new);
+    let stderr_reader = child.stderr.take().map(BufReader::new);
 
     let stdout_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let stderr_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2086,11 +2061,9 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
     if let Some(reader) = stdout_reader {
         let lines = stdout_lines.clone();
         std::thread::spawn(move || {
-            for line_result in reader.lines() {
-                if let Ok(line) = line_result {
+            for line in reader.lines().map_while(Result::ok) {
                     println!("{}", line);
                     lines.lock().unwrap().push(line);
-                }
             }
         });
     }
@@ -2099,11 +2072,9 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
     if let Some(reader) = stderr_reader {
         let lines = stderr_lines.clone();
         std::thread::spawn(move || {
-            for line_result in reader.lines() {
-                if let Ok(line) = line_result {
+            for line in reader.lines().map_while(Result::ok) {
                     eprintln!("{}", line);
                     lines.lock().unwrap().push(line);
-                }
             }
         });
     }

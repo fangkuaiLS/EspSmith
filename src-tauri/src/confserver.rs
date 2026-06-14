@@ -248,23 +248,21 @@ impl ConfserverProcess {
         if let Some(stderr) = child.stderr.take() {
             let stderr_reader = BufReader::new(stderr);
             std::thread::spawn(move || {
-                for line in stderr_reader.lines() {
-                    if let Ok(text) = line {
-                        let trimmed = text.trim();
-                        if trimmed.is_empty() { continue; }
-                        if trimmed.starts_with("Server running")
-                            || trimmed.starts_with("Saving config")
-                            || trimmed.starts_with("Loading config")
-                            || trimmed.contains("not visible so were not updated")
-                            || trimmed.starts_with("WARNING:") {
-                            info!("[confserver stderr] {}", trimmed);
-                        } else {
-                            warn!("[confserver stderr] {}", trimmed);
-                        }
-                        if let Ok(mut buf) = stderr_buf_clone.lock() {
-                            buf.push_str(trimmed);
-                            buf.push('\n');
-                        }
+                for text in stderr_reader.lines().map_while(Result::ok) {
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() { continue; }
+                    if trimmed.starts_with("Server running")
+                        || trimmed.starts_with("Saving config")
+                        || trimmed.starts_with("Loading config")
+                        || trimmed.contains("not visible so were not updated")
+                        || trimmed.starts_with("WARNING:") {
+                        info!("[confserver stderr] {}", trimmed);
+                    } else {
+                        warn!("[confserver stderr] {}", trimmed);
+                    }
+                    if let Ok(mut buf) = stderr_buf_clone.lock() {
+                        buf.push_str(trimmed);
+                        buf.push('\n');
                     }
                 }
             });

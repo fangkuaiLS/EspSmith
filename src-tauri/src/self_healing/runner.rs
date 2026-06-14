@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 pub type RunnerEventSink = dyn Fn(&RunnerEvent) + Send + Sync;
 
 /// Run a plan without emitting any intermediate events.
-#[allow(dead_code)] // Self-Healing直接执行预留
+#[allow(dead_code, clippy::type_complexity)] // Self-Healing直接执行预留
 pub fn run_plan(
     plan: &Plan,
     execute_fn: &dyn Fn(&Step, &mut std::collections::HashMap<String, String>) -> Result<StepResult, String>,
@@ -29,6 +29,7 @@ pub fn run_plan(
 /// at every meaningful transition (step started / failed / passed, recovery
 /// applied). The sink is invoked synchronously from the runner thread; the
 /// implementation should be cheap and non-blocking (e.g. emit a Tauri event).
+#[allow(clippy::type_complexity)]
 pub fn run_plan_with_progress(
     plan: &Plan,
     execute_fn: &dyn Fn(&Step, &mut std::collections::HashMap<String, String>) -> Result<StepResult, String>,
@@ -37,7 +38,7 @@ pub fn run_plan_with_progress(
     let mut result = RunResult::new(plan);
     let start_time = Instant::now();
     let guard_limit = plan.guard_limit.unwrap_or(100);
-    let overall_timeout = plan.timeout_s.map(|t| Duration::from_secs_f64(t));
+    let overall_timeout = plan.timeout_s.map(Duration::from_secs_f64);
 
     // Track per-step retry budgets
     let mut budget_map: std::collections::HashMap<usize, u32> = std::collections::HashMap::new();
@@ -169,8 +170,6 @@ pub fn run_plan_with_progress(
                         will_retry: last_attempt_will_retry,
                     });
                     result.total_attempts += 1;
-                    if attempt < *budget && !step_fatal {
-                    }
                     if step_fatal {
                         tracing::warn!("FATAL error in step '{}': skipping retries", step.name);
                         break;

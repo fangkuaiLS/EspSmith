@@ -149,7 +149,7 @@ impl Adapter for GdbSessionVerifyAdapter {
             Ok(Err(e)) => Err(format!("GDB process error: {}", e)),
             Err(_) => {
                 let _ = std::process::Command::new("taskkill")
-                    .args(&["/F", "/T", "/PID", &pid.to_string()])
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())

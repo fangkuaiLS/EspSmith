@@ -60,17 +60,12 @@ pub struct AICumulativeUsage {
     pub message_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionMode {
+    #[default]
     Full,
     Ask,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        PermissionMode::Full
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,7 +379,7 @@ async fn emit_file_sync_events(
                     serde_json::from_str::<crate::commands::hardware::HardwareConfig>(&config_str)
                 {
                     // 重新生成 hardware_pins.h（exec_shell 模式下 AI write_file 不会走 MCP/ filesystem 路径）
-                    let _ = crate::commands::hardware::generate_hardware_header(pp.to_string());
+                    let _handle = tokio::spawn(crate::commands::hardware::generate_hardware_header(pp.to_string()));
                     let _ = app_handle.emit("hw-config-changed", &config);
                     info!("Emitted hw-config-changed + regenerated hardware_pins.h after write_file: {}", write_path);
                 }
@@ -747,7 +742,7 @@ pub async fn ai_send_message(
                                         //   1. Raw JSON from MCP tool: {"success": false, "output": "...", "errors": [...]}
                                         //   2. CodeWhale's text summary of the tool result
                                         // We check both JSON "success" field and text patterns for failure.
-                                        let is_failure = output_text.as_ref().map_or(false, |text| {
+                                        let is_failure = output_text.as_ref().is_some_and(|text| {
                                             // Try parsing as JSON first
                                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
                                                 if let Some(ok) = v.get("success").and_then(|s| s.as_bool()) {
@@ -769,7 +764,7 @@ pub async fn ai_send_message(
                                         );
                                         let should_emit_done = {
                                             let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap();
-                                            let matches = op.as_ref().map_or(false, |o| {
+                                            let matches = op.as_ref().is_some_and(|o| {
                                                 // Empty tool_use_id on the op (legacy / unknown) is
                                                 // treated as a wildcard match so older call sites
                                                 // still work; when both sides have a real id we
@@ -1347,7 +1342,7 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
     let project = project_path.unwrap_or("(项目路径)");
     let idf = idf_path.unwrap_or("(IDF路径)");
     let port = flash_port.unwrap_or("(先用list-ports查询)");
-    let target_arg = if chip_changed && target_chip.is_some() { format!(" --target {}", target_chip.unwrap()) } else { String::new() };
+    let target_arg = if chip_changed { if let Some(chip) = target_chip { format!(" --target {}", chip) } else { String::new() } } else { String::new() };
 
     // Resolve espsmith-cli path: same directory as current exe, or in binaries/ subdirectory.
     // In dev mode, espsmith-cli is compiled by beforeDevCommand and placed in target/debug/.
@@ -1400,10 +1395,10 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         .map(|addr| format!(" --ipc-addr {}", addr))
         .unwrap_or_default();
 
-    let chip_warn = if target_chip.is_none_or(|c| c == "auto") {
+    let chip_warn = if target_chip.as_ref().map_or(true, |c| *c == "auto") {
         "芯片型号未配置,请先让用户在工具栏选择。"
     } else { "" };
-    let port_warn = if flash_port.is_none_or(|p| p.trim().is_empty()) {
+    let port_warn = if flash_port.as_ref().map_or(true, |p| p.trim().is_empty()) {
         "烧录串口未配置,烧录前请先让用户在工具栏选择。"
     } else { "" };
 
@@ -1508,7 +1503,7 @@ fn is_forbidden_shell_tool(name: &str, input: Option<&serde_json::Value>) -> boo
         if let Some(pos) = command.find(pat) {
             let before = if pos > 0 { &command[..pos] } else { "" };
             let last_char = before.chars().last();
-            if last_char.is_none_or(|c| c == ' ' || c == '&' || c == '|' || c == ';' || c == '\t') {
+            if last_char.map_or(true, |c| c == ' ' || c == '&' || c == '|' || c == ';' || c == '\t') {
                 return true;
             }
         }
@@ -1583,7 +1578,7 @@ fn detect_jtag_operation(command: &str, tool_use_id: &str, is_jtag_mode: bool) -
     // Strip common shell tails (redirections, backgrounding, pipes) so that
     // `nohup espsmith closed-loop ... 2>&1 | tee log &` is still recognised.
     let normalised = lower
-        .split(|c: char| c == '|' || c == ';' || c == '&')
+        .split(|c| ['|', ';', '&'].contains(&c))
         .map(str::trim_start)
         .find(|seg| !seg.is_empty())
         .unwrap_or("");
@@ -1765,7 +1760,7 @@ fn ensure_project_agent_instructions(
     let existing = std::fs::read_to_string(&agents_path).unwrap_or_default();
     let start = "<!-- ESPSMITH:START -->";
     let end = "<!-- ESPSMITH:END -->";
-    let idf_ver = idf_path.map(|p| crate::idf::get_idf_version(p)).unwrap_or_else(|| "unknown".into());
+    let idf_ver = idf_path.map(crate::idf::get_idf_version).unwrap_or_else(|| "unknown".into());
     let block = format!(
         r#"{start}
 # EspSmith 嵌入式闭环工作流

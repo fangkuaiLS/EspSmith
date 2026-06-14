@@ -327,9 +327,7 @@ fn flash_via_openocd_telnet(elf_path: &str) -> Result<String, String> {
 
     if has_error && !has_success {
         Err(format!("OpenOCD reported error:\n{}", output))
-    } else if has_success {
-        Ok(output)
-    } else if output.contains("> ") {
+    } else if has_success || output.contains("> ") {
         Ok(output)
     } else {
         Err(format!("OpenOCD flash timed out. Output so far:\n{}", output))
