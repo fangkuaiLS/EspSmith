@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 src-tauri/target/
+src-tauri/.cargo/config.toml
 
 # MinGW toolchain (too large for git, use tools/setup-mingw.ps1)
 tools/mingw64/
