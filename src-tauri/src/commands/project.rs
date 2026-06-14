@@ -381,7 +381,7 @@ pub async fn create_project_from_template(
     Ok(project_dir.to_string_lossy().to_string())
 }
 
-fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;

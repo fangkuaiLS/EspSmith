@@ -436,14 +436,13 @@ pub async fn search_in_files(project_path: String, query: String) -> Result<Vec<
                 if results.len() >= max_results {
                     break;
                 }
-                if let Ok(line_content) = line {
-                    if line_content.to_lowercase().contains(query_lower) {
-                        results.push(SearchMatch {
-                            file_path: path.to_string_lossy().to_string(),
-                            line_number: line_idx + 1,
-                            line_content,
-                        });
-                    }
+                let Ok(line_content) = line else { continue; };
+                if line_content.to_lowercase().contains(query_lower) {
+                    results.push(SearchMatch {
+                        file_path: path.to_string_lossy().to_string(),
+                        line_number: line_idx + 1,
+                        line_content,
+                    });
                 }
             }
         }

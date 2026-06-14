@@ -1837,7 +1837,7 @@ fn chrono_timestamp() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    format!("{}", secs)
+    secs.to_string()
 }
 
 fn is_protected_hardware_file(path: &Path) -> bool {

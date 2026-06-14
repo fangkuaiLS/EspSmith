@@ -4,7 +4,7 @@
 //! 核心设计：所有 Provider 都通过 `run` 子命令以非交互模式执行，stdout 输出 JSON 事件流。
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 use crate::ai_assistant::AIConfig;
@@ -63,7 +63,7 @@ pub trait AIProvider: Send + Sync {
     /// 包含：二进制路径、子命令、参数、环境变量、工作目录、stdio 配置
     fn build_command(
         &self,
-        binary: &PathBuf,
+        binary: &Path,
         config: &AIConfig,
         prompt: &str,
         session_id: Option<&str>,
@@ -115,7 +115,7 @@ impl AIProvider for CodeWhaleProvider {
 
     fn build_command(
         &self,
-        binary: &PathBuf,
+        binary: &Path,
         config: &AIConfig,
         prompt: &str,
         session_id: Option<&str>,
@@ -196,7 +196,7 @@ impl AIProvider for MiMoCodeProvider {
 
     fn build_command(
         &self,
-        binary: &PathBuf,
+        binary: &Path,
         config: &AIConfig,
         prompt: &str,
         session_id: Option<&str>,
