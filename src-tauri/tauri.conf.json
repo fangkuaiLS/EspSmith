@@ -38,7 +38,8 @@
     ],
     "resources": {
       "scripts/kconfig_dump.py": "scripts/",
-      "binaries/codewhale.exe": "."
+      "binaries/codewhale.exe": ".",
+      "binaries/codewhale-tui.exe": "."
     },
     "windows": {
       "webviewInstallMode": {
