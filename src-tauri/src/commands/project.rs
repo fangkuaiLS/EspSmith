@@ -227,7 +227,7 @@ fn chip_to_target(chip: &str) -> String {
     }
 }
 
-fn read_project_meta(project_dir: &PathBuf) -> (String, String) {
+fn read_project_meta(project_dir: &Path) -> (String, String) {
     let meta_path = project_dir.join(".espsmith").join("project.json");
     if let Ok(content) = std::fs::read_to_string(&meta_path) {
         if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -246,7 +246,7 @@ fn read_project_meta(project_dir: &PathBuf) -> (String, String) {
 }
 
 /// 读取持久化配置（芯片 target + flash_port）
-fn read_persisted_config(project_dir: &PathBuf) -> ProjectPersistedConfig {
+fn read_persisted_config(project_dir: &Path) -> ProjectPersistedConfig {
     let meta_path = project_dir.join(".espsmith").join("project.json");
     let mut config = ProjectPersistedConfig {
         chip: "ESP32".into(),

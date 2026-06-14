@@ -95,11 +95,9 @@ impl GdbSession {
                 break;
             }
             output.push_str(&line);
-            if trimmed.starts_with(&format!("{token}^")) {
-                if trimmed.starts_with(&format!("{token}^error")) {
-                    let msg = extract_mi_field(trimmed, "msg");
-                    return Err(format!("GDB error: {}", msg.unwrap_or_else(|| trimmed.into())));
-                }
+            if trimmed.starts_with(&format!("{token}^error")) {
+                let msg = extract_mi_field(trimmed, "msg");
+                return Err(format!("GDB error: {}", msg.unwrap_or_else(|| trimmed.into())));
             }
         }
         Ok(output)
