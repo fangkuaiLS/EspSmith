@@ -153,10 +153,8 @@ fn is_ftdi_uart(vid: u16, pid: u16) -> bool {
 /// 检查是否为外部 JTAG/调试探头
 fn is_external_jtag_probe(vid: u16, pid: u16) -> Option<&'static str> {
     for &(name, probe_vid, pids) in EXTERNAL_JTAG_VID_PID {
-        if vid == probe_vid {
-            if pids.is_empty() || pids.contains(&pid) {
-                return Some(name);
-            }
+        if vid == probe_vid && (pids.is_empty() || pids.contains(&pid)) {
+            return Some(name);
         }
     }
     None
@@ -323,6 +321,7 @@ fn scan_best_match(ports: &[serialport::SerialPortInfo]) -> ConnectionInfo {
 }
 
 /// 构造 ConnectionInfo 的辅助函数。
+#[allow(clippy::too_many_arguments)]
 fn make_info(
     mode: ConnectionMode,
     port: &str,

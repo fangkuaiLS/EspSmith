@@ -32,6 +32,7 @@ pub struct MCPServer {
     /// every meaningful Self-Healing transition. The Tauri AI assistant wires
     /// this up to a Tauri event emitter so the frontend can show
     /// OperationTimeline.
+    #[allow(clippy::type_complexity)]
     progress_sink: Option<Arc<dyn Fn(&crate::self_healing::types::RunnerEvent) + Send + Sync>>,
 }
 
@@ -590,7 +591,7 @@ impl MCPServer {
 
     fn detect_connection_mcp(&self, args: &Value) -> ToolResult {
         let port = str_arg(args, "port");
-        let info = connection::detect_connection_mode(port.map(|s| s.as_ref()));
+        let info = connection::detect_connection_mode(port.map(|s| s as &str));
         match serde_json::to_value(&info) {
             Ok(val) => ok(val),
             Err(e) => err(e.to_string()),
@@ -658,7 +659,7 @@ impl MCPServer {
             "localhost:3333",
             chip,
         ) {
-            let _ = crate::commands::openocd::kill_openocd_sync();
+            crate::commands::openocd::kill_openocd_sync();
             return err(format!("GDB connect failed: {}", e));
         }
 
@@ -666,11 +667,7 @@ impl MCPServer {
         let mut breakpoints_failed: Vec<String> = vec![];
 
         for bp in &bp_args {
-            let bp_cmd = if bp.contains(':') {
-                format!("break {}", bp)
-            } else {
-                format!("break {}", bp)
-            };
+            let bp_cmd = format!("break {}", bp);
             timeline.push(json!({"phase": "breakpoint_set", "location": bp, "ms": start_total.elapsed().as_millis()}));
             match crate::commands::gdb_session::send_mi_command_sync(bp_cmd.as_bytes()) {
                 Ok(resp) => {

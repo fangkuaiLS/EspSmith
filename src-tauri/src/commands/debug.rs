@@ -39,7 +39,7 @@ fn gdb_command(script: &str, target_chip: Option<&str>) -> Result<String, String
     let gdb_binary = super::gdb_session::find_gdb_binary(target_chip)?;
     let child = Command::new(&gdb_binary)
         .args(["-batch", "-nx", "-ex"])
-        .arg("target remote localhost:3333".to_string())
+        .arg("target remote localhost:3333")
         .arg("-ex")
         .arg(script)
         .stdout(Stdio::piped())

@@ -289,7 +289,7 @@ fn walk_dir_for_gdb(dir: &std::path::Path, gdb_name: &str, max_depth: u32, found
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if path.file_name().map_or(false, |n| n == "bin") {
+            if path.file_name().is_some_and(|n| n == "bin") {
                 let candidate = path.join(gdb_name);
                 if candidate.exists() {
                     let path_str = candidate.to_string_lossy().to_string();
@@ -359,7 +359,7 @@ pub async fn debug_start(
     };
 
     session.send_command("")?;
-    let elf_normalized = elf_path.as_deref().map(|p| crate::adapters::normalize_path_for_gdb(p)).unwrap_or_default();
+    let elf_normalized = elf_path.as_deref().map(crate::adapters::normalize_path_for_gdb).unwrap_or_default();
     session
         .send_mi_and_get_result(&format!("-file-exec-and-symbols {}", elf_normalized))
         .map_err(|e| format!("Failed to load ELF: {e}"))?;
@@ -453,8 +453,7 @@ pub async fn debug_list_breakpoints() -> Result<Vec<Breakpoint>, String> {
     let mut bps = Vec::new();
     for line in raw.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("^done") {
-            let body = &trimmed["^done".len()..];
+        if let Some(body) = trimmed.strip_prefix("^done") {
             if let Some(table) = extract_mi_list(body, "BreakpointTable") {
                 if let Some(body_list) = extract_mi_list(&table, "body") {
                     for bp_str in split_mi_values(&body_list) {
