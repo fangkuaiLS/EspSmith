@@ -2208,9 +2208,7 @@ pub fn init_bundled_codewhale(resource_dir: &Path) {
     let candidates: Vec<PathBuf> = vec![
         // 开发模式：源码目录下的 binaries/
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"),
-        // 生产模式：Tauri 资源目录下的 binaries/（MSI 正确创建为目录）
-        resource_dir.join("binaries"),
-        // 回退1：安装器可能将文件平铺到资源根目录
+        // 生产模式：Tauri 资源目录（MSI/NSIS 都将 codewhale.exe 平铺到根目录）
         resource_dir.to_path_buf(),
     ];
 
@@ -2225,18 +2223,6 @@ pub fn init_bundled_codewhale(resource_dir: &Path) {
             let _ = BUNDLED_CODEWHALE_DIR.set(dir.clone());
             return;
         }
-    }
-
-    // NSIS 安装器可能将 binaries 资源映射为一个无后缀文件
-    // （而非 binaries/ 目录），该文件本身就是 codewhale 可执行文件
-    let nsis_binaries = resource_dir.join("binaries");
-    if nsis_binaries.is_file() && nsis_binaries.exists() {
-        info!(
-            "CodeWhale bundled binary found as flat file (NSIS layout): {}",
-            nsis_binaries.display()
-        );
-        let _ = BUNDLED_CODEWHALE_DIR.set(resource_dir.to_path_buf());
-        return;
     }
 
     info!(
@@ -2261,23 +2247,12 @@ pub fn get_local_codewhale_binary() -> PathBuf {
 
 /// 获取内嵌的 CodeWhale 二进制路径
 pub fn get_bundled_codewhale_binary() -> Option<PathBuf> {
-    BUNDLED_CODEWHALE_DIR.get().and_then(|dir| {
-        let exe = if cfg!(windows) {
+    BUNDLED_CODEWHALE_DIR.get().map(|dir| {
+        if cfg!(windows) {
             dir.join("codewhale.exe")
         } else {
             dir.join("codewhale")
-        };
-        // 标准布局：binaries/ 目录下有 codewhale.exe
-        if exe.exists() {
-            return Some(exe);
         }
-        // NSIS 布局：binaries 资源被映射为无后缀文件（即 codewhale 本身）
-        let nsis_flat = dir.join("binaries");
-        if nsis_flat.is_file() && nsis_flat.exists() {
-            info!("Using NSIS flat binary: {}", nsis_flat.display());
-            return Some(nsis_flat);
-        }
-        None
     })
 }
 
