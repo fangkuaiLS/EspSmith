@@ -44,6 +44,9 @@
       "webviewInstallMode": {
         "type": "embedBootstrapper"
       },
+      "nsis": {
+        "languages": ["SimpChinese", "English"]
+      },
       "wix": {
         "language": "en-US",
         "bannerPath": "wix/banner.bmp",
