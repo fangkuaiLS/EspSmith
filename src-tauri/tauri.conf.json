@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["msi", "app", "dmg", "deb", "appimage"],
+    "targets": ["msi", "nsis", "app", "dmg", "deb", "appimage"],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico",
@@ -45,7 +45,6 @@
       "webviewInstallMode": {
         "type": "embedBootstrapper"
       },
-      "nsis": null,
       "wix": {
         "language": "en-US",
         "bannerPath": "wix/banner.bmp",
