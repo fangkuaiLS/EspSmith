@@ -65,7 +65,10 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJDNjFGMzUwQjExQ0VENEUKUldSTzdSeXhVUE5odkVmV0gvc3NpaFFReGNuYWl4YkNCT0R4VnFFTUQxdDJ0akFWU0NBSlRIT1MK",
       "endpoints": [
-        "https://github.com/fangkuaiLS/EspSmith/releases/latest/download/latest.json"
+        "https://github.com/fangkuaiLS/EspSmith/releases/latest/download/latest.json",
+        "https://gh-proxy.com/https://github.com/fangkuaiLS/EspSmith/releases/latest/download/latest.json",
+        "https://mirror.ghproxy.com/https://github.com/fangkuaiLS/EspSmith/releases/latest/download/latest.json",
+        "https://ghproxy.net/https://github.com/fangkuaiLS/EspSmith/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
