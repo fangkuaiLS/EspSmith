@@ -1,0 +1,137 @@
+# Gitee Go 流水线：定时同步 GitHub Release 到 Gitee Release
+# 每隔30分钟检查一次，发现新版本自动下载资产并上传
+
+version: '1.0'
+name: Sync GitHub Release
+
+stages:
+  - stage: sync
+    displayName: 同步 Release
+    steps:
+      - step: shell@bash
+        name: sync-release
+        displayName: 从 GitHub 同步到 Gitee
+        bash: bash
+        commands: |
+          set -e
+
+          GITHUB_OWNER="fangkuaiLS"
+          GITHUB_REPO="EspSmith"
+          GITEE_OWNER="fangkuaiLS"
+          GITEE_REPO="EspSmith"
+          GITEE_API="https://gitee.com/api/v5/repos/${GITEE_OWNER}/${GITEE_REPO}"
+
+          echo "=== Sync GitHub Release → Gitee Release ==="
+
+          # 1. 获取 GitHub 最新 Release
+          echo ">>> Getting GitHub latest release..."
+          GH=$(curl -sS https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest)
+          GH_TAG=$(echo "$GH" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+          echo "GitHub latest: ${GH_TAG}"
+
+          # 2. 检查 Gitee 是否已有
+          echo ">>> Checking Gitee..."
+          GT=$(curl -sS "${GITEE_API}/releases/tags/${GH_TAG}?access_token=${GITEE_TOKEN}")
+          GT_ID=$(echo "$GT" | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          print(d.get('id',''))
+          ")
+
+          # 获取已有附件
+          if [ -n "$GT_ID" ]; then
+            EXISTING=$(curl -sS "${GITEE_API}/releases/${GT_ID}/attach_files?access_token=${GITEE_TOKEN}&per_page=100" \
+              | python3 -c "import sys,json; [print(f['name']) for f in json.load(sys.stdin)]")
+            echo "Gitee Release exists (ID: ${GT_ID}), ${EXISTING:+$(echo "$EXISTING" | wc -l)} attachments"
+          fi
+
+          # 3. 检查附件是否完整
+          GH_ASSETS=$(echo "$GH" | python3 -c "
+          import sys,json
+          for a in json.load(sys.stdin)['assets']:
+              if a['name'] not in ('latest.json','Source code(zip)','Source code(tar.gz)'):
+                  print(a['name'])
+          ")
+
+          if [ -n "$GT_ID" ] && [ -n "$EXISTING" ]; then
+            ALL_OK=true
+            for a in $GH_ASSETS; do
+              if ! echo "$EXISTING" | grep -qF "$a"; then
+                ALL_OK=false
+                break
+              fi
+            done
+            if $ALL_OK; then
+              echo "All attachments present, skipping."
+              exit 0
+            fi
+          fi
+
+          # 4. 创建 Gitee Release（如果不存在）
+          if [ -z "$GT_ID" ]; then
+            GH_NAME=$(echo "$GH" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")
+            GH_BODY=$(echo "$GH" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])")
+            echo ">>> Creating Gitee Release..."
+            GT_ID=$(curl -sS -X POST "${GITEE_API}/releases?access_token=${GITEE_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"${GH_TAG}\",\"name\":\"${GH_NAME}\",\"body\":\"${GH_BODY}\",\"target_commitish\":\"main\"}" \
+              | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+            echo "Created Gitee Release (ID: ${GT_ID})"
+          fi
+
+          # 5. 下载并上传资产
+          TMPDIR="/tmp/sync-${GITHUB_REPO}-${GH_TAG}"
+          mkdir -p "$TMPDIR"
+
+          echo "$GH" | python3 -c "
+          import sys,json
+          for a in json.load(sys.stdin)['assets']:
+              if a['name'] not in ('latest.json','Source code(zip)','Source code(tar.gz)'):
+                  print(f\"{a['browser_download_url']}|{a['name']}\")
+          " | while IFS='|' read -r URL NAME; do
+            [ -z "$URL" ] && continue
+            if echo "${EXISTING:-}" | grep -qF "$NAME"; then
+              echo "Skip (exists): ${NAME}"
+              continue
+            fi
+            echo ">>> Download: ${NAME}"
+            curl -sSL -o "${TMPDIR}/${NAME}" "$URL" || { echo "Download failed"; continue; }
+            echo ">>> Upload: ${NAME}"
+            curl -sS -X POST "${GITEE_API}/releases/${GT_ID}/attach_files?access_token=${GITEE_TOKEN}&name=${NAME}" \
+              -F "file=@${TMPDIR}/${NAME}" && echo "OK: ${NAME}" || echo "Upload failed: ${NAME}"
+          done
+
+          # 6. 生成 latest.json
+          VERSION="${GH_TAG#v}"
+          MSI=$(echo "$GH_ASSETS" | grep '.msi$' | head -1)
+          SIG_FILE="${MSI}.sig"
+          SIG_URL="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${GH_TAG}/${SIG_FILE}"
+          SIGNATURE=""
+          curl -sSL -o "${TMPDIR}/${SIG_FILE}" "$SIG_URL" 2>/dev/null && SIGNATURE=$(cat "${TMPDIR}/${SIG_FILE}")
+
+          cat > "${TMPDIR}/latest.json" << JSONEOF
+          {
+            "version": "${VERSION}",
+            "notes": "$(echo "$GH" | python3 -c "import sys,json; print(json.load(sys.stdin)['body'])" | head -c 2000)",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${SIGNATURE}",
+                "url": "https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/v${VERSION}/${MSI}"
+              }
+            }
+          }
+          JSONEOF
+
+          # 删除旧的 latest.json
+          if [ -n "$EXISTING" ]; then
+            OLD_ID=$(curl -sS "${GITEE_API}/releases/${GT_ID}/attach_files?access_token=${GITEE_TOKEN}&per_page=100" \
+              | python3 -c "import sys,json; [print(f['id']) for f in json.load(sys.stdin) if f['name']=='latest.json']")
+            [ -n "$OLD_ID" ] && curl -sS -X DELETE "${GITEE_API}/releases/${GT_ID}/attach_files/${OLD_ID}?access_token=${GITEE_TOKEN}"
+          fi
+
+          curl -sS -X POST "${GITEE_API}/releases/${GT_ID}/attach_files?access_token=${GITEE_TOKEN}&name=latest.json" \
+            -F "file=@${TMPDIR}/latest.json" && echo "latest.json uploaded"
+
+          rm -rf "$TMPDIR"
+          echo "=== Done ==="
