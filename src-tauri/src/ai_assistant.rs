@@ -312,7 +312,7 @@ fn event_summary(event: &crate::self_healing::types::RunnerEvent) -> String {
 }
 
 #[tauri::command]
-pub async fn ai_start(config: AIConfig) -> Result<String, String> {
+pub async fn ai_start(app_handle: tauri::AppHandle, config: AIConfig) -> Result<String, String> {
     let mut client = AI_CLIENT.lock().await;
     let old_chip = client.config.target_chip.clone();
     let old_port = client.config.flash_port.clone();
@@ -341,9 +341,51 @@ pub async fn ai_start(config: AIConfig) -> Result<String, String> {
 
     // 根据 ai_provider 选择对应的 Provider 并检查就绪状态
     let provider = crate::ai_provider::select_provider(&client.config);
+    let provider_kind = provider.kind();
+    info!("[ai_start] config.ai_provider='{}', resolved ProviderKind={:?}", client.config.ai_provider, provider_kind);
     provider.ensure_ready().map_err(|e| {
         format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
     })?;
+
+    // 切换 AI Provider 时立即重新生成适配的 AGENTS.md（工具名随 Provider 变化）
+    let project = client.config.project_path.clone();
+    let idf = client.config.idf_path.clone();
+    drop(client); // 释放锁，避免 ensure_project_agent_instructions 内可能的死锁
+
+    // track AGENTS.md path for event emission
+    let mut agents_file_path: Option<PathBuf> = None;
+
+    if let Some(ref pp) = project {
+        if !pp.trim().is_empty() {
+            info!("[ai_start] regenerating AGENTS.md for project={}, provider={:?}", pp, provider_kind);
+            match ensure_project_agent_instructions(
+                Some(pp.as_str()),
+                idf.as_deref(),
+                &provider_kind,
+            ) {
+                Ok(Some(path)) => {
+                    info!("[ai_start] AGENTS.md written to {}", path.display());
+                    agents_file_path = Some(path);
+                }
+                Ok(None) => {
+                    info!("[ai_start] AGENTS.md skipped (empty project path)");
+                }
+                Err(e) => {
+                    info!("[ai_start] AGENTS.md regeneration failed: {}", e);
+                }
+            }
+        } else {
+            info!("[ai_start] project_path is empty, skipping AGENTS.md regeneration");
+        }
+    } else {
+        info!("[ai_start] project_path is None, skipping AGENTS.md regeneration");
+    }
+
+    // 通知前端关闭并重新打开 AGENTS.md，确保编辑器显示最新内容
+    if let Some(ref path) = agents_file_path {
+        let path_str = path.to_string_lossy().to_string();
+        let _ = app_handle.emit("agents_updated", &path_str);
+    }
 
     Ok(format!("{} Agent is ready", provider.display_name()))
 }
@@ -429,8 +471,16 @@ pub async fn ai_send_message(
         info!("MCP server check skipped — using exec_shell-only mode");
     }
 
+    // 选择 AI Provider（CodeWhale / MiMo-Code）— 必须在 AGENTS.md 生成之前，因为内容需要适配 Provider
+    let provider = crate::ai_provider::select_provider(&{
+        let client = AI_CLIENT.lock().await;
+        client.config.clone()
+    });
+    let provider_kind = provider.kind();
+    let provider_name = provider.display_name();
+
     if enable_tool_use {
-        ensure_project_agent_instructions(project_path.as_deref(), idf_path.as_deref())?;
+        ensure_project_agent_instructions(project_path.as_deref(), idf_path.as_deref(), &provider_kind)?;
     }
 
     // 初始化经验库
@@ -442,18 +492,11 @@ pub async fn ai_send_message(
         crate::experience::init(exp_dir);
     }
 
-    // 选择 AI Provider（CodeWhale / MiMo-Code）
-    let provider = crate::ai_provider::select_provider(&{
-        let client = AI_CLIENT.lock().await;
-        client.config.clone()
-    });
-    let provider_name = provider.display_name();
-
     let binary = provider.ensure_ready().map_err(|e| {
         format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
     })?;
 
-    let prompt = build_short_agent_prompt(&message, project_path.as_deref(), idf_path.as_deref(), target_chip.as_deref(), flash_port.as_deref(), chip_changed);
+    let prompt = build_short_agent_prompt(&message, project_path.as_deref(), idf_path.as_deref(), target_chip.as_deref(), flash_port.as_deref(), chip_changed, &provider_kind);
 
     // Clear chip_changed flag after it's been consumed by the prompt
     if chip_changed {
@@ -1338,11 +1381,18 @@ fn sanitize_prompt_for_cmd(prompt: String) -> String {
         .replace('%', "%%")
 }
 
-fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_path: Option<&str>, target_chip: Option<&str>, flash_port: Option<&str>, chip_changed: bool) -> String {
+fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_path: Option<&str>, target_chip: Option<&str>, flash_port: Option<&str>, chip_changed: bool, provider_kind: &crate::ai_provider::ProviderKind) -> String {
     let project = project_path.unwrap_or("(项目路径)");
     let idf = idf_path.unwrap_or("(IDF路径)");
     let port = flash_port.unwrap_or("(先用list-ports查询)");
     let target_arg = if chip_changed { if let Some(chip) = target_chip { format!(" --target {}", chip) } else { String::new() } } else { String::new() };
+
+    // 根据 AI Provider 选择 shell 工具名
+    let shell_cmd = if *provider_kind == crate::ai_provider::ProviderKind::MiMoCode {
+        "bash"
+    } else {
+        "exec_shell"
+    };
 
     // Resolve espsmith-cli path: same directory as current exe, or in binaries/ subdirectory.
     // In dev mode, espsmith-cli is compiled by beforeDevCommand and placed in target/debug/.
@@ -1436,16 +1486,16 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         let jtag_check_cmd = format!("{cli} jtag-runtime-check --project \"{project}\" --idf \"{idf}\" --port \"{port}\" --chip {chip}{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, chip=resolved_chip, ipc=ipc_addr_arg);
         let openocd_start_cmd = format!("{cli} openocd-start --chip {chip}", cli=cli_exe, chip=resolved_chip);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者，连接模式={jtag_label}(JTAG)，芯片={chip}。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: exec_shell {build_cmd}\nJTAG闭环验证: exec_shell {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): exec_shell {jtag_check_cmd}\n烧录(UART): exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\nOpenOCD: exec_shell {openocd_start_cmd}, exec_shell {cli} openocd-stop, exec_shell {cli} openocd-is-running\n用户: {msg}",
-            cli=cli_exe, chip=resolved_chip, msg=user_message,
+            "你是ESP32开发者，连接模式={jtag_label}(JTAG)，芯片={chip}。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
+            shell=shell_cmd, cli=cli_exe, chip=resolved_chip, msg=user_message,
             build_cmd=build_cmd, closed_loop_cmd=closed_loop_cmd, jtag_check_cmd=jtag_check_cmd,
             openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd,
         ))
     } else {
         let uart_closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者，连接模式=UART。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: exec_shell {build_cmd}\n烧录: exec_shell {flash_cmd}\n监控: exec_shell {monitor_cmd}\n一键闭环: exec_shell {closed_loop_cmd}\n端口查询: exec_shell {cli} list-ports\n连接检测: exec_shell {cli} detect-connection\n用户: {msg}",
-            cli=cli_exe, msg=user_message,
+            "你是ESP32开发者，连接模式=UART。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
+            shell=shell_cmd, cli=cli_exe, msg=user_message,
             build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, closed_loop_cmd=uart_closed_loop_cmd,
         ))
     }
@@ -1751,16 +1801,37 @@ fn describe_sensitive_operation(name: &str, input: Option<&serde_json::Value>) -
 fn ensure_project_agent_instructions(
     project_path: Option<&str>,
     idf_path: Option<&str>,
-) -> Result<(), String> {
+    provider_kind: &crate::ai_provider::ProviderKind,
+) -> Result<Option<PathBuf>, String> {
     let project_path = match project_path {
         Some(path) if !path.trim().is_empty() => PathBuf::from(path),
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
     let agents_path = project_path.join("AGENTS.md");
     let existing = std::fs::read_to_string(&agents_path).unwrap_or_default();
     let start = "<!-- ESPSMITH:START -->";
     let end = "<!-- ESPSMITH:END -->";
     let idf_ver = idf_path.map(crate::idf::get_idf_version).unwrap_or_else(|| "unknown".into());
+
+    // 根据 AI Provider 选择适配的工具名
+    let (shell_tool, file_tools, edit_tool, edit_desc, edit_rules) = if *provider_kind == crate::ai_provider::ProviderKind::MiMoCode {
+        (
+            "bash",
+            "`list_directory` / `read` / `write`",
+            "`write`",
+            "- **使用 `write` 修改文件**：MiMo-Code 的 `write` 工具支持创建和修改文件。修改已有文件时先 `read` 读取完整内容，修改后 `write` 写入",
+            "- **修改文件使用 `write` 工具**：先 `read` 读取文件完整内容，修改后 `write` 写入"
+        )
+    } else {
+        (
+            "exec_shell",
+            "`list_directory` / `read_file` / `apply_patch` / `write_file`",
+            "`apply_patch`",
+            "- **优先使用 `apply_patch` 修改文件**：`apply_patch` 接受 unified diff 格式，仅传输变更部分，节省 token 且更安全。仅在创建新文件或重写整个文件时才使用 `write_file`",
+            "- **修改已有文件必须优先使用 `apply_patch`**（unified diff 格式），避免 `write_file` 全量写入浪费 token。`apply_patch` 格式示例：\n  ```\n  --- a/main/main.c\n  +++ b/main/main.c\n  @@ -10,6 +10,8 @@\n   #include \"freertos/FreeRTOS.h\"\n   #include \"freertos/task.h\"\n\n  +#include \"driver/gpio.h\"\n  +\n   void app_main(void)\n  ```\n  仅在创建全新文件时使用 `write_file`"
+        )
+    };
+
     let block = format!(
         r#"{start}
 # EspSmith 嵌入式闭环工作流
@@ -1768,11 +1839,11 @@ fn ensure_project_agent_instructions(
 ## 环境
 - 目标框架: ESP-IDF {idf_ver}
 - ESP-IDF 路径: `{idf_path}`（已预配置，无需检查 idf.py 存在性）
-- 编译烧录通过 `exec_shell` 调用 `espsmith-cli.exe` 子命令完成（必须用 espsmith-cli.exe 而非 espsmith.exe，因为后者是GUI程序无法输出到管道）
-- `list_directory` / `read_file` / `apply_patch` / `write_file` 仅限项目目录内使用
-- **优先使用 `apply_patch` 修改文件**：`apply_patch` 接受 unified diff 格式，仅传输变更部分，节省 token 且更安全。仅在创建新文件或重写整个文件时才使用 `write_file`
+- 编译烧录通过 `{shell_tool}` 调用 `espsmith-cli.exe` 子命令完成（必须用 espsmith-cli.exe 而非 espsmith.exe，因为后者是GUI程序无法输出到管道）
+- {file_tools} 仅限项目目录内使用
+{edit_desc}
 
-## 构建/烧录/监控命令（通过 exec_shell 执行）
+## 构建/烧录/监控命令（通过 {shell_tool} 执行）
 
 **工作流**：直接执行 `espsmith-cli.exe build` 编译项目。不要携带 `--target` 参数，因为 set-target 会触发完全重配置非常慢。仅在用户明确要求切换芯片型号时才使用 `--target`。**必须使用 `espsmith-cli.exe`（控制台版本），不要使用 `espsmith.exe`（GUI版本无法输出到管道）。**
 
@@ -1793,10 +1864,10 @@ fn ensure_project_agent_instructions(
 
 ## 闭环工作流（必须按此顺序执行）
 
-1. **检查项目** — 用 `list_directory` / `read_file` 了解现有代码
-2. **编辑代码** — 优先用 `apply_patch` 修改源文件（仅传变更行，省 token），创建新文件时才用 `write_file`
-3. **构建** — 用 `exec_shell` 执行 `espsmith-cli.exe build ...`
-4. **JTAG闭环验证(首选，强烈推荐)** — 构建成功后，用 `exec_shell` 执行:
+1. **检查项目** — 用 {file_tools} 了解现有代码
+2. **编辑代码** — 用 {edit_tool} 修改源文件
+3. **构建** — 用 `{shell_tool}` 执行 `espsmith-cli.exe build ...`
+4. **JTAG闭环验证(首选，强烈推荐)** — 构建成功后，用 `{shell_tool}` 执行:
    - `espsmith-cli.exe closed-loop --project <项目路径> --idf <IDF路径> --port <串口>` 一键构建→烧录→验证
    - JTAG模式下自动进行OpenOCD烧录 + GDB PC/堆栈验证
    - UART模式下自动进行esptool烧录 + 串口验证
@@ -1810,22 +1881,10 @@ fn ensure_project_agent_instructions(
 
 ## 关键规则
 - ESP-IDF 已预配置，无需检查或验证 IDF 路径/工具链，直接构建即可
-- 所有操作均通过 `exec_shell` + `espsmith-cli.exe` 子命令完成（不要用 espsmith.exe）
-- build/flash/closed-loop 是长时间同步命令（可能需要数分钟），exec_shell 执行后必须耐心等待结果返回，绝不要在命令运行中重复执行同一命令或尝试跳过，否则会导致进程冲突和崩溃
+- 所有操作均通过 `{shell_tool}` + `espsmith-cli.exe` 子命令完成（不要用 espsmith.exe）
+- build/flash/closed-loop 是长时间同步命令（可能需要数分钟），{shell_tool} 执行后必须耐心等待结果返回，绝不要在命令运行中重复执行同一命令或尝试跳过，否则会导致进程冲突和崩溃
 - 如果收到 "Another espsmith command is running" 错误，说明上一次命令仍在运行，必须等待其完成，不要重试
-- **修改已有文件必须优先使用 `apply_patch`**（unified diff 格式），避免 `write_file` 全量写入浪费 token。`apply_patch` 格式示例：
-  ```
-  --- a/main/main.c
-  +++ b/main/main.c
-  @@ -10,6 +10,8 @@
-   #include "freertos/FreeRTOS.h"
-   #include "freertos/task.h"
-
-  +#include "driver/gpio.h"
-  +
-   void app_main(void)
-  ```
-  仅在创建全新文件时使用 `write_file`
+{edit_rules}
 - **禁止**直接调用 idf.py、export.bat、install.bat、pip install 等命令
 - **禁止**直接运行 openocd.exe、xtensa-esp-elf-gdb.exe 等底层工具（会因配置不匹配而失败），所有 JTAG/GDB 操作通过 espsmith-cli 子命令完成
 - **禁止**安装、修复、删除或重装 ESP-IDF/工具链，IDE 已完成配置
@@ -1935,9 +1994,19 @@ fn ensure_project_agent_instructions(
 
     // 仅在内容变更时写入，避免不必要的文件 I/O
     if updated != existing {
-        std::fs::write(&agents_path, updated).map_err(|e| e.to_string())?;
+        info!("[AGENTS.md] content changed, writing to {}", agents_path.display());
+        // 原子写入：先写临时文件，再重命名，避免编辑器标签页打开时的文件锁定问题
+        let tmp_path = agents_path.with_extension("md.tmp");
+        std::fs::write(&tmp_path, &updated).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp_path, &agents_path).map_err(|e| {
+            // 如果 rename 失败，尝试清理临时文件
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("Failed to atomically replace AGENTS.md: {}", e)
+        })?;
+    } else {
+        info!("[AGENTS.md] content unchanged, skipping write (shell_tool='{}')", shell_tool);
     }
-    Ok(())
+    Ok(Some(agents_path))
 }
 
 #[allow(dead_code)] // MCP Server模式预留

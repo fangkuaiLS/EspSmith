@@ -30,6 +30,8 @@ interface FileState {
   loadDirectory: (path: string) => Promise<void>;
   openFile: (path: string) => Promise<void>;
   closeTab: (id: string) => void;
+  /** 关闭并重新打开指定路径的文件（用于外部修改后刷新） */
+  reloadFileByPath: (filePath: string) => Promise<void>;
   setActiveTab: (id: string) => void;
   updateTabContent: (id: string, content: string) => void;
   saveFile: (id: string, safeMode?: boolean) => Promise<void>;
@@ -104,6 +106,20 @@ export const useFileStore = create<FileState>((set, get) => ({
       }
       return { tabs: newTabs, activeTabId: newActiveId };
     });
+  },
+
+  /** 关闭并重新打开指定路径的文件（用于外部修改后刷新） */
+  reloadFileByPath: async (filePath: string) => {
+    const { tabs, closeTab } = get();
+    // 统一为正斜杠比较，兼容 Windows 反斜杠路径
+    const normalizedPath = filePath.replace(/\\/g, '/');
+    const tab = tabs.find((t) => t.path.replace(/\\/g, '/') === normalizedPath);
+    if (tab) {
+      closeTab(tab.id);
+    }
+    // 短暂延迟确保文件句柄释放后再打开
+    await new Promise((r) => setTimeout(r, 100));
+    await get().openFile(filePath);
   },
 
   setActiveTab: (id) => {
@@ -286,6 +302,26 @@ listen<string>('ai-file-changed', (event) => {
     clearTimeout(_debounceTimer);
   }
   _debounceTimer = setTimeout(_flushPendingChanges, DEBOUNCE_MS);
+}).catch(() => {});
+
+// ─── AGENTS.md 动态刷新 ──────────────────────────────────────────
+// 切换 AI 引擎后，后端重写 AGENTS.md 并发送此事件，
+// 前端关闭并重新打开该文件以绕过 Windows 文件锁定问题
+listen<string>('agents_updated', (event) => {
+  const filePath = event.payload;
+  if (!filePath) return;
+  console.log('[fileStore] agents_updated:', filePath);
+  useFileStore.getState().reloadFileByPath(filePath);
+}).catch(() => {});
+
+// ─── sdkconfig 动态刷新 ──────────────────────────────────────────
+// 保存 SDK 配置后，后端通过原子写入更新 sdkconfig 并发送此事件，
+// 前端关闭并重新打开该文件以显示最新内容
+listen<string>('sdkconfig_updated', (event) => {
+  const filePath = event.payload;
+  if (!filePath) return;
+  console.log('[fileStore] sdkconfig_updated:', filePath);
+  useFileStore.getState().reloadFileByPath(filePath);
 }).catch(() => {});
 
 // ─── 窗口标题跟随当前文件 ──────────────────────────────────────

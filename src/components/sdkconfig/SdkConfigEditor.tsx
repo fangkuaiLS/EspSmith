@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { SearchBar } from './components/SearchBar';
 import { SettingsTree } from './components/SettingsTree';
 import { ConfigElement } from './components/ConfigElement';
-import { Menu, menuType, KconfigResponse, rawToMenu, applyValues } from './Menu';
+import { Menu, menuType, KconfigResponse, rawToMenu, applyValues, applyConfserverUpdate } from './Menu';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { safeInvoke } from '../../lib/invoke';
 import { showToast } from '../ui/Toast';
 import styles from './SdkConfigEditor.module.css';
@@ -22,7 +23,8 @@ function filterItems(items: Menu[], searchString: string): Menu[] {
     if (nameMatch || titleMatch) {
       filtered.push(item);
     } else {
-      const filteredChildren = filterItems(item.children, searchString);
+      const safeChildren = Array.isArray(item.children) ? item.children : [];
+      const filteredChildren = filterItems(safeChildren, searchString);
       if (filteredChildren.length > 0) {
         const newItem = { ...item };
         if (item.type !== menuType.choice) newItem.children = filteredChildren;
@@ -96,27 +98,36 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
   // --- Value change: update React state AND notify confserver ---
   const handleValueChange = useCallback(
     (config: Menu, newValue: any) => {
-      // Update local state first for instant UI feedback
-      setItems((prev) => {
-        const update = (menus: Menu[]): Menu[] =>
-          menus.map((m) => {
-            if (m.id === config.id) {
-              if (m.type === menuType.choice) {
-                const updatedChildren = m.children.map((child) => ({
-                  ...child,
-                  value: child.name === newValue ? 'y' : 'n',
-                }));
-                return { ...m, value: newValue, children: updatedChildren };
+      try {
+        // Update local state first for instant UI feedback
+        setItems((prev) => {
+          const update = (menus: Menu[]): Menu[] =>
+            menus.map((m) => {
+              if (m.id === config.id) {
+                if (m.type === menuType.choice) {
+                  const safeChildren = Array.isArray(m.children) ? m.children : [];
+                  const updatedChildren = safeChildren.map((child) => ({
+                    ...child,
+                    value: child.name === newValue ? 'y' : 'n',
+                  }));
+                  return { ...m, value: newValue, children: updatedChildren };
+                }
+                return { ...m, value: newValue };
               }
-              return { ...m, value: newValue };
-            }
-            if (m.children.length > 0) return { ...m, children: update(m.children) };
-            return m;
-          });
-        return update(prev);
-      });
+              const safeChildren = Array.isArray(m.children) ? m.children : [];
+              if (safeChildren.length > 0) return { ...m, children: update(safeChildren) };
+              return m;
+            });
+          return update(prev);
+        });
+      } catch (err) {
+        console.error('[SdkConfig] handleValueChange setItems error:', err);
+        return;
+      }
 
       // Notify confserver (fire-and-forget — on error, just log)
+      // IMPORTANT: confserver expects "y"/"n" strings for bool values, NOT true/false booleans.
+      // This matches the official VS Code ESP-IDF extension behavior.
       let csKey: string;
       let csValue: any;
       if (config.type === menuType.choice) {
@@ -129,17 +140,38 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
         csKey = config.name;
         csValue = Number(newValue);
       } else {
+        // bool type: send "y"/"n" strings (confserver protocol)
         csKey = config.name;
-        csValue = newValue === true || newValue === 'y' || newValue === '1';
+        csValue = (newValue === true || newValue === 'y' || newValue === '1') ? 'y' : 'n';
       }
 
       safeInvoke('sdkconfig_set_value', { key: csKey, value: csValue })
-        .then((resp) => {
-          if (resp) console.log(`[SdkConfig] confserver set ${csKey}=${csValue} OK`);
+        .then((resp: any) => {
+          if (resp) {
+            console.log(`[SdkConfig] confserver set ${csKey}=${csValue} OK`);
+            // Apply confserver's full response to sync visibility, values, etc.
+            // This is critical: Kconfig dependencies can cause cascading changes
+            // when a single option is toggled (e.g. enabling WiFi reveals sub-items).
+            if (resp.values || resp.visible) {
+              try {
+                setItems((prev) => applyConfserverUpdate(prev, {
+                  values: resp.values,
+                  visible: resp.visible,
+                }));
+              } catch (err) {
+                console.error('[SdkConfig] applyConfserverUpdate error:', err);
+              }
+            }
+          }
         })
-        .catch((e) => console.warn(`[SdkConfig] confserver set failed:`, e));
+        .catch((e) => {
+          console.warn(`[SdkConfig] confserver set ${csKey}=${csValue} failed:`, e);
+          showToast('error', `${csKey}: ${e}`);
+          // Reload config to recover from stale state
+          loadConfig();
+        });
     },
-    []
+    [loadConfig]
   );
 
   // --- Save via confserver ---
@@ -236,6 +268,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
   }
 
   return (
+    <ErrorBoundary>
     <div className={styles.container}>
       <div className={styles.topBar}>
         <SearchBar searchString={searchString} onSearchChange={setSearchString}
@@ -267,6 +300,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }
 

@@ -1,5 +1,75 @@
 /* SdkConfigEditor.module.css — matches Menuconfig.vue layout */
 
+/* ============================================
+   Map VS Code theme variables → ESP-AI-Studio design system
+   These are required because the SDK config components were ported from
+   the VS Code ESP-IDF extension and reference --vscode-* variables.
+   ============================================ */
+:root {
+  /* Font */
+  --vscode-font-family: var(--font-sans);
+
+  /* Text */
+  --vscode-foreground: var(--color-text-primary);
+  --vscode-descriptionForeground: var(--color-text-secondary);
+  --vscode-errorForeground: var(--color-error);
+  --vscode-textLink-foreground: var(--color-accent);
+  --vscode-textLink-activeForeground: var(--color-accent-hover);
+  --vscode-focusBorder: var(--color-accent);
+
+  /* Input */
+  --vscode-input-background: var(--color-surface-elevated);
+  --vscode-input-foreground: var(--color-text-primary);
+  --vscode-input-border: var(--color-border-default);
+  --vscode-input-placeholderForeground: var(--color-text-tertiary);
+
+  /* Checkbox */
+  --vscode-settings-checkboxBackground: var(--color-surface-elevated);
+  --vscode-settings-checkboxBorder: var(--color-border-strong);
+  --vscode-settings-checkboxForeground: var(--color-text-primary);
+
+  /* Dropdown / Select */
+  --vscode-dropdown-background: var(--color-surface-elevated);
+  --vscode-dropdown-foreground: var(--color-text-primary);
+  --vscode-dropdown-border: var(--color-border-default);
+
+  /* Button */
+  --vscode-button-background: var(--color-accent);
+  --vscode-button-foreground: var(--color-text-inverse);
+  --vscode-button-border: var(--color-accent);
+  --vscode-button-hoverBackground: var(--color-accent-hover);
+  --vscode-button-activeBackground: var(--color-accent-hover);
+  --vscode-button-secondaryBackground: var(--color-surface-elevated);
+  --vscode-button-secondaryForeground: var(--color-text-primary);
+  --vscode-button-secondaryBorder: var(--color-border-default);
+  --vscode-button-secondaryHoverBackground: var(--color-surface-hover);
+
+  /* Panel / Border */
+  --vscode-panel-border: var(--color-border-default);
+  --vscode-toolbar-hoverBackground: var(--color-surface-hover);
+
+  /* Sash (resize handle) */
+  --vscode-sash-hoverBorder: var(--color-accent);
+  --vscode-sash-activeBorder: var(--color-accent);
+
+  /* Notifications */
+  --vscode-notifications-background: var(--color-surface-hover);
+
+  /* Settings */
+  --vscode-settings-headerForeground: var(--color-text-secondary);
+
+  /* List / Tree */
+  --vscode-list-hoverBackground: var(--color-surface-hover);
+  --vscode-list-activeSelectionBackground: var(--color-accent-muted);
+  --vscode-list-activeSelectionForeground: var(--color-text-primary);
+  --vscode-list-inactiveSelectionBackground: var(--color-surface-hover);
+  --vscode-list-focusOutline: var(--color-accent);
+
+  /* Input option (active state) */
+  --vscode-inputOption-activeBackground: var(--color-accent);
+  --vscode-inputOption-activeBorder: var(--color-accent);
+}
+
 .container {
   width: 100%;
   max-width: 1600px;

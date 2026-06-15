@@ -37,9 +37,9 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
           const lines = event.payload.data.split('\n');
           serialBufferRef.current.push(...lines);
         });
-        const unsubDisconnect = await listen<{ port: string; error: string }>('serial-disconnected', (event) => {
+        const unsubDisconnect = await listen<{ port: string; error: string; reason: string }>('serial-disconnected', (event) => {
           setSerialConnected(false);
-          setSerialOutput((prev) => [...prev, `[断开] ${event.payload.port}: ${event.payload.error}`]);
+          setSerialOutput((prev) => [...prev, `[断开] ${event.payload.port}: ${event.payload.error || event.payload.reason || ''}`]);
         });
         unlisten = () => { unsubData(); unsubDisconnect(); };
       } catch { /* serial events may not be available */ }
@@ -53,7 +53,7 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
         await safeInvoke('close_serial_port');
       } catch { /* ignore */ }
       setSerialConnected(false);
-      setSerialOutput((prev) => [...prev, '\n--- Disconnected ---\n']);
+      setSerialOutput((prev) => [...prev, '', '--- Disconnected ---', '']);
       return;
     }
     const port = selectedPort;
@@ -68,9 +68,9 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
         baudrate: parseInt(serialBaudRate),
       });
       setSerialConnected(true);
-      setSerialOutput((prev) => [...prev, `\n--- Connected to ${port} @ ${serialBaudRate} ---\n`]);
+      setSerialOutput((prev) => [...prev, '', `--- Connected to ${port} @ ${serialBaudRate} ---`, '']);
     } catch (err) {
-      setSerialOutput((prev) => [...prev, `\n❌ Connection failed: ${err}\n`]);
+      setSerialOutput((prev) => [...prev, '', `❌ Connection failed: ${err}`, '']);
     }
   }, [serialConnected, selectedPort, serialBaudRate, t]);
 
@@ -80,7 +80,7 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
       await safeInvoke('write_serial', { data: serialInput + '\n' });
       setSerialOutput((prev) => [...prev, `> ${serialInput}`]);
     } catch (err) {
-      setSerialOutput((prev) => [...prev, `\n❌ Send failed: ${err}\n`]);
+      setSerialOutput((prev) => [...prev, '', `❌ Send failed: ${err}`, '']);
     }
     setSerialInput('');
   }, [serialInput, serialConnected]);

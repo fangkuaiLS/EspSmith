@@ -23,7 +23,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::os::windows::process::CommandExt;
 
 use crate::idf;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct ConfserverProcess {
     child: Child,
@@ -74,8 +74,33 @@ impl ConfserverProcess {
 
     /// Run `idf.py reconfigure` to generate build directory files (including config.env).
     fn run_reconfigure(project_path: &str, idf_path: &str) -> Result<(), String> {
+        // Clean stale git-data cache that can cause "grabRef.cmake: configure_file No error"
+        // This happens when a previous CMake run was interrupted or the build directory
+        // is in an inconsistent state.
+        let git_data_dir = Path::new(project_path).join("build").join("CMakeFiles").join("git-data");
+        if git_data_dir.exists() {
+            info!("[confserver] Cleaning stale git-data cache: {}", git_data_dir.display());
+            let _ = std::fs::remove_dir_all(&git_data_dir);
+        }
+
+        // Also clean stale CMake cache to avoid "No error" from configure_file
+        let cmake_cache = Path::new(project_path).join("build").join("CMakeCache.txt");
+        if cmake_cache.exists() {
+            info!("[confserver] Removing stale CMakeCache.txt to force clean reconfigure");
+            let _ = std::fs::remove_file(&cmake_cache);
+        }
+
         idf::run_idf_command(project_path, idf_path, &["reconfigure"])
-            .map_err(|e| format!("Failed to run idf.py reconfigure: {}", e))?;
+            .map_err(|e| {
+                // If reconfigure still fails, provide a more helpful error message
+                let build_dir = Path::new(project_path).join("build");
+                let hint = if build_dir.exists() {
+                    "Try running 'idf.py fullclean' then 'idf.py reconfigure' manually, or delete the build/ directory and rebuild."
+                } else {
+                    "Make sure the project is a valid ESP-IDF project with CMakeLists.txt and sdkconfig."
+                };
+                format!("Failed to run idf.py reconfigure: {}\n\nHint: {}", e, hint)
+            })?;
         info!("[confserver] idf.py reconfigure completed");
         Ok(())
     }
@@ -286,11 +311,11 @@ impl ConfserverProcess {
         let mut line_count = 0u32;
         loop {
             let mut line = String::new();
-            info!("[confserver::read_response] Waiting for line {} from stdout...", line_count + 1);
+            debug!("[confserver::read_response] Waiting for line {} from stdout...", line_count + 1);
             let n = self.reader.read_line(&mut line)
                 .map_err(|e| format!("confserver read error: {}", e))?;
             line_count += 1;
-            info!("[confserver::read_response] Read {} bytes, line {}: {:?}", n, line_count, line.trim_end());
+            debug!("[confserver::read_response] Read {} bytes, line {}: {:?}", n, line_count, line.trim_end());
             if n == 0 {
                 // stdout closed — always include stderr for diagnostics
                 let exit_status = self.child.try_wait().ok().flatten();
@@ -319,7 +344,7 @@ impl ConfserverProcess {
             // The confserver sends each JSON response on a single line.
             match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(val) => {
-                    info!("[confserver] Received response, version={}", val.get("version").and_then(|v| v.as_i64()).unwrap_or(0));
+                    debug!("[confserver] Received response, version={}", val.get("version").and_then(|v| v.as_i64()).unwrap_or(0));
                     return Ok(val);
                 }
                 Err(_) => {
@@ -377,12 +402,18 @@ impl ConfserverProcess {
 
     /// Save current configuration to sdkconfig file.
     pub fn save(&mut self, sdkconfig_path: &str) -> Result<(), String> {
-        let cmd = format!(r#"{{"version":2,"save":"{}"}}"#, sdkconfig_path.replace('\\', "/"));
+        let path = sdkconfig_path.replace('\\', "/");
+        let cmd = format!(r#"{{"version":2,"save":"{}"}}"#, path);
+        info!("[confserver] Saving to: {}", path);
         let response = self.send_command(&cmd)?;
         if let Some(err) = Self::check_response_errors(&response) {
             return Err(format!("confserver save failed: {}", err));
         }
-        info!("[confserver] Saved sdkconfig to {}", sdkconfig_path);
+        // 验证文件是否真的被写入
+        match std::fs::metadata(&path) {
+            Ok(meta) => info!("[confserver] Saved sdkconfig successfully, file size={} bytes, modified={:?}", meta.len(), meta.modified().ok()),
+            Err(e) => warn!("[confserver] Save command succeeded but cannot stat file: {}", e),
+        }
         Ok(())
     }
 

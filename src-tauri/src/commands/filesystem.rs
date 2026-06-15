@@ -90,9 +90,21 @@ pub async fn write_file(
             info!("File written to review area: {}", review_path.display());
         }
     } else {
-        fs::write(&path, &content).map_err(|e| {
-            warn!("Failed to write file {}: {}", path, e);
+        // 原子写入：先写临时文件，再重命名，避免文件被编辑器标签页打开时的锁定问题
+        let tmp_path = file_path.with_extension(
+            file_path.extension()
+                .and_then(|e| e.to_str())
+                .map(|ext| format!("{}.tmp", ext))
+                .unwrap_or_else(|| "tmp".to_string())
+        );
+        fs::write(&tmp_path, &content).map_err(|e| {
+            warn!("Failed to write temp file {}: {}", tmp_path.display(), e);
             e.to_string()
+        })?;
+        fs::rename(&tmp_path, &path).map_err(|e| {
+            let _ = fs::remove_file(&tmp_path);
+            warn!("Failed to atomically replace {}: {}", path, e);
+            format!("Failed to atomically replace file: {}", e)
         })?;
     }
 

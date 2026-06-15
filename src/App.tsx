@@ -33,6 +33,7 @@ import { QuickOpenDialog } from './components/quick-open/QuickOpenDialog';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { SdkConfigEditor } from './components/sdkconfig';
 import { useProjectStore, useFileStore, useChatStore, useHardwareStore, useSettingsStore } from './stores';
+import type { Update } from '@tauri-apps/plugin-updater';
 import { safeInvoke, isTauri } from './lib/invoke';
 import { useBuildOutput } from './hooks/useBuildOutput';
 import { useSerialMonitor } from './hooks/useSerialMonitor';
@@ -62,23 +63,59 @@ function App() {
   const [showQuickOpen, setShowQuickOpen] = useState(false);
   const [showSdkConfig, setShowSdkConfig] = useState(false);
 
-  // Update banner state
-  const [updateBanner, setUpdateBanner] = useState<{ version: string } | null>(null);
-  const [updateBannerDownloading, setUpdateBannerDownloading] = useState(false);
+  // Update state — 静默下载完成后在顶栏显示更新按钮
+  const [updateReady, setUpdateReady] = useState(false);
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const updateRef = useRef<Update | null>(null);
 
-  // 启动时自动检查更新，有更新时显示顶部横幅
+  // ─── 启动时静默检查更新，后台下载，完成后在顶栏显示按钮 ────────
   useEffect(() => {
     if (!isTauri()) return;
+    let cancelled = false;
+
     (async () => {
       try {
         const { check } = await import('@tauri-apps/plugin-updater');
-        const update = await check();
-        if (update?.available) {
-          setUpdateBanner({ version: update.version });
-        }
-      } catch { /* 静默失败，不影响正常使用 */ }
+        const update = await check({ timeout: 30000 });
+
+        if (cancelled || !update?.available) return;
+
+        updateRef.current = update;
+        await update.download();
+
+        if (cancelled) return;
+
+        // 下载完成，在顶栏显示更新按钮
+        setUpdateVersion(update.version);
+        setUpdateReady(true);
+      } catch {
+        // 静默失败，不影响正常使用
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // 清理 Update 资源（组件卸载时）
+  useEffect(() => {
+    return () => {
+      updateRef.current?.close();
+    };
+  }, []);
+
+  // 安装更新
+  const handleInstallUpdate = async () => {
+    try {
+      setUpdateReady(false);
+      const { relaunch } = await import('@tauri-apps/plugin-process');
+      await updateRef.current?.install();
+      setTimeout(() => relaunch(), 500);
+    } catch {
+      setUpdateReady(true); // 恢复状态，让用户可以重试
+    }
+  };
 
   const isAutoMode = viewMode === 'auto';
 
@@ -758,6 +795,16 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         {/* Settings */}
         <div className="flex items-center gap-0.5 mr-1">
           <ToolbarButton icon={Settings} label={t('toolbar.settings')} onClick={() => setShowSettings(true)} />
+          {updateReady && updateVersion && (
+            <button
+              onClick={handleInstallUpdate}
+              className="flex items-center gap-1.5 px-2 py-1.5 text-accent hover:bg-accent/10 rounded-sm transition-all duration-150"
+              title={`v${updateVersion} ${t('settings.updateBannerInstall')}`}
+            >
+              <Download size={15} />
+              <span className="text-[12px] font-medium">v{updateVersion}</span>
+            </button>
+          )}
         </div>
 
         {isAutoMode && (
@@ -792,42 +839,6 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           </div>
         )}
       </header>
-
-      {/* ===== 更新横幅 ===== */}
-      {updateBanner && (
-        <div className={`flex items-center justify-between px-4 py-2 bg-accent/90 text-white text-[13px] font-medium shrink-0 ${updateBannerDownloading ? 'cursor-wait' : ''}`}>
-          <span>{t('settings.updateBanner', { version: updateBanner.version })}</span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setUpdateBanner(null)}
-              disabled={updateBannerDownloading}
-              className="px-3 py-1 text-[12px] bg-white/20 rounded-md hover:bg-white/30 transition-colors disabled:opacity-50"
-            >
-              {t('settings.updateBannerDismiss')}
-            </button>
-            <button
-              onClick={async () => {
-                try {
-                  setUpdateBannerDownloading(true);
-                  const { check } = await import('@tauri-apps/plugin-updater');
-                  const { relaunch } = await import('@tauri-apps/plugin-process');
-                  const update = await check();
-                  if (update) {
-                    await update.downloadAndInstall();
-                    setTimeout(() => relaunch(), 500);
-                  }
-                } catch { /* ignore */ }
-                setUpdateBannerDownloading(false);
-              }}
-              disabled={updateBannerDownloading}
-              className="flex items-center gap-1 px-3 py-1 text-[12px] bg-white rounded-md text-accent font-semibold hover:bg-white/90 transition-colors disabled:opacity-50"
-            >
-              {updateBannerDownloading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-              {t('settings.updateBannerInstall')}
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ===== 主内容区 ===== */}
       {isAutoMode ? (

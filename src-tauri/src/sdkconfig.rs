@@ -12,6 +12,7 @@
 use crate::confserver::ConfserverProcess;
 use crate::SdkConfigState;
 use crate::sdkconfig_loader::menu_from_kconfig;
+use tauri::Emitter;
 use tracing::info;
 
 /// Load SDK config: start confserver, get values, merge with menu tree.
@@ -77,6 +78,13 @@ pub async fn sdkconfig_set_value(
     key: String,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    // Safety net: confserver expects "y"/"n" strings for bool values, not true/false booleans.
+    // Convert JSON booleans to strings to match the confserver protocol.
+    let value = match &value {
+        serde_json::Value::Bool(true) => serde_json::Value::String("y".to_string()),
+        serde_json::Value::Bool(false) => serde_json::Value::String("n".to_string()),
+        _ => value,
+    };
     info!("[sdkconfig_set_value] key={}, value={}", key, value);
 
     let mut guard = state.0.lock().map_err(|e| format!("Lock error: {}", e))?;
@@ -87,18 +95,28 @@ pub async fn sdkconfig_set_value(
 }
 
 /// Save configuration to sdkconfig file via confserver.
+/// 参考官方 VSCode 插件：直接让 confserver 写入 sdkconfig（无临时文件），
+/// 通过 is_saving 标记 + 事件通知前端刷新编辑器显示。
 #[tauri::command]
 pub async fn sdkconfig_save(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, SdkConfigState>,
     project_path: String,
 ) -> Result<(), String> {
-    let sdkconfig_path = format!("{}/sdkconfig", project_path.trim_end_matches('/').trim_end_matches('\\'));
-    info!("[sdkconfig_save] Saving to {}", sdkconfig_path);
+    let project_path_clean = project_path.trim_end_matches('/').trim_end_matches('\\');
+    let sdkconfig_path = format!("{}/sdkconfig", project_path_clean);
 
     let mut guard = state.0.lock().map_err(|e| format!("Lock error: {}", e))?;
     let process = guard.as_mut().ok_or("confserver not running")?;
 
+    // 直接保存（参考官方插件 saveGuiConfigValues，无临时文件/原子写入）
     process.save(&sdkconfig_path)?;
+
+    // 通知前端关闭并重新打开 sdkconfig，确保编辑器显示最新内容
+    let path_str = sdkconfig_path.replace('\\', "/");
+    let _ = app_handle.emit("sdkconfig_updated", &path_str);
+
+    info!("[sdkconfig_save] Saved sdkconfig to {}", sdkconfig_path);
     Ok(())
 }
 

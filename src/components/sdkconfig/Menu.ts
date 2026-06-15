@@ -39,6 +39,7 @@ export interface RawMenuItem {
   range?: [number, number];
   items?: RawMenuItem[];
   choices?: { name: string; title?: string; value: string }[];
+  isVisible?: boolean;
 }
 
 export interface KconfigResponse {
@@ -98,7 +99,7 @@ export function rawToMenu(raw: RawMenuItem[], path = ''): Menu[] {
       value: item.value ?? null,
       default: null,
       range: item.range || [],
-      isVisible: true,
+      isVisible: item.isVisible !== undefined ? item.isVisible : true,
       isCollapsed: false,
       isMenuconfig: false,
       dependsOn: '',
@@ -155,7 +156,7 @@ function isBoolLike(m: Menu): boolean {
 export function applyValues(menus: Menu[], values: Record<string, string>): Menu[] {
   return menus.map((m) => {
     // For choice type, find which child is selected from values
-    if (m.type === menuType.choice && m.children.length > 0) {
+    if (m.type === menuType.choice && m.children && m.children.length > 0) {
       const updatedChildren = m.children.map((child) => {
         if (child.name && values[child.name] !== undefined) {
           return { ...child, value: values[child.name] };
@@ -172,8 +173,69 @@ export function applyValues(menus: Menu[], values: Record<string, string>): Menu
       if (typeof val === 'string') {
         if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
       }
-      return { ...m, value: val, children: applyValues(m.children, values) };
+      const safeChildren = Array.isArray(m.children) ? m.children : [];
+      return { ...m, value: val, children: applyValues(safeChildren, values) };
     }
-    return { ...m, children: applyValues(m.children, values) };
+    const safeChildren = Array.isArray(m.children) ? m.children : [];
+    return { ...m, children: applyValues(safeChildren, values) };
+  });
+}
+
+/** Confserver set_value response shape */
+export interface ConfserverUpdate {
+  values?: Record<string, string>;
+  visible?: Record<string, boolean>;
+}
+
+/**
+ * Apply confserver's set_value response to the menu tree.
+ * Updates both values and visibility, keeping the UI in sync with confserver's state.
+ * This is critical: Kconfig dependencies can cause cascading visibility changes
+ * when a single option is toggled (e.g. enabling WiFi reveals sub-items).
+ */
+export function applyConfserverUpdate(menus: Menu[], update: ConfserverUpdate): Menu[] {
+  return menus.map((m) => {
+    let updated = { ...m };
+    let changed = false;
+
+    // Apply visibility from confserver response
+    if (update.visible && m.name && update.visible[m.name] !== undefined) {
+      updated = { ...updated, isVisible: update.visible[m.name] };
+      changed = true;
+    }
+
+    // Apply value from confserver response
+    if (update.values && m.name && update.values[m.name] !== undefined && m.type !== menuType.choice) {
+      let val: any = update.values[m.name];
+      if (typeof val === 'string') {
+        if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+      }
+      updated = { ...updated, value: val };
+      changed = true;
+    }
+
+    const children = Array.isArray(m.children) ? m.children : [];
+
+    // Handle choice type: reconcile children values from confserver
+    if (m.type === menuType.choice && children.length > 0) {
+      const updatedChildren = applyConfserverUpdate(children, update);
+      // Re-derive the selected value from children
+      const selected = updatedChildren.find(
+        (c) => c.value === 'y' || c.value === true || c.value === '1'
+      );
+      updated = { ...updated, value: selected ? selected.name : m.value, children: updatedChildren };
+      changed = true;
+    } else if (children.length > 0) {
+      const updatedChildren = applyConfserverUpdate(children, update);
+      // Only replace children if any child reference actually changed
+      const childrenChanged = updatedChildren.length !== children.length ||
+        updatedChildren.some((child, i) => child !== children[i]);
+      if (childrenChanged) {
+        updated = { ...updated, children: updatedChildren };
+        changed = true;
+      }
+    }
+
+    return changed ? updated : m;
   });
 }
