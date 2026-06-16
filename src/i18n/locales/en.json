@@ -2,7 +2,6 @@
   "app": {
     "title": "EspSmith",
     "subtitle": "AI Closed-Loop ESP32 Firmware Development, Easy to Implement Hardware.",
-    "version": "v0.1.3",
     "ready": "Ready",
     "noProject": "No project"
   },

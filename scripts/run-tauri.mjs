@@ -7,6 +7,9 @@ import { platform, homedir } from 'os';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, '..');
 
+// 从 npm_package_version 注入版本号给 Tauri
+process.env.TAURI_APP_VERSION = process.env.npm_package_version;
+
 function hasNonAscii(str) {
   if (!str) return false;
   return /[^\x00-\x7F]/.test(str);
@@ -171,20 +174,6 @@ if (args.includes('dev')) {
       process.stderr.write(`[esp-ai-studio] WARNING: Failed to compile espsmith-cli.exe: ${error.message}\n`);
       process.stderr.write('[esp-ai-studio] Falling back to espsmith.exe for CLI operations (may not capture output).\n');
     }
-  }
-}
-
-// 如果是 build 命令，先同步版本号
-if (args.includes('build')) {
-  process.stderr.write('[esp-ai-studio] Syncing version numbers...\n');
-  try {
-    execSync('npm run sync-version', {
-      stdio: 'inherit',
-      cwd: projectRoot,
-      shell: true,
-    });
-  } catch (error) {
-    process.stderr.write(`[esp-ai-studio] WARNING: Failed to sync version: ${error.message}\n`);
   }
 }
 

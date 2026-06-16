@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "EspSmith",
-  "version": "0.1.4",
   "identifier": "top.fago.espsmith",
   "build": {
     "frontendDist": "../dist",
@@ -30,7 +29,14 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["msi", "nsis", "app", "dmg", "deb", "appimage"],
+    "targets": [
+      "msi",
+      "nsis",
+      "app",
+      "dmg",
+      "deb",
+      "appimage"
+    ],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico",
@@ -46,14 +52,19 @@
         "type": "embedBootstrapper"
       },
       "nsis": {
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
       },
       "wix": {
         "language": "en-US",
         "bannerPath": "wix/banner.bmp",
         "dialogImagePath": "wix/dialog.bmp",
         "template": "wix/main.wxs",
-        "fragmentPaths": ["wix/ui-theme.wxs"]
+        "fragmentPaths": [
+          "wix/ui-theme.wxs"
+        ]
       }
     },
     "macOS": {

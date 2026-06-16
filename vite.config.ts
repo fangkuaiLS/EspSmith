@@ -3,8 +3,15 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
-// https://vitejs.dev/config/
+// 从 package.json 读取版本号，注入为全局常量
+import { readFileSync } from "fs";
+const pkg = JSON.parse(readFileSync("./package.json", "utf-8"));
+const APP_VERSION = `v${pkg.version}`;
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

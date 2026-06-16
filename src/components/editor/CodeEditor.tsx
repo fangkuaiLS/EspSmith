@@ -262,7 +262,8 @@ export function CodeEditor() {
             theme="esp32-dark"
             options={{
               fontSize: 13,
-              fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+              lineHeight: 20,
+              fontFamily: 'JetBrains Mono, Cascadia Code, Fira Code, Consolas, monospace',
               minimap: { enabled: true, scale: 1, showSlider: 'mouseover' },
               lineNumbers: 'on',
               renderWhitespace: 'selection',
@@ -275,7 +276,7 @@ export function CodeEditor() {
               smoothScrolling: true,
               cursorBlinking: 'smooth',
               cursorSmoothCaretAnimation: 'on',
-              padding: { top: 8 },
+              padding: { top: 8, bottom: 8 },
               glyphMargin: false,
               folding: true,
               lineDecorationsWidth: 8,
