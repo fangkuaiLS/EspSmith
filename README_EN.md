@@ -42,7 +42,7 @@ EspSmith is a modern integrated development environment (IDE) for ESP32 series c
 
 ## Software Download
 
-Latest Version: **v0.1.4**
+[![GitHub Release](https://img.shields.io/github/v/release/fangkuaiLS/EspSmith?style=flat-square&color=3b82f6)](https://github.com/fangkuaiLS/EspSmith/releases)
 
 - 🔗 **Release Page**: [GitHub Releases](https://github.com/fangkuaiLS/EspSmith/releases)
 

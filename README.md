@@ -13,6 +13,12 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/github/v/release/fangkuaiLS/EspSmith?style=flat-square&color=3b82f6&label=release" alt="release" />
+  <img src="https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey?style=flat-square" alt="platform" />
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license" />
+</p>
+
+<p align="center">
   <em>将 AI 大模型嵌入嵌入式开发工作流，实现代码编写、编译构建、固件烧录、硬件调试的全闭环自动化</em>
 </p>
 
@@ -42,7 +48,7 @@ EspSmith 是一个面向 ESP32 系列芯片的现代化集成开发环境（IDE�
 
 ## 软件下载
 
-最新版本：**v0.1.4**
+[![GitHub Release](https://img.shields.io/github/v/release/fangkuaiLS/EspSmith?style=flat-square\&color=3b82f6)](https://github.com/fangkuaiLS/EspSmith/releases)
 
 - 🔗 **发行版页面**: [GitHub Releases](https://github.com/fangkuaiLS/EspSmith/releases)
 
