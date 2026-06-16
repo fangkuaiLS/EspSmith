@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/fangkuaiLS/EspSmith/releases"><img src="https://img.shields.io/badge/release-GitHub_Releases-3b82f6?style=flat-square" alt="release" /></a>
   <img src="https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey?style=flat-square" alt="platform" />
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license" />
+  <img src="https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square" alt="license" />
 </p>
 
 <p align="center">
