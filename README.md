@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/fangkuaiLS/EspSmith?style=flat-square&color=3b82f6&label=release" alt="release" />
+  <a href="https://github.com/fangkuaiLS/EspSmith/releases"><img src="https://img.shields.io/badge/release-GitHub_Releases-3b82f6?style=flat-square" alt="release" /></a>
   <img src="https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey?style=flat-square" alt="platform" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license" />
 </p>
@@ -48,7 +48,7 @@ EspSmith 是一个面向 ESP32 系列芯片的现代化集成开发环境（IDE�
 
 ## 软件下载
 
-[![GitHub Release](https://img.shields.io/github/v/release/fangkuaiLS/EspSmith?style=flat-square\&color=3b82f6)](https://github.com/fangkuaiLS/EspSmith/releases)
+[![GitHub Release](https://img.shields.io/badge/release-GitHub_Releases-3b82f6?style=flat-square)](https://github.com/fangkuaiLS/EspSmith/releases)
 
 - 🔗 **发行版页面**: [GitHub Releases](https://github.com/fangkuaiLS/EspSmith/releases)
 
