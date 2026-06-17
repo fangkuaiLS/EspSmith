@@ -23,6 +23,8 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { open } from '@tauri-apps/plugin-shell';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { PermissionModal } from './PermissionModal';
 
 // 解析工具输入中的文件路径，支持相对路径转绝对路径
@@ -145,7 +147,14 @@ export function ChatPanel() {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputAreaRef = useRef<HTMLDivElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const isDragOverRef = useRef(false);
   const [modelOpen, setModelOpen] = useState(false);
+  // Apply 对话框状态提升到顶层，避免 CodeBlock 重建时丢失
+  const [applyDialog, setApplyDialog] = useState<{ code: string; suggested: string } | null>(null);
+  const [applyFilePath, setApplyFilePath] = useState('');
+  const [applyWriting, setApplyWriting] = useState(false);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const [toolchainOpen, setToolchainOpen] = useState(false);
   const toolchainDropdownRef = useRef<HTMLDivElement>(null);
@@ -158,9 +167,31 @@ export function ChatPanel() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const draftInputRef = useRef('');
 
-  const { messages, status, pendingRollback, usage, sessions, permissionMode, pendingPermission, activeOperation, sendMessage, startAI, stopAI, clearMessages, confirmRollback, cancelRollback, loadSessions, loadSession, deleteSession, setPermissionMode } = useChatStore();
+  const { messages, status, pendingRollback, usage, sessions, permissionMode, pendingPermission, activeOperation, messageQueue, sendMessage, startAI, stopAI, clearMessages, confirmRollback, cancelRollback, loadSessions, loadSession, deleteSession, setPermissionMode, enqueueMessage, clearQueue } = useChatStore();
   const { settings, setSettings } = useSettingsStore();
   const projectPath = useProjectStore((s) => s.currentProject?.path);
+
+  // Apply 确认写入
+  const confirmApply = async () => {
+    if (!applyFilePath.trim() || !applyDialog) return;
+    const code = applyDialog.code;
+    const filePath = applyFilePath.trim();
+    setApplyDialog(null);
+    setApplyWriting(true);
+    try {
+      if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('write_file', { path: filePath, content: code, safeMode: false });
+        useFileStore.getState().openFile(filePath);
+      } else {
+        alert('请在 Tauri 桌面应用中体验完整功能');
+      }
+    } catch (err) {
+      alert(`写入失败: ${err}`);
+    } finally {
+      setApplyWriting(false);
+    }
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -225,6 +256,62 @@ export function ChatPanel() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [stopAI, clearMessages, startAI, loadSessions]);
 
+  // 文件/文件夹拖放支持：将拖入的路径插入到输入框
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) return;
+    let unlisten: (() => void) | undefined;
+
+    async function setupDragDrop() {
+      try {
+        const webview = getCurrentWebview();
+        unlisten = await webview.onDragDropEvent((event) => {
+          const payload = event.payload;
+          const dpr = window.devicePixelRatio || 1;
+
+          if (payload.type === 'enter' || payload.type === 'over') {
+            // 物理像素 → CSS 像素，与 getBoundingClientRect 对齐
+            const cssX = payload.position.x / dpr;
+            const cssY = payload.position.y / dpr;
+            const area = inputAreaRef.current;
+            if (area) {
+              const rect = area.getBoundingClientRect();
+              const inside = cssX >= rect.left && cssX <= rect.right && cssY >= rect.top && cssY <= rect.bottom;
+              isDragOverRef.current = inside;
+              setIsDragOver(inside);
+            }
+          } else if (payload.type === 'drop') {
+            if (isDragOverRef.current) {
+              const paths = payload.paths;
+              if (paths && paths.length > 0) {
+                // 用引号包裹路径（兼容空格），多个路径用空格连接
+                const pathText = paths.map(p => `"${p}"`).join(' ');
+                const textarea = textareaRef.current;
+                if (textarea) {
+                  const start = textarea.selectionStart;
+                  const end = textarea.selectionEnd;
+                  setInput(prev => prev.slice(0, start) + pathText + prev.slice(end));
+                  setTimeout(() => {
+                    textarea.selectionStart = textarea.selectionEnd = start + pathText.length;
+                    textarea.focus();
+                  }, 0);
+                } else {
+                  setInput(prev => prev + pathText);
+                }
+              }
+            }
+            isDragOverRef.current = false;
+            setIsDragOver(false);
+          } else if (payload.type === 'leave') {
+            isDragOverRef.current = false;
+            setIsDragOver(false);
+          }
+        });
+      } catch { /* ignore */ }
+    }
+    setupDragDrop();
+    return () => { unlisten?.(); };
+  }, []);
+
   const handleToolchainChange = useCallback(async (option: ToolchainOption) => {
     setToolchainOpen(false);
     const currentToolchain = getCurrentToolchainId();
@@ -275,11 +362,17 @@ export function ChatPanel() {
 
   const handleSend = async () => {
     if (!input.trim()) return;
-    inputHistoryRef.current.push(input.trim());
+    const content = input.trim();
+    inputHistoryRef.current.push(content);
     setHistoryIndex(-1);
     draftInputRef.current = '';
-    await sendMessage(input.trim());
     setInput('');
+    if (isBusy) {
+      // 当前有任务在执行，将消息加入等待队列
+      enqueueMessage(content);
+    } else {
+      await sendMessage(content);
+    }
     textareaRef.current?.focus();
   };
 
@@ -352,6 +445,47 @@ export function ChatPanel() {
   return (
     <div className="h-full flex flex-col bg-surface-base">
       {pendingPermission && <PermissionModal />}
+
+      {/* Apply 文件路径对话框 - 在 ChatPanel 顶层渲染，避免 CodeBlock 重建时关闭 */}
+      {applyDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setApplyDialog(null)}>
+          <div
+            className="bg-surface-elevated border border-border-default rounded-xl shadow-2xl w-[400px] max-w-[90vw] p-4 animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[13px] font-medium text-text-primary mb-3">
+              请输入文件路径（相对于项目根目录）
+            </div>
+            <input
+              autoFocus
+              value={applyFilePath}
+              onChange={(e) => setApplyFilePath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmApply();
+                if (e.key === 'Escape') setApplyDialog(null);
+              }}
+              className="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded-lg text-[13px] text-text-primary focus:outline-none focus:border-accent"
+              placeholder="例如: main/components/led/main.c"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setApplyDialog(null)}
+                className="px-3 py-1.5 text-[12px] text-text-secondary hover:text-text-primary transition-colors rounded-lg hover:bg-surface-hover"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmApply}
+                disabled={!applyFilePath.trim() || applyWriting}
+                className="px-3 py-1.5 text-[12px] bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {applyWriting ? '写入中...' : '确定'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="px-4 py-3 border-b border-border-default flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
@@ -472,7 +606,10 @@ export function ChatPanel() {
           group.type === 'tool_group' ? (
             <ToolCallsGroup key={group.messages[0].id} messages={group.messages} />
           ) : (
-            <MessageItem key={group.message.id} message={group.message} />
+            <MessageItem key={group.message.id} message={group.message} onApply={(code, suggested) => {
+              setApplyDialog({ code, suggested });
+              setApplyFilePath(suggested);
+            }} />
           )
         )}
         {activeOperation && (
@@ -485,16 +622,69 @@ export function ChatPanel() {
 
       {/* Input Area */}
       <div className="p-3 border-t border-border-default shrink-0">
-        <div className="bg-surface-overlay rounded-xl border border-border-default focus-within:border-accent/50 focus-within:shadow-glow transition-all duration-200">
+        {/* 消息队列 - 输入框上方 */}
+        {messageQueue.length > 0 && (
+          <div className="mb-2 space-y-1.5">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] text-text-tertiary flex items-center gap-1">
+                <Clock size={11} className="text-warning" />
+                {t('chat.queuedCount', { count: messageQueue.length })}
+              </span>
+              <button
+                onClick={clearQueue}
+                className="text-[10px] text-text-tertiary hover:text-danger transition-colors flex items-center gap-0.5"
+                title={t('chat.clearQueue')}
+              >
+                <Trash2 size={10} />
+                <span>{t('chat.clearQueue')}</span>
+              </button>
+            </div>
+            {messageQueue.map((msg, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-2 px-2.5 py-1.5 bg-surface-hover/50 border border-border-subtle rounded-lg group"
+              >
+                <div className="w-4 h-4 rounded-full bg-warning/20 flex items-center justify-center shrink-0">
+                  <span className="text-[9px] text-warning font-medium">{idx + 1}</span>
+                </div>
+                <span className="text-[11px] text-text-secondary truncate flex-1" title={msg}>
+                  {msg}
+                </span>
+                {idx === 0 && (
+                  <span className="text-[9px] text-warning bg-warning/10 px-1.5 py-0.5 rounded shrink-0">
+                    下一个
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div
+          ref={inputAreaRef}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => e.preventDefault()}
+          className={`bg-surface-overlay rounded-xl border transition-all duration-200 relative ${
+            isDragOver
+              ? 'border-accent shadow-glow ring-2 ring-accent/30'
+              : 'border-border-default focus-within:border-accent/50 focus-within:shadow-glow'
+          }`}
+        >
+          {isDragOver && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-accent-muted/40 pointer-events-none">
+              <span className="text-[12px] font-medium text-accent px-3 py-1.5 rounded-full bg-surface-elevated border border-accent/40 shadow">
+                释放以插入文件/文件夹路径
+              </span>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={t('chat.typeMessage')}
+            placeholder={isBusy ? t('chat.typeMessageQueued') : t('chat.typeMessage')}
             rows={1}
-            disabled={isBusy}
-            className="w-full px-3 pt-2.5 pb-1 bg-transparent text-[13px] text-text-primary placeholder:text-text-disabled resize-none focus:outline-none disabled:opacity-50"
+            className="w-full px-3 pt-2.5 pb-1 bg-transparent text-[13px] text-text-primary placeholder:text-text-disabled resize-none focus:outline-none"
             style={{ minHeight: '36px', maxHeight: '200px' }}
           />
           <div className="flex items-center justify-between px-2 py-1.5">
@@ -583,18 +773,29 @@ export function ChatPanel() {
               )}
             </div>
             </div>
-            <button
-              onClick={isBusy ? stopAI : handleSend}
-              disabled={!isBusy && !input.trim()}
-              className={`p-1.5 rounded-lg text-white transition-all shrink-0 ${
-                isBusy
-                  ? 'bg-error hover:bg-red-600 animate-pulse'
-                  : 'bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed'
-              }`}
-              title={isBusy ? t('chat.stop') : t('chat.send')}
-            >
-              {isBusy ? <StopCircle size={14} /> : <Send size={14} />}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {isBusy && (
+                <button
+                  onClick={stopAI}
+                  className="p-1.5 rounded-lg text-white bg-error hover:bg-red-600 animate-pulse transition-all"
+                  title={t('chat.stop')}
+                >
+                  <StopCircle size={14} />
+                </button>
+              )}
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className={`p-1.5 rounded-lg text-white transition-all shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  isBusy
+                    ? 'bg-warning hover:bg-amber-600'
+                    : 'bg-accent hover:bg-accent-hover'
+                }`}
+                title={isBusy ? t('chat.enqueue') : t('chat.send')}
+              >
+                <Send size={14} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -963,7 +1164,7 @@ function doCopy(text: string, setter: (v: boolean) => void) {
   setTimeout(() => setter(false), 2000);
 }
 
-function MessageItem({ message }: { message: ChatMessage }) {
+function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (code: string, suggested: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [localCopied, setLocalCopied] = useState(false);
   const [userCopied, setUserCopied] = useState(false);
@@ -1172,7 +1373,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
             ? 'bg-accent text-white rounded-2xl rounded-tr-sm'
             : 'bg-surface-overlay border border-border-subtle rounded-2xl rounded-tl-sm'
         }`}>
-          <MessageContent content={message.content} />
+          <MessageContent content={message.content} onApply={onApply} />
         </div>
         {!isUser && message.content && (
           <div className="flex items-center gap-1 mt-1">
@@ -1197,14 +1398,13 @@ function MessageItem({ message }: { message: ChatMessage }) {
   );
 }
 
-function CodeBlock({ language, code, content }: { language: string; code: string; content: string }) {
+function CodeBlock({ language, code, content, onApply }: { language: string; code: string; content: string; onApply: (code: string, suggested: string) => void }) {
   const { t } = useTranslation();
   const [copyOk, setCopyOk] = useState(false);
-  const [applying, setApplying] = useState(false);
 
-  const extractFilePath = (): string | null => {
+  const extractFilePath = (): string => {
     const idx = content.indexOf(code);
-    if (idx === -1) return null;
+    if (idx === -1) return '';
     const before = content.slice(Math.max(0, idx - 300), idx);
     const pattern = /(?:文件|path|file)[:：\s]*[`'"]?([^\s`'"\n]{2,200})/i;
     const match = before.match(pattern);
@@ -1219,7 +1419,7 @@ function CodeBlock({ language, code, content }: { language: string; code: string
     if (pathMatch) {
       return pathMatch[1];
     }
-    return null;
+    return '';
   };
 
   const handleCopy = () => {
@@ -1228,25 +1428,8 @@ function CodeBlock({ language, code, content }: { language: string; code: string
     setTimeout(() => setCopyOk(false), 2000);
   };
 
-  const handleApply = async () => {
-    const suggested = extractFilePath();
-    const filePath = prompt('请输入文件路径（相对于项目根目录）:', suggested || '');
-    if (!filePath) return;
-
-    setApplying(true);
-    try {
-      if (typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)) {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('write_file', { path: filePath, content: code, safeMode: false });
-        useFileStore.getState().openFile(filePath);
-      } else {
-        alert('请在 Tauri 桌面应用中体验完整功能');
-      }
-    } catch (err) {
-      alert(`写入失败: ${err}`);
-    } finally {
-      setApplying(false);
-    }
+  const handleApply = () => {
+    onApply(code, extractFilePath());
   };
 
   return (
@@ -1265,11 +1448,10 @@ function CodeBlock({ language, code, content }: { language: string; code: string
             <span>{copyOk ? t('common.copied') : t('common.copy')}</span>
           </button>
           <button
-            className="flex items-center gap-1 px-2 py-0.5 text-[10px] bg-accent text-white rounded hover:bg-accent-hover transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 px-2 py-0.5 text-[10px] bg-accent text-white rounded hover:bg-accent-hover transition-colors"
             onClick={handleApply}
-            disabled={applying}
           >
-            {applying ? '写入中...' : 'Apply'}
+            Apply
           </button>
         </div>
       </div>
@@ -1285,7 +1467,7 @@ function CodeBlock({ language, code, content }: { language: string; code: string
   );
 }
 
-function MessageContent({ content }: { content: string }) {
+function MessageContent({ content, onApply }: { content: string; onApply: (code: string, suggested: string) => void }) {
   return (
     <div className="[&_p]:mb-2 [&_p:last-of-type]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2 [&_ul]:space-y-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2 [&_ol]:space-y-1 [&_h1]:text-lg [&_h1]:font-bold [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-bold [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mb-1 [&_table]:border-collapse [&_table]:mb-2 [&_table]:text-[12px] [&_th]:border [&_th]:border-border-subtle [&_th]:px-2 [&_th]:py-1 [&_th]:bg-surface-overlay [&_th]:font-medium [&_td]:border [&_td]:border-border-subtle [&_td]:px-2 [&_td]:py-1 [&_blockquote]:border-l-2 [&_blockquote]:border-accent [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-text-tertiary [&_blockquote]:mb-2 [&_a]:text-accent [&_a]:hover:underline [&_hr]:border-border-subtle [&_hr]:my-2">
     <ReactMarkdown
@@ -1295,9 +1477,24 @@ function MessageContent({ content }: { content: string }) {
           const match = /language-(\w+)/.exec(className || '');
           const codeString = String(children).replace(/\n$/, '');
           if (match) {
-            return <CodeBlock language={match[1]} code={codeString} content={content} />;
+            return <CodeBlock language={match[1]} code={codeString} content={content} onApply={onApply} />;
           }
           return <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-secondary font-mono text-[12px]" {...props}>{children}</code>;
+        },
+        a({ node, href, children, ...props }) {
+          return (
+            <a
+              href={href}
+              onClick={(e) => {
+                e.preventDefault();
+                if (href) open(href);
+              }}
+              className="text-accent hover:underline cursor-pointer"
+              {...props}
+            >
+              {children}
+            </a>
+          );
         },
       }}
     >

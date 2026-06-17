@@ -149,7 +149,12 @@
     "sessionCost": "Session cost",
     "lastMsgTokens": "Last message: ↑input ↓output",
     "tokens": "Tokens",
-    "cost": "Cost"
+    "cost": "Cost",
+    "typeMessageQueued": "Type to queue a message...",
+    "enqueue": "Enqueue",
+    "queuedCount": "{count} queued",
+    "queuedNext": "Next",
+    "clearQueue": "Clear queue"
   },
   "editor": {
     "selectFile": "Select a file to edit",

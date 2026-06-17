@@ -78,7 +78,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'EspSmith v__VERSION__'
-          releaseBody: 'See the assets to download and install this version.'
+          releaseBody: ''
           releaseDraft: true
           prerelease: false
 
@@ -94,3 +94,41 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: src-tauri/target/release/bundle/msi/latest.json
+
+  # 所有平台构建完成后，自动生成发布说明
+  generate-release-notes:
+    name: Generate Release Notes
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release body from commits
+        id: release-body
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            echo "## Changes since $PREV_TAG" > /tmp/release_body.md
+            echo "" >> /tmp/release_body.md
+            git log --pretty=format:'- %s (%h)' $PREV_TAG..HEAD >> /tmp/release_body.md
+          else
+            echo "## Initial Release" > /tmp/release_body.md
+            echo "" >> /tmp/release_body.md
+            git log --pretty=format:'- %s (%h)' >> /tmp/release_body.md
+          fi
+          echo "" >> /tmp/release_body.md
+          echo "---" >> /tmp/release_body.md
+          echo "**Full Changelog**: https://github.com/\${{ github.repository }}/compare/$PREV_TAG...\${{ github.ref_name }}" >> /tmp/release_body.md
+          cat /tmp/release_body.md
+
+      - name: Update release notes
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: /tmp/release_body.md
+          draft: true
+          append_body: false

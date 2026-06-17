@@ -249,6 +249,8 @@ interface ChatStore {
     permissionMode: 'full' | 'ask';
     pendingPermission: { toolName: string; reason: string } | null;
     activeOperation: OperationProgress | null;
+    /** 等待发送的消息队列（当前任务执行期间用户提交的新消息） */
+    messageQueue: string[];
 
     sendMessage: (content: string) => Promise<void>;
     startAI: () => Promise<void>;
@@ -273,6 +275,10 @@ interface ChatStore {
     setPermissionMode: (mode: 'full' | 'ask') => Promise<void>;
     loadPermissionMode: () => Promise<void>;
     respondPermission: (allow: boolean) => Promise<void>;
+    /** 将消息加入等待队列 */
+    enqueueMessage: (content: string) => void;
+    /** 清空等待队列 */
+    clearQueue: () => void;
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -286,6 +292,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     permissionMode: 'full',
     pendingPermission: null,
     activeOperation: null,
+    messageQueue: [],
 
     sendMessage: async (content: string) => {
         const { addMessage, updateStatus, appendToLastAssistant, appendToLastThinking, setLastAssistantContent, updateToolMessage } = get();
@@ -556,6 +563,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             for (const filePath of touchedFiles) {
                 useFileStore.getState().openFile(filePath).catch(() => {});
             }
+
+            // 队列处理：当前任务正常完成（非用户主动停止）后，自动发送队列中的下一条消息
+            if (!signal.aborted) {
+                const queue = get().messageQueue;
+                if (queue.length > 0) {
+                    const nextMessage = queue[0];
+                    set({ messageQueue: queue.slice(1) });
+                    // 延迟执行，确保当前 finally 完全结束后再开始下一轮
+                    setTimeout(() => {
+                        get().sendMessage(nextMessage);
+                    }, 0);
+                }
+            }
         }
     },
 
@@ -583,7 +603,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         try {
             await stopAI();
         } catch { /* 忽略 */ }
-        set({ isRunning: false, status: 'idle', activeOperation: null });
+        set({ isRunning: false, status: 'idle', activeOperation: null, messageQueue: [] });
     },
 
     updateStatus: (status) => set({ status }),
@@ -615,7 +635,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
         }
         clearConversation();
-        set({ messages: [], usage: null, activeSessionId: `session-${Date.now()}` });
+        set({ messages: [], usage: null, activeSessionId: `session-${Date.now()}`, messageQueue: [] });
     },
 
     addMessage: (message) => {
@@ -856,6 +876,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             status: 'idle',
             usage: null,
             sessions,
+            messageQueue: [],
         });
         startAI().catch(() => {});
     },
@@ -887,5 +908,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     respondPermission: async (allow: boolean) => {
         await safeInvoke('ai_respond_permission', { allow });
         set({ pendingPermission: null });
+    },
+
+    enqueueMessage: (content: string) => {
+        set((state) => ({ messageQueue: [...state.messageQueue, content] }));
+    },
+
+    clearQueue: () => {
+        set({ messageQueue: [] });
     },
 }));

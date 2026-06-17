@@ -4,6 +4,9 @@ use serde_json::Value;
 use std::io::{Read, Write};
 use std::time::Instant;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 pub struct GdbSessionVerifyAdapter;
 
 impl Adapter for GdbSessionVerifyAdapter {
@@ -119,12 +122,14 @@ impl Adapter for GdbSessionVerifyAdapter {
             "-ex".to_string(), "monitor reset run".to_string(),
         ]);
 
-        let spawn_result = std::process::Command::new(&gdb_binary)
-            .args(&args)
+        let mut cmd = std::process::Command::new(&gdb_binary);
+        cmd.args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .stdin(std::process::Stdio::null())
-            .spawn();
+            .stdin(std::process::Stdio::null());
+        #[cfg(windows)]
+        { cmd.creation_flags(0x08000000); }
+        let spawn_result = cmd.spawn();
 
         let child = match spawn_result {
             Ok(c) => c,
@@ -148,12 +153,14 @@ impl Adapter for GdbSessionVerifyAdapter {
             Ok(Ok(out)) => Ok(out),
             Ok(Err(e)) => Err(format!("GDB process error: {}", e)),
             Err(_) => {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                let mut cmd = std::process::Command::new("taskkill");
+                cmd.args(["/F", "/T", "/PID", &pid.to_string()])
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
+                    .stderr(std::process::Stdio::null());
+                #[cfg(windows)]
+                { cmd.creation_flags(0x08000000); }
+                let _ = cmd.spawn();
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 Err("GDB process timed out after 15s".to_string())
             }

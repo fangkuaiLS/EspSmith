@@ -4,6 +4,9 @@ use super::*;
 use std::process::Command;
 use std::time::Instant;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 /// IDF build adapter (wraps idf.py build).
 pub struct IdfBuildAdapter;
 
@@ -97,10 +100,11 @@ impl Adapter for GenericBuildAdapter {
 
     fn execute(&self, _params: &serde_json::Value, work_dir: &str) -> AdapterResult {
         let start = Instant::now();
-        match Command::new(&self.cmd)
-            .args(&self.args)
-            .current_dir(work_dir)
-            .output()
+        let mut cmd = Command::new(&self.cmd);
+        cmd.args(&self.args).current_dir(work_dir);
+        #[cfg(windows)]
+        { cmd.creation_flags(0x08000000); }
+        match cmd.output()
         {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();

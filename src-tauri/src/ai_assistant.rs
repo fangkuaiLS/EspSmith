@@ -9,6 +9,12 @@ use tracing::info;
 use crate::connection::ConnectionMode;
 use crate::ai_provider::AIProvider;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// 内嵌的 CodeWhale 二进制目录路径（由 lib.rs 在 setup 时初始化）
 static BUNDLED_CODEWHALE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -196,12 +202,14 @@ async fn kill_running_child() {
         #[cfg(target_os = "windows")]
         {
             if let Some(pid) = child.id() {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                let mut cmd = std::process::Command::new("taskkill");
+                cmd.args(["/F", "/T", "/PID", &pid.to_string()])
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                    .stderr(std::process::Stdio::null());
+                #[cfg(windows)]
+                { cmd.creation_flags(CREATE_NO_WINDOW); }
+                let _ = cmd.status();
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -1003,6 +1011,13 @@ pub async fn ai_send_message(
                                             let mut status = AI_STATUS.lock().unwrap();
                                             *status = AIStatus::Idle;
                                         }
+                                        // 提取 session_id（CodeWhale 格式）
+                                        if let Some(sid) = event["session_id"].as_str() {
+                                            if !sid.is_empty() {
+                                                new_session_id = Some(sid.to_string());
+                                                info!("{} session captured from done event: {}", provider_name, sid);
+                                            }
+                                        }
                                         if let Some(done_content) = event["content"].as_str() {
                                             output.push_str(done_content);
                                             let _ = app_handle.emit("ai-chunk", done_content);
@@ -1184,6 +1199,20 @@ pub async fn ai_get_usage() -> Result<AICumulativeUsage, String> {
 pub async fn ai_reset_usage() -> Result<(), String> {
     let mut client = AI_CLIENT.lock().await;
     client.reset_usage();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ai_clear_session() -> Result<(), String> {
+    let mut client = AI_CLIENT.lock().await;
+    client.session_id = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ai_set_session_id(session_id: String) -> Result<(), String> {
+    let mut client = AI_CLIENT.lock().await;
+    client.session_id = Some(session_id);
     Ok(())
 }
 
@@ -2093,23 +2122,25 @@ fn deepseek_mcp_config_path() -> Result<PathBuf, String> {
 #[allow(dead_code)] // ESP-IDF Python检测预留
 fn find_python_on_path() -> String {
     // Try python3 first, then python
-    for cmd in &["python3", "python"] {
-        let check = if cfg!(windows) {
-            std::process::Command::new("where")
-                .arg(cmd)
-                .output()
+    for cmd_name in &["python3", "python"] {
+        let mut check = if cfg!(windows) {
+            let mut c = std::process::Command::new("where");
+            c.arg(cmd_name);
+            c
         } else {
-            std::process::Command::new("which")
-                .arg(cmd)
-                .output()
+            let mut c = std::process::Command::new("which");
+            c.arg(cmd_name);
+            c
         };
-        if let Ok(out) = check {
+        #[cfg(windows)]
+        { check.creation_flags(CREATE_NO_WINDOW); }
+        if let Ok(out) = check.output() {
             if out.status.success() {
                 let path = String::from_utf8_lossy(&out.stdout)
                     .lines()
                     .next()
                     .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|| cmd.to_string());
+                    .unwrap_or_else(|| cmd_name.to_string());
                 if !path.is_empty() {
                     return path;
                 }
@@ -2353,10 +2384,11 @@ pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
 
 fn _which_cmd_uncached(cmd: &str) -> Option<PathBuf> {
     if cfg!(windows) {
-        let output = std::process::Command::new("where")
-            .arg(cmd)
-            .output()
-            .ok()?;
+        let mut c = std::process::Command::new("where");
+        c.arg(cmd);
+        #[cfg(windows)]
+        { c.creation_flags(CREATE_NO_WINDOW); }
+        let output = c.output().ok()?;
         if output.status.success() {
             let paths: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
                 .lines()
@@ -2368,10 +2400,9 @@ fn _which_cmd_uncached(cmd: &str) -> Option<PathBuf> {
             None
         }
     } else {
-        let output = std::process::Command::new("which")
-            .arg(cmd)
-            .output()
-            .ok()?;
+        let mut c = std::process::Command::new("which");
+        c.arg(cmd);
+        let output = c.output().ok()?;
         if output.status.success() {
             String::from_utf8_lossy(&output.stdout)
                 .lines()
@@ -2469,13 +2500,15 @@ pub async fn setup_codewhale(app_handle: tauri::AppHandle) -> Result<String, Str
         .map(|p| p.join(if cfg!(windows) { "npm.cmd" } else { "npm" }))
         .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "npm.cmd" } else { "npm" }));
 
-    let status = std::process::Command::new(&npm_bin)
-        .args(["install", "--global", "codewhale", "--prefix"])
+    let mut cmd = std::process::Command::new(&npm_bin);
+    cmd.args(["install", "--global", "codewhale", "--prefix"])
         .arg(&local_dir)
         .current_dir(&local_dir)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .status()
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let status = cmd.status()
         .map_err(|e| format!("i18n:aiBackend.npmStartFailed|error={}", e))?;
 
     if !status.success() {

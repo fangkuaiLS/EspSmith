@@ -441,12 +441,13 @@ pub fn kill_openocd_sync() {
     }
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/IM", "openocd.exe"])
+        let mut cmd = std::process::Command::new("taskkill");
+        cmd.args(["/F", "/IM", "openocd.exe"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.status();
     }
     #[cfg(not(windows))]
     {

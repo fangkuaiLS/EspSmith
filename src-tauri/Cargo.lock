@@ -806,7 +806,7 @@ dependencies = [
 
 [[package]]
 name = "espsmith"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "chrono",
  "dirs-next",

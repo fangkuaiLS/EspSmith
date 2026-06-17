@@ -509,9 +509,11 @@ pub fn get_idf_version(idf_path: &str) -> String {
 
     // 3. git describe（Command::output() 在 Windows 终端可能 panic，用 catch_unwind 防护）
     if let Ok(Ok(output)) = std::panic::catch_unwind(|| {
-        Command::new("git")
-            .args(["-C", idf_path, "describe", "--tags", "--always"])
-            .output()
+        let mut cmd = Command::new("git");
+        cmd.args(["-C", idf_path, "describe", "--tags", "--always"]);
+        #[cfg(windows)]
+        { cmd.creation_flags(0x08000000); }
+        cmd.output()
     }) {
             if output.status.success() {
                 return String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -845,12 +847,13 @@ fn run_with_export_bat(
             args_str
         );
         info!("Executing (export.bat): cmd /C {}", cmd_str);
-        Command::new("cmd")
-            .args(["/C", &cmd_str])
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", &cmd_str])
             .current_dir(project_path)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .stderr(Stdio::piped());
+        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        cmd.spawn()
             .and_then(|child| child.wait_with_output())
             .map_err(|e| format!("Failed to execute idf.py via cmd: {}", e))?
     } else {
@@ -2109,9 +2112,11 @@ pub fn validate_python_path(path: String) -> Result<String, String> {
         return Err("Python 路径不存在".to_string());
     }
 
-    let output = std::process::Command::new(&path)
-        .args(["--version"])
-        .output()
+    let mut cmd = std::process::Command::new(&path);
+    cmd.args(["--version"]);
+    #[cfg(windows)]
+    { cmd.creation_flags(0x08000000); }
+    let output = cmd.output()
         .map_err(|e| format!("无法执行 Python: {}", e))?;
 
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();

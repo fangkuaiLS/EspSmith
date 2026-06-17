@@ -99,11 +99,14 @@ impl Drop for GlobalCommandLock {
 /// Check if a process with the given PID is still alive (Windows)
 #[cfg(target_os = "windows")]
 fn is_pid_alive(pid: u32) -> bool {
-    std::process::Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+    let mut cmd = std::process::Command::new("tasklist");
+    cmd.args(["/FI", &format!("PID eq {}", pid), "/NH"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
+        .stderr(std::process::Stdio::null());
+    // CREATE_NO_WINDOW — avoid console flash when checking PID
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(0x08000000);
+    cmd.output()
         .map(|o| {
             let out = String::from_utf8_lossy(&o.stdout);
             out.contains(&pid.to_string())
@@ -287,6 +290,8 @@ pub fn run() {
             // AI 助手命令
             ai_assistant::ai_start,
             ai_assistant::ai_stop,
+            ai_assistant::ai_clear_session,
+            ai_assistant::ai_set_session_id,
             ai_assistant::ai_send_message,
             ai_assistant::ai_get_status,
             ai_assistant::ai_get_usage,

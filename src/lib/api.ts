@@ -43,8 +43,21 @@ export async function sendChatMessage(
     return '请在 EspSmith 桌面应用中体验完整 AI 功能。\n\n运行 `npm run tauri dev` 启动桌面应用。';
 }
 
-export function clearConversation() {
-    // 会话由 CodeWhale 管理，无需前端清理
+export async function clearConversation() {
+    if (isTauri()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('ai_clear_session').catch(() => {});
+    }
+}
+
+/**
+ * 恢复后端会话 ID — 加载历史会话时调用，让 AI 继续之前的上下文
+ */
+export async function setSessionId(sessionId: string): Promise<void> {
+    if (isTauri()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('ai_set_session_id', { sessionId });
+    }
 }
 
 export async function startAI(): Promise<void> {

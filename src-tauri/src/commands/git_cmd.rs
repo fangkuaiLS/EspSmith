@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tracing::{info, warn};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// 文件状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileStatus {
@@ -16,10 +22,12 @@ pub struct FileStatus {
 pub async fn get_status(project_path: String) -> Result<Vec<FileStatus>, String> {
     info!("Getting git status for: {}", project_path);
 
-    let output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(&project_path)
-        .output()
+    let mut cmd = Command::new("git");
+    cmd.args(["status", "--porcelain"])
+        .current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let output = cmd.output()
         .map_err(|e| {
             warn!("Git not available or not a git repository: {}", e);
             e.to_string()
@@ -60,10 +68,12 @@ pub async fn start_ai_session(project_path: String) -> Result<String, String> {
     let branch_name = format!("ai-review-{}", timestamp);
 
     // 创建新分支
-    let output = Command::new("git")
-        .args(["checkout", "-b", &branch_name])
-        .current_dir(&project_path)
-        .output()
+    let mut cmd = Command::new("git");
+    cmd.args(["checkout", "-b", &branch_name])
+        .current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let output = cmd.output()
         .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
@@ -82,16 +92,18 @@ pub async fn commit_ai_changes(
     info!("Committing AI changes: {}", message);
 
     // 添加所有变更
-    let _ = Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(&project_path)
-        .output();
+    let mut cmd = Command::new("git");
+    cmd.args(["add", "-A"]).current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let _ = cmd.output();
 
     // 提交
-    let output = Command::new("git")
-        .args(["commit", "-m", &message])
-        .current_dir(&project_path)
-        .output()
+    let mut cmd = Command::new("git");
+    cmd.args(["commit", "-m", &message]).current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let output = cmd.output()
         .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
@@ -99,15 +111,17 @@ pub async fn commit_ai_changes(
     }
 
     // 切回主分支并合并
-    let _ = Command::new("git")
-        .args(["checkout", "main"])
-        .current_dir(&project_path)
-        .output();
+    let mut cmd = Command::new("git");
+    cmd.args(["checkout", "main"]).current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let _ = cmd.output();
 
-    let output = Command::new("git")
-        .args(["merge", &format!("--no-ff -m \"{}\"", message)])
-        .current_dir(&project_path)
-        .output()
+    let mut cmd = Command::new("git");
+    cmd.args(["merge", &format!("--no-ff -m \"{}\"", message)]).current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let output = cmd.output()
         .map_err(|e| e.to_string())?;
 
     if !output.status.success() {
@@ -123,10 +137,11 @@ pub async fn revert_ai_changes(project_path: String) -> Result<(), String> {
     info!("Reverting AI changes for: {}", project_path);
 
     // 获取当前分支
-    let output = Command::new("git")
-        .args(["branch", "--current"])
-        .current_dir(&project_path)
-        .output()
+    let mut cmd = Command::new("git");
+    cmd.args(["branch", "--current"]).current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let output = cmd.output()
         .map_err(|e| e.to_string())?;
 
     let current_branch = String::from_utf8_lossy(&output.stdout)
@@ -135,15 +150,17 @@ pub async fn revert_ai_changes(project_path: String) -> Result<(), String> {
 
     // 如果是 AI 分支，切回主分支并删除
     if current_branch.starts_with("ai-review-") {
-        let _ = Command::new("git")
-            .args(["checkout", "main"])
-            .current_dir(&project_path)
-            .output();
+        let mut cmd = Command::new("git");
+        cmd.args(["checkout", "main"]).current_dir(&project_path);
+        #[cfg(windows)]
+        { cmd.creation_flags(CREATE_NO_WINDOW); }
+        let _ = cmd.output();
 
-        let _ = Command::new("git")
-            .args(["branch", "-D", &current_branch])
-            .current_dir(&project_path)
-            .output();
+        let mut cmd = Command::new("git");
+        cmd.args(["branch", "-D", &current_branch]).current_dir(&project_path);
+        #[cfg(windows)]
+        { cmd.creation_flags(CREATE_NO_WINDOW); }
+        let _ = cmd.output();
     }
 
     Ok(())

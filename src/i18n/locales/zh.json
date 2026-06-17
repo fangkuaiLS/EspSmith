@@ -149,7 +149,12 @@
     "sessionCost": "本次会话费用",
     "lastMsgTokens": "上条消息 Token: ↑输入 ↓输出",
     "tokens": "Token",
-    "cost": "费用"
+    "cost": "费用",
+    "typeMessageQueued": "输入消息将排在队列中...",
+    "enqueue": "加入队列",
+    "queuedCount": "队列中 {count} 条",
+    "queuedNext": "下一条",
+    "clearQueue": "清空队列"
   },
   "editor": {
     "selectFile": "选择一个文件以编辑",

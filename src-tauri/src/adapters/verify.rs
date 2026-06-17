@@ -4,6 +4,9 @@ use super::*;
 use std::io::Read;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 /// Serial output verification adapter.
 pub struct SerialVerifyAdapter;
 
@@ -115,13 +118,15 @@ impl Adapter for GdbVerifyAdapter {
         };
         let start = Instant::now();
 
-        let output = std::process::Command::new(&gdb_binary)
-            .args([
+        let mut cmd = std::process::Command::new(&gdb_binary);
+        cmd.args([
                 "-batch", "-nx",
                 "-ex", "target remote localhost:3333",
                 "-ex", command,
-            ])
-            .output();
+            ]);
+        #[cfg(windows)]
+        { cmd.creation_flags(0x08000000); }
+        let output = cmd.output();
 
         match output {
             Ok(out) => {

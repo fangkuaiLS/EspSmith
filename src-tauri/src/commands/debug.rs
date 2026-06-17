@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 use tracing::info;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugState {
     pub running: bool,
@@ -37,14 +40,16 @@ pub struct VariableInfo {
 /// 执行 GDB 命令（batch 模式，每次启动新进程）
 fn gdb_command(script: &str, target_chip: Option<&str>) -> Result<String, String> {
     let gdb_binary = super::gdb_session::find_gdb_binary(target_chip)?;
-    let child = Command::new(&gdb_binary)
-        .args(["-batch", "-nx", "-ex"])
+    let mut cmd = Command::new(&gdb_binary);
+    cmd.args(["-batch", "-nx", "-ex"])
         .arg("target remote localhost:3333")
         .arg("-ex")
         .arg(script)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    { cmd.creation_flags(0x08000000); }
+    let child = cmd.spawn()
         .map_err(|e| format!("GDB not found ({gdb_binary}): {}", e))?;
 
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
@@ -153,11 +158,13 @@ pub async fn analyze_coredump(
         elf_path, dump_path
     );
 
-    let output = Command::new(&gdb_binary)
-        .args(["-batch", "-nx", "-ex", &script])
+    let mut cmd = Command::new(&gdb_binary);
+    cmd.args(["-batch", "-nx", "-ex", &script])
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    { cmd.creation_flags(0x08000000); }
+    let output = cmd.spawn()
         .map_err(|e| format!("GDB not found ({gdb_binary}): {}", e))?
         .wait_with_output()
         .map_err(|e| e.to_string())?;

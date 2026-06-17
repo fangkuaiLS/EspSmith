@@ -4,6 +4,9 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use crate::adapters;
 use crate::experience;
 use crate::connection;
@@ -877,10 +880,12 @@ impl MCPServer {
             Ok(path) => path,
             Err(e) => return err(format!("GDB not found: {e}")),
         };
-        let output = std::process::Command::new(&gdb_binary)
-            .args(["-batch", "-nx", "-ex", "target remote localhost:3333", "-ex", command])
-            .current_dir(&self.project_root)
-            .output();
+        let mut cmd = std::process::Command::new(&gdb_binary);
+        cmd.args(["-batch", "-nx", "-ex", "target remote localhost:3333", "-ex", command])
+            .current_dir(&self.project_root);
+        #[cfg(windows)]
+        { cmd.creation_flags(0x08000000); }
+        let output = cmd.output();
         match output {
             Ok(out) => ok(json!({
                 "success": out.status.success(),

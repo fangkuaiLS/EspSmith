@@ -4,6 +4,9 @@ use super::*;
 use std::process::Command;
 use std::time::Instant;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 /// Batch GDB command adapter.
 pub struct GdbDebugAdapter {
     gdb_binary: String,
@@ -38,13 +41,15 @@ impl Adapter for GdbDebugAdapter {
         let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("localhost:3333");
 
         let start = Instant::now();
-        match Command::new(&self.gdb_binary)
-            .args([
+        let mut cmd = Command::new(&self.gdb_binary);
+        cmd.args([
                 "-batch", "-nx",
                 "-ex", &format!("target remote {}", target),
                 "-ex", command,
-            ])
-            .output()
+            ]);
+        #[cfg(windows)]
+        { cmd.creation_flags(0x08000000); }
+        match cmd.output()
         {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();

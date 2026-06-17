@@ -18,6 +18,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tracing::info;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugState {
     pub running: bool,
@@ -330,12 +333,14 @@ pub async fn debug_start(
 
     info!("Starting GDB session: {} -> {}", gdb_binary, target_addr);
 
-    let mut child = Command::new(&gdb_binary)
-        .args(["--interpreter=mi2", "-nx", "-quiet"])
+    let mut cmd = Command::new(&gdb_binary);
+    cmd.args(["--interpreter=mi2", "-nx", "-quiet"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
+        .stderr(Stdio::inherit());
+    #[cfg(windows)]
+    { cmd.creation_flags(0x08000000); }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start GDB ({gdb_binary}): {e}"))?;
 
     let stdin = child
@@ -815,12 +820,14 @@ pub async fn analyze_coredump_mi(
 ) -> Result<String, String> {
     let gdb_binary = find_gdb_binary(target_chip.as_deref())?;
 
-    let mut child = Command::new(&gdb_binary)
-        .args(["--interpreter=mi2", "-nx", "-quiet"])
+    let mut cmd = Command::new(&gdb_binary);
+    cmd.args(["--interpreter=mi2", "-nx", "-quiet"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
+        .stderr(Stdio::inherit());
+    #[cfg(windows)]
+    { cmd.creation_flags(0x08000000); }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start GDB for coredump: {e}"))?;
 
     let stdin = child
@@ -923,12 +930,14 @@ pub fn connect_session_sync(elf_path: &str, target: &str, target_chip: &str) -> 
 
     info!("Auto-connecting GDB session: {} -> {}", gdb_binary, target);
 
-    let mut child = std::process::Command::new(&gdb_binary)
-        .args(["--interpreter=mi2", "-nx", "-quiet"])
+    let mut cmd = std::process::Command::new(&gdb_binary);
+    cmd.args(["--interpreter=mi2", "-nx", "-quiet"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
+        .stderr(std::process::Stdio::inherit());
+    #[cfg(windows)]
+    { cmd.creation_flags(0x08000000); }
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start GDB ({gdb_name_for_display}): {e}"))?;
 
     let stdin = child.stdin.take().ok_or("Failed to capture GDB stdin")?;
