@@ -909,7 +909,7 @@ impl MCPServer {
             Err(e) => return err(e),
         };
         let duration_ms = u64_arg(args, "duration_ms").unwrap_or(3000);
-        match read_serial_once(&port, baudrate, duration_ms) {
+        match read_serial_once(port, baudrate, duration_ms) {
             Ok(output) => ok(json!({
                 "source": "sample",
                 "port": port,
@@ -950,7 +950,7 @@ impl MCPServer {
             Err(e) => return err(e),
         };
         let limit = u64_arg(args, "limit").unwrap_or(50).clamp(1, 1000) as usize;
-        match crate::commands::serial::ring_search(&pattern, limit) {
+        match crate::commands::serial::ring_search(pattern, limit) {
             Ok(entries) => ok(json!({
                 "pattern": pattern,
                 "matched": entries.len(),
@@ -1332,7 +1332,7 @@ impl MCPServer {
                 let verify_port = sp.get("port").and_then(|v| v.as_str()).unwrap_or(&port_clone);
                 let verify_baud = sp.get("baudrate").and_then(|v| v.as_u64()).unwrap_or(baudrate as u64) as u32;
                 let verify_monitor = sp.get("monitor_ms").and_then(|v| v.as_u64()).unwrap_or(monitor_ms);
-                let verify_expected = sp.get("expected_pattern").and_then(|v| v.as_str()).unwrap_or(&expected);
+                let verify_expected = sp.get("expected_pattern").and_then(|v| v.as_str()).unwrap_or(expected);
 
                 // 优先从共享 ring buffer 读取（GUI 监视器已连接时零延迟、无端口竞争）
                 let out = if crate::commands::serial::is_serial_open() {

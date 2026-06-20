@@ -1101,10 +1101,8 @@ pub fn read_async_stopped_event(timeout_ms: u64) -> Result<Option<String>, Strin
                 output.push('\n');
                 if trimmed.starts_with("*stopped") {
                     found_stopped = true;
-                } else if trimmed == "(gdb)" {
-                    if found_stopped {
-                        return Ok(Some(output));
-                    }
+                } else if trimmed == "(gdb)" && found_stopped {
+                    return Ok(Some(output));
                     // Prompt without *stopped — keep waiting for the actual stop event.
                 }
             }
