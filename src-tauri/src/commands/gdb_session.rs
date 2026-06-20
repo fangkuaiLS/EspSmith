@@ -1,4 +1,4 @@
-﻿//! GDB 会话持久化模块
+//! GDB 会话持久化模块
 //!
 //! 通过 GDB/MI (Machine Interface) 协议与 GDB 子进程保持长连接，
 //! 替代旧的每次启动新 GDB 进程的 batch 模式。
@@ -1121,26 +1121,4 @@ pub fn read_async_stopped_event(timeout_ms: u64) -> Result<Option<String>, Strin
             }
         }
     }
-}
-
-pub fn get_debug_state_sync() -> String {
-    let mut parts: Vec<String> = vec![];
-
-    if let Ok(pc) = gdb_send_command("-data-evaluate-expression $pc") {
-        parts.push(format!("PC: {}", pc));
-    }
-    if let Ok(sp) = gdb_send_command("-data-evaluate-expression $sp") {
-        parts.push(format!("SP: {}", sp));
-    }
-    if let Ok(bt) = gdb_send_command("-stack-info-depth 10") {
-        parts.push(format!("Stack: {}", bt));
-    }
-    if let Ok(frames) = gdb_send_command("-stack-list-frames 0 10") {
-        parts.push(frames);
-    }
-    if let Ok(bt) = gdb_send_command("-stack-list-frames 0 10") {
-        parts.push(bt);
-    }
-
-    parts.join("\n")
 }

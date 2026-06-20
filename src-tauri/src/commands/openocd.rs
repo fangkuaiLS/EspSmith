@@ -12,11 +12,6 @@ use tracing::{info, warn};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-/// 使用内置 USB-JTAG 接口的芯片列表（需要降低 adapter speed 以避免缓冲区溢出）。
-const BUILTIN_USB_JTAG_CHIPS: &[&str] = &[
-    "esp32s3", "esp32c3", "esp32c5", "esp32c6", "esp32c61", "esp32h2", "esp32p4",
-];
-
 lazy_static::lazy_static! {
     static ref OPENOCD_STATE: Mutex<Option<OpenOcdSession>> = Mutex::new(None);
 }
