@@ -133,20 +133,55 @@ impl MCPServer {
                     "elf_path": { "type": "string", "description": "Path to ELF file (e.g. build/app.elf)" },
                     "baudrate": { "type": "integer", "default": 115200 },
                     "monitor_ms": { "type": "integer", "default": 5000 },
+                    "bp_probe_ms": { "type": "integer", "default": 600, "description": "Max time (ms) to wait for a breakpoint to be hit after continue. Increase for deep callbacks (WiFi/BLE events)." },
+                    "speed_khz": { "type": "integer", "default": 20000, "description": "JTAG clock speed in kHz (default 20000). May help with signal integrity issues. Note: ESP32-S3 USB-JTAG 'IN buffer overflow' is a hardware buffer limitation, NOT a clock speed issue — lowering this won't fix it." },
                     "expected_pattern": { "type": "string", "description": "Expected text in serial output" },
                     "breakpoints": { "type": "array", "items": { "type": "string" }, "description": "Breakpoints as 'function' or 'file:line' (e.g. ['app_main', 'main/hello_world_main.c:45'])" },
                     "watch_variables": { "type": "array", "items": { "type": "string" }, "description": "Variable names to read at breakpoints (e.g. ['counter', 'state'])" }
                 },
                 "required": ["port", "chip"]
             })),
-            tool("read_serial", "Open a serial port briefly and return observed output.", json!({
+            tool("read_serial", "Read recent serial output. If the GUI serial monitor is connected, returns the latest lines from the shared ring buffer (fast, no port reopen). Otherwise falls back to opening the port briefly for duration_ms and sampling. Prefer serial_tail when the monitor is running.", json!({
                 "type": "object",
                 "properties": {
-                    "port": { "type": "string" },
+                    "port": { "type": "string", "description": "Serial port (e.g. COM3). Only required when the monitor is NOT already connected (fallback sampling path)." },
                     "baudrate": { "type": "integer", "default": 115200 },
-                    "duration_ms": { "type": "integer", "default": 3000 }
+                    "duration_ms": { "type": "integer", "default": 3000, "description": "Sampling window in ms (only used in fallback path)." }
+                }
+            })),
+            tool("serial_tail", "Return the most recent serial log lines from the shared in-memory ring buffer. Zero-latency, no port reopen — this is the recommended way to check current device output when the serial monitor is connected. Returns {lines, total_in_buffer, latest_ts_ms}.", json!({
+                "type": "object",
+                "properties": {
+                    "lines": { "type": "integer", "default": 200, "description": "Number of most recent lines to return (max 2000)." },
+                    "since_ms": { "type": "integer", "description": "If set, return only lines newer than this timestamp (from a previous call's latest_ts_ms) instead of the last N lines." }
+                }
+            })),
+            tool("serial_search", "Search the serial log history (ring buffer) with a regex. Useful for finding what happened before a crash or a specific event. Returns matching lines with timestamps.", json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Regular expression to match against each log line (e.g. 'error', 'WiFi.*connect', 'rst:0x')." },
+                    "limit": { "type": "integer", "default": 50 }
                 },
-                "required": ["port"]
+                "required": ["pattern"]
+            })),
+            tool("serial_status", "Report serial monitor state: whether it is connected, current ring buffer size (lines), latest timestamp, and whether an unanalyzed crash is pending.", json!({
+                "type": "object",
+                "properties": {}
+            })),
+            tool("serial_get_crash", "Retrieve and CONSUME the pending crash snapshot (if any). Returns the crash signature, the ~300 lines preceding it, and an optional GDB backtrace when JTAG is available. Call serial_status first to check for a pending crash; this tool returns empty if none. The snapshot is one-shot — once consumed it is cleared.", json!({
+                "type": "object",
+                "properties": {}
+            })),
+            tool("serial_send", "Send a line of text to the device over the serial TX line (a newline is appended automatically). Requires the serial monitor to be connected. Use to drive interactive shells, trigger menu selections, or inject commands.", json!({
+                "type": "object",
+                "properties": {
+                    "data": { "type": "string", "description": "Text to send. A trailing newline is added automatically." }
+                },
+                "required": ["data"]
+            })),
+            tool("reset_device", "Reset the ESP32 via the DTR/RTS hardware lines (EN pin). Requires the serial monitor to be connected (it holds the shared port). The read thread keeps running, so the reboot log is captured. Use this to restart a hung/crashed device or to re-run from boot.", json!({
+                "type": "object",
+                "properties": {}
             })),
             tool("get_hardware_config", "Read .espsmith/hardware_config.json.", json!({
                 "type": "object",
@@ -163,7 +198,10 @@ impl MCPServer {
             })),
             tool("openocd_start", "Start OpenOCD for a specific chip (auto-detects interface and target config).", json!({
                 "type": "object",
-                "properties": { "chip": { "type": "string", "description": "Target chip (e.g. esp32s3, esp32c3)" } }
+                "properties": {
+                    "chip": { "type": "string", "description": "Target chip (e.g. esp32s3, esp32c3)" },
+                    "speed_khz": { "type": "integer", "description": "JTAG clock speed in kHz. Omit to use OpenOCD default (40000). Lower values may help with signal integrity. Note: won't fix ESP32-S3 USB-JTAG 'IN buffer overflow' (that's a hardware buffer issue)." }
+                }
             })),
             tool("openocd_stop", "Stop the running OpenOCD process.", json!({
                 "type": "object", "properties": {}
@@ -254,7 +292,12 @@ impl MCPServer {
     pub fn call_tool(&self, name: &str, args: &Value) -> ToolResult {
         // Acquire global command lock for long-running tools
         let _lock = match name {
-            "build_project" | "flash_project" | "build_flash_monitor" | "closed_loop" | "jtag_runtime_check" => {
+            "build_project" | "flash_project" | "build_flash_monitor" | "closed_loop" | "jtag_runtime_check"
+            // debug_* 工具与 run_gdb_command 共享 GDB 会话，必须互斥
+            | "run_gdb_command"
+            | "debug_start" | "debug_stop" | "debug_set_breakpoint"
+            | "debug_continue" | "debug_step_over" | "debug_get_state"
+            | "debug_read_variable" | "debug_get_registers" | "debug_get_backtrace" => {
                 match crate::GlobalCommandLock::acquire(name) {
                     Ok(l) => Some(l),
                     Err(e) => return ok(json!({
@@ -281,6 +324,12 @@ impl MCPServer {
             "get_connection_mode" => self.get_connection_mode_mcp(),
             "jtag_runtime_check" => self.jtag_runtime_check(args),
             "read_serial" => self.read_serial(args),
+            "serial_tail" => self.serial_tail(args),
+            "serial_search" => self.serial_search(args),
+            "serial_status" => self.serial_status(),
+            "serial_get_crash" => self.serial_get_crash(),
+            "serial_send" => self.serial_send(args),
+            "reset_device" => self.reset_device(),
             "get_hardware_config" => self.get_hardware_config(),
             "export_hardware_header" => self.export_hardware_header(),
             "run_gdb_command" => self.run_gdb_command(args),
@@ -621,6 +670,12 @@ impl MCPServer {
         };
         let baudrate = u32_arg(args, "baudrate").unwrap_or(115200);
         let monitor_ms = u64_arg(args, "monitor_ms").unwrap_or(5000);
+        // 断点探测窗口：GDB continue 后轮询"stopped"状态的最长时间。
+        // 默认 600ms 适配快速路径；断点位于深层回调（如 WiFi/BLE 事件）时可调大。
+        let bp_probe_ms = u64_arg(args, "bp_probe_ms").unwrap_or(600);
+        // JTAG 时钟频率：默认 20000 kHz (20MHz)，避免 ESP32-S3 USB-JTAG IN buffer overflow。
+        // OpenOCD 默认 40000 kHz (40MHz) 在某些 ESP32-S3 板子上会导致缓冲区溢出。
+        let speed_khz = u32_arg(args, "speed_khz").or(Some(20000));
         let expected = str_arg(args, "expected_pattern").unwrap_or("");
         let elf_path = str_arg(args, "elf_path")
             .map(|s| adapters::normalize_path_for_gdb(s).to_string())
@@ -652,7 +707,7 @@ impl MCPServer {
         }
 
         timeline.push(json!({"phase": "openocd_start", "ms": start_total.elapsed().as_millis()}));
-        if let Err(e) = crate::commands::openocd::ensure_openocd_running(chip) {
+        if let Err(e) = crate::commands::openocd::ensure_openocd_running(chip, speed_khz) {
             return err(format!("OpenOCD start failed: {}", e));
         }
 
@@ -662,8 +717,10 @@ impl MCPServer {
             "localhost:3333",
             chip,
         ) {
+            // GDB 连接失败时收集 OpenOCD 状态诊断，帮助定位根因
+            let diag = crate::commands::openocd::diagnose_on_gdb_connect_failure();
             crate::commands::openocd::kill_openocd_sync();
-            return err(format!("GDB connect failed: {}", e));
+            return err(format!("GDB connect failed: {}{}", e, diag));
         }
 
         let mut breakpoints_set = 0usize;
@@ -697,26 +754,32 @@ impl MCPServer {
         timeline.push(json!({"phase": "continue", "ms": start_total.elapsed().as_millis()}));
         let _cont_resp = crate::commands::gdb_session::send_mi_command_sync(b"-exec-continue");
 
-        std::thread::sleep(Duration::from_millis(200));
-
+        // 等待断点命中：GDB 在异步模式下，断点命中时会自动发送 *stopped 事件，
+        // 然后返回 (gdb) 提示符。直接读取通道中的 *stopped 事件即可。
+        // 不使用 -exec-interrupt：在 ESP32-S3 双核环境下它不返回 (gdb) 提示符，
+        // 会导致 15s 超时。
         let mut gdb_stopped_info = String::new();
         let mut gdb_stopped_pc = String::new();
         let mut gdb_hit_breakpoint = false;
 
-        let probe_start = Instant::now();
-        while probe_start.elapsed() < Duration::from_millis(600) {
-            if let Ok(resp) = crate::commands::gdb_session::send_mi_command_sync(b"-thread-info") {
-                if resp.to_lowercase().contains("stopped") {
-                    let state = crate::commands::gdb_session::get_debug_state_sync();
-                    gdb_stopped_info = state;
-                    if let Ok(pc) = crate::commands::gdb_session::send_mi_command_sync(b"-data-evaluate-expression $pc") {
-                        gdb_stopped_pc = pc;
-                    }
-                    gdb_hit_breakpoint = true;
-                    break;
+        match crate::commands::gdb_session::read_async_stopped_event(bp_probe_ms) {
+            Ok(Some(stopped_output)) => {
+                gdb_stopped_info = stopped_output.clone();
+                gdb_hit_breakpoint = true;
+                if let Ok(pc) = crate::commands::gdb_session::send_mi_command_sync(b"-data-evaluate-expression $pc") {
+                    gdb_stopped_pc = pc;
                 }
             }
-            std::thread::sleep(Duration::from_millis(50));
+            Ok(None) => {
+                // 断点未命中（程序仍在运行）。跳过状态查询。
+            }
+            Err(e) => {
+                timeline.push(json!({
+                    "phase": "async_read_error",
+                    "error": e,
+                    "ms": start_total.elapsed().as_millis()
+                }));
+            }
         }
 
         if gdb_hit_breakpoint {
@@ -765,10 +828,16 @@ impl MCPServer {
         }
 
         timeline.push(json!({"phase": "serial_monitor_start", "ms": start_total.elapsed().as_millis()}));
-        let serial_output = read_serial_once(port, baudrate, monitor_ms).unwrap_or_default();
+        // 优先从共享 ring buffer 读取（避免与 GUI 监视器端口竞争）
+        let serial_output = if crate::commands::serial::is_serial_open() {
+            crate::commands::serial::ring_wait_for_output(monitor_ms.min(30_000), 40)
+        } else {
+            read_serial_once(port, baudrate, monitor_ms).unwrap_or_default()
+        };
         timeline.push(json!({
             "phase": "serial_captured",
             "length": serial_output.len(),
+            "source": if crate::commands::serial::is_serial_open() { "ring_buffer" } else { "direct_sample" },
             "ms": start_total.elapsed().as_millis()
         }));
 
@@ -816,14 +885,148 @@ impl MCPServer {
     }
 
     fn read_serial(&self, args: &Value) -> ToolResult {
+        let baudrate = u32_arg(args, "baudrate").unwrap_or(115200);
+
+        // 首选路径：共享环形缓冲（GUI 串口监视器已连接）
+        if crate::commands::serial::is_serial_open() {
+            let entries = crate::commands::serial::ring_tail(200);
+            let output = entries
+                .iter()
+                .map(|e| e.line.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            return ok(json!({
+                "source": "ring_buffer",
+                "output": output,
+                "lines": entries.len(),
+                "latest_ts_ms": crate::commands::serial::ring_latest_ts(),
+            }));
+        }
+
+        // 回退路径：一次性采样（无 GUI 连接 / CLI 场景）
         let port = match required_str_arg(args, "port") {
             Ok(v) => v,
             Err(e) => return err(e),
         };
-        let baudrate = u32_arg(args, "baudrate").unwrap_or(115200);
         let duration_ms = u64_arg(args, "duration_ms").unwrap_or(3000);
-        match read_serial_once(port, baudrate, duration_ms) {
-            Ok(output) => ok(json!({ "port": port, "baudrate": baudrate, "output": output })),
+        match read_serial_once(&port, baudrate, duration_ms) {
+            Ok(output) => ok(json!({
+                "source": "sample",
+                "port": port,
+                "baudrate": baudrate,
+                "output": output
+            })),
+            Err(e) => err(e),
+        }
+    }
+
+    /// 从共享环形缓冲取最近 N 行（或 since_ms 之后的所有行）
+    fn serial_tail(&self, args: &Value) -> ToolResult {
+        let lines = u64_arg(args, "lines").unwrap_or(200).clamp(1, 2000) as usize;
+        let since_ms = u64_arg(args, "since_ms");
+
+        let entries = match since_ms {
+            Some(ts) => crate::commands::serial::ring_since(ts),
+            None => crate::commands::serial::ring_tail(lines),
+        };
+        let total = crate::commands::serial::ring_len();
+        let latest = crate::commands::serial::ring_latest_ts();
+        ok(json!({
+            "lines": entries.iter().map(|e| json!({
+                "ts_ms": e.ts_ms,
+                "line": e.line,
+            })).collect::<Vec<_>>(),
+            "returned": entries.len(),
+            "total_in_buffer": total,
+            "latest_ts_ms": latest,
+            "monitor_connected": crate::commands::serial::is_serial_open(),
+        }))
+    }
+
+    /// 正则搜索环形缓冲历史日志
+    fn serial_search(&self, args: &Value) -> ToolResult {
+        let pattern = match required_str_arg(args, "pattern") {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
+        let limit = u64_arg(args, "limit").unwrap_or(50).clamp(1, 1000) as usize;
+        match crate::commands::serial::ring_search(&pattern, limit) {
+            Ok(entries) => ok(json!({
+                "pattern": pattern,
+                "matched": entries.len(),
+                "lines": entries.iter().map(|e| json!({
+                    "ts_ms": e.ts_ms,
+                    "line": e.line,
+                })).collect::<Vec<_>>(),
+                "total_in_buffer": crate::commands::serial::ring_len(),
+            })),
+            Err(e) => err(e),
+        }
+    }
+
+    /// 串口监视器状态概览
+    fn serial_status(&self) -> ToolResult {
+        ok(json!({
+            "monitor_connected": crate::commands::serial::is_serial_open(),
+            "buffered_lines": crate::commands::serial::ring_len(),
+            "latest_ts_ms": crate::commands::serial::ring_latest_ts(),
+            "pending_crash": crate::commands::serial::has_pending_crash(),
+        }))
+    }
+
+    /// 取走并消费待处理的崩溃现场
+    fn serial_get_crash(&self) -> ToolResult {
+        match crate::commands::serial::take_pending_crash() {
+            Some(c) => ok(json!({
+                "captured_at_unix": c.captured_at_unix,
+                "crash_summary": c.crash_summary,
+                "gdb_backtrace": c.gdb_backtrace,
+                "log_before": c.log_before.iter().map(|e| json!({
+                    "ts_ms": e.ts_ms,
+                    "line": e.line,
+                })).collect::<Vec<_>>(),
+            })),
+            None => ok(json!({ "pending_crash": false })),
+        }
+    }
+
+    /// 向设备发送一行（共享端口）
+    fn serial_send(&self, args: &Value) -> ToolResult {
+        let data = match required_str_arg(args, "data") {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
+        if !crate::commands::serial::is_serial_open() {
+            return err(
+                "Serial monitor is not connected. Open the port first (GUI Connect or a read tool).".into(),
+            );
+        }
+        // write_serial_tauri 复用共享 ACTIVE_PORT
+        let payload = if data.ends_with('\n') {
+            data.to_string()
+        } else {
+            format!("{data}\n")
+        };
+        match crate::commands::serial::write_serial_shared(&payload) {
+            Ok(_) => ok(json!({ "sent": data, "bytes": payload.len() })),
+            Err(e) => err(e),
+        }
+    }
+
+    /// 通过 DTR/RTS 复位设备（共享端口，读取线程不中断）
+    fn reset_device(&self) -> ToolResult {
+        if !crate::commands::serial::is_serial_open() {
+            return err(
+                "Serial monitor is not connected. Open the port first so the shared reader owns the handle.".into(),
+            );
+        }
+        match crate::commands::serial::serial_reset_via_dtr_rts() {
+            Ok(msg) => ok(json!({
+                "reset": "ok",
+                "method": "dtr_rts",
+                "message": msg,
+                "note": "Read thread continues; reboot log will appear in serial_tail / the monitor.",
+            })),
             Err(e) => err(e),
         }
     }
@@ -961,7 +1164,7 @@ impl MCPServer {
                 "build_project": "Execute idf.py build. Do NOT pass target unless changing chip (set-target triggers full reconfiguration). Returns { success, output, errors: [{file, line, column, type, message}] }. Call this after editing code.",
                 "flash_project": "Flash firmware to serial port (UART only). Args: { port: string }. For JTAG use closed_loop.",
                 "closed_loop": "ONE-CLICK build+flash+verify. Uses cached connection mode (JTAG → OpenOCD flash + GDB PC/stack check + serial; UART → esptool + serial). Args: { port: string, board?: string, expected_pattern?: string, force_jtag?: bool, force_uart?: bool }.",
-                "jtag_runtime_check": "DEEP JTAG RUNTIME CHECK (only for breakpoints/watch-variables). For general verification use closed_loop instead. If jtag_runtime_check fails, fall back to closed_loop — do NOT manually invoke GDB. Args: { port, chip, elf_path?, breakpoints?: string[], watch_variables?: string[], expected_pattern?: string }.",
+                "jtag_runtime_check": "DEEP JTAG RUNTIME CHECK (only for breakpoints/watch-variables). For general verification use closed_loop instead. If jtag_runtime_check fails, fall back to closed_loop — do NOT manually invoke GDB. Args: { port, chip, elf_path?, speed_khz?=20000, breakpoints?: string[], watch_variables?: string[], expected_pattern?: string }. Note: ESP32-S3 USB-JTAG 'IN buffer overflow' is a hardware issue — use --force-uart or external JTAG probe.",
                 "build_flash_monitor": "Build + flash + read serial in one step (UART only). Args: { port: string, baudrate?: int, monitor_ms?: int }.",
                 "list_serial_ports": "List available COM ports with JTAG detection. Returns { ports: [{name, vid, pid, jtag_capable?}] }.",
                 "read_serial": "Read serial output. Args: { port: string, baudrate?: int, duration_ms?: int }.",
@@ -970,7 +1173,7 @@ impl MCPServer {
                 "list_directory": "List project directory. Args: { path?: string }.",
                 "get_hardware_config": "Read .espsmith/hardware_config.json.",
                 "export_hardware_header": "Generate hardware_config.h from config.",
-                "openocd_start": "Start OpenOCD JTAG server. Args: { chip?: string }.",
+                "openocd_start": "Start OpenOCD JTAG server. Args: { chip?: string, speed_khz?: int }. Note: won't fix ESP32-S3 USB-JTAG 'IN buffer overflow' (hardware issue — use external JTAG probe or --force-uart).",
                 "openocd_stop": "Stop OpenOCD.",
                 "openocd_is_running": "Check if OpenOCD is running.",
                 "run_gdb_command": "Run GDB batch command. Args: { command: string }.",
@@ -1101,7 +1304,7 @@ impl MCPServer {
                 RecoveryPolicy::default()
             },
             timeout_s: Some(300.0),
-            guard_limit: Some(5),
+            guard_limit: Some(12),
         };
 
         if gdb_verify_enabled {
@@ -1121,45 +1324,82 @@ impl MCPServer {
             let start = Instant::now();
 
             if step.adapter.starts_with("verify.serial") {
-                match read_serial_once(&port_clone, baudrate, monitor_ms) {
-                    Ok(out) => {
-                        let crash = detect_crash_patterns(&out);
-                        if !crash.is_empty() {
-                            let mut report = format!(
-                                "CRASH DETECTED [{} mode]\nCrash type: {}\n\nSerial output:\n{}\n",
-                                connection_label, crash, out
-                            );
+                // 空输出保护阈值
+                const MIN_VERIFY_BYTES: usize = 10;
 
-                            if gdb_verify_enabled && ctx.get("flash_ok").map(|v| v.as_str()) == Some("true") {
-                                let _ = crate::commands::openocd::ensure_openocd_running(&board_clone);
-                                if let Some(ref elf) = elf_path_clone {
-                                    if crate::commands::gdb_session::connect_session_sync(
-                                        elf,
-                                        "localhost:3333",
-                                        &board_clone,
-                                    ).is_ok() {
-                                        report.push_str("\n--- GDB Crash State (auto-captured) ---\n");
-                                        match read_gdb_crash_state(elf, &board_clone) {
-                                            Ok(state) => report.push_str(&state),
-                                            Err(e) => report.push_str(&format!("GDB state read failed: {}\n", e)),
-                                        }
-                                        crate::commands::gdb_session::disconnect_session_sync();
-                                    }
-                                }
-                            }
-                            Ok(StepResult::failed(&step.name, 1, report, start.elapsed().as_millis() as u64))
-                        } else if expected.is_empty() || out.contains(expected) {
-                            Ok(StepResult::passed(&step.name, 1, start.elapsed().as_millis() as u64))
-                        } else {
-                            Ok(StepResult::failed(&step.name, 1,
-                                format!("Pattern '{}' not found in: {}", expected, out),
-                                start.elapsed().as_millis() as u64))
+                // 从 step.params 读取执行参数（优先），闭包捕获值作兜底
+                let sp = &step.params;
+                let verify_port = sp.get("port").and_then(|v| v.as_str()).unwrap_or(&port_clone);
+                let verify_baud = sp.get("baudrate").and_then(|v| v.as_u64()).unwrap_or(baudrate as u64) as u32;
+                let verify_monitor = sp.get("monitor_ms").and_then(|v| v.as_u64()).unwrap_or(monitor_ms);
+                let verify_expected = sp.get("expected_pattern").and_then(|v| v.as_str()).unwrap_or(&expected);
+
+                // 优先从共享 ring buffer 读取（GUI 监视器已连接时零延迟、无端口竞争）
+                let out = if crate::commands::serial::is_serial_open() {
+                    // 智能轮询：收到足够字节后仍短暂等待收齐一批，避免截断 boot 序列，
+                    // 同时允许 AI 传入更大的 monitor_ms（上限 30s）以适配复杂固件启动。
+                    crate::commands::serial::ring_wait_for_output(verify_monitor.min(30_000), MIN_VERIFY_BYTES * 4)
+                } else {
+                    // 回退：无 GUI 连接，直接开端口采样（兼容 CLI 场景）
+                    match read_serial_once(verify_port, verify_baud, verify_monitor) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            return Ok(StepResult::failed(
+                                &step.name, 1,
+                                format!("Serial error: {}", e),
+                                start.elapsed().as_millis() as u64,
+                            ));
                         }
                     }
-                    Err(e) => Ok(StepResult::failed(&step.name, 1, format!("Serial error: {}", e), start.elapsed().as_millis() as u64)),
+                };
+
+                // 空输出保护：串口至少要有一些数据才算通过
+                // （设备未上电、波特率错误、TX 线断线都会导致完全无输出）
+                if out.len() < MIN_VERIFY_BYTES {
+                    return Ok(StepResult::failed(
+                        &step.name, 1,
+                        format!(
+                            "Serial output too sparse ({} bytes, minimum {}). Device may not be booting. Check power, TX connection, and baud rate.",
+                            out.len(), MIN_VERIFY_BYTES
+                        ),
+                        start.elapsed().as_millis() as u64,
+                    ));
+                }
+
+                let crash = detect_crash_patterns(&out);
+                if !crash.is_empty() {
+                    let mut report = format!(
+                        "CRASH DETECTED [{} mode]\nCrash type: {}\n\nSerial output:\n{}\n",
+                        connection_label, crash, out
+                    );
+
+                    if gdb_verify_enabled && ctx.get("flash_ok").map(|v| v.as_str()) == Some("true") {
+                        let _ = crate::commands::openocd::ensure_openocd_running(&board_clone, None);
+                        if let Some(ref elf) = elf_path_clone {
+                            if crate::commands::gdb_session::connect_session_sync(
+                                elf,
+                                "localhost:3333",
+                                &board_clone,
+                            ).is_ok() {
+                                report.push_str("\n--- GDB Crash State (auto-captured) ---\n");
+                                match read_gdb_crash_state(elf, &board_clone) {
+                                    Ok(state) => report.push_str(&state),
+                                    Err(e) => report.push_str(&format!("GDB state read failed: {}\n", e)),
+                                }
+                                crate::commands::gdb_session::disconnect_session_sync();
+                            }
+                        }
+                    }
+                    Ok(StepResult::failed(&step.name, 1, report, start.elapsed().as_millis() as u64))
+                } else if verify_expected.is_empty() || out.contains(verify_expected) {
+                    Ok(StepResult::passed(&step.name, 1, start.elapsed().as_millis() as u64))
+                } else {
+                    Ok(StepResult::failed(&step.name, 1,
+                        format!("Pattern '{}' not found in: {}", verify_expected, out),
+                        start.elapsed().as_millis() as u64))
                 }
             } else if step.adapter == "verify.gdb_session" {
-                let _ = crate::commands::openocd::ensure_openocd_running(&board_clone);
+                let _ = crate::commands::openocd::ensure_openocd_running(&board_clone, None);
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if crate::commands::gdb_session::GDB_SESSION.lock().map_or(true, |g| g.is_none()) {
                     if let Some(ref elf) = elf_path_clone {
@@ -1203,7 +1443,7 @@ impl MCPServer {
                     ctx.insert("flash_ok".into(), "true".into());
 
                     if gdb_verify_enabled {
-                        let _ = crate::commands::openocd::ensure_openocd_running(&board_clone);
+                        let _ = crate::commands::openocd::ensure_openocd_running(&board_clone, None);
                         if let Some(ref elf) = elf_path_clone {
                             match crate::commands::gdb_session::connect_session_sync(
                                 elf,
@@ -1350,12 +1590,32 @@ impl MCPServer {
     }
 
     fn openocd_start_mcp(&self, args: &Value) -> ToolResult {
-        let chip = str_arg(args, "chip");
-        let result = tokio::runtime::Handle::current().block_on(async {
-            crate::commands::openocd::openocd_start(chip.map(|s| s.to_string()), None).await
-        });
-        match result {
-            Ok(msg) => ok(json!({ "started": true, "message": msg })),
+        let chip = match str_arg(args, "chip") {
+            Some(c) => c.to_string(),
+            None => {
+                // 自动从缓存端口推断芯片（与 CLI cmd_openocd_start 保持一致）
+                let flash_port = crate::ai_assistant::get_cached_flash_port();
+                crate::connection::detect_connection_mode(flash_port.as_deref())
+                    .chip_hint.as_ref()
+                    .and_then(|h| {
+                        let lower = h.to_ascii_lowercase().replace('-', "");
+                        if lower == "esp32" { None } else { Some(lower) }
+                    })
+                    .unwrap_or_else(|| "esp32".to_string())
+            }
+        };
+        let speed_khz = u32_arg(args, "speed_khz");
+
+        // 使用 ensure_openocd_running：等待 GDB/telnet 端口就绪 + 检测崩溃 + 诊断日志。
+        // 之前的 openocd_start 只是 spawn 后立即返回"成功"，AI 会误以为已就绪，
+        // 后续 debug_start 等工具会因 OpenOCD 未就绪而失败/超时。
+        match crate::commands::openocd::ensure_openocd_running(&chip, speed_khz) {
+            Ok(()) => ok(json!({
+                "started": true,
+                "chip": chip,
+                "speed_khz": speed_khz,
+                "message": format!("OpenOCD started for {} — GDB:3333, Telnet:4444", chip)
+            })),
             Err(e) => err(e),
         }
     }
@@ -1722,35 +1982,9 @@ fn chrono_id() -> String {
     format!("{:x}", ms)
 }
 
-const CRASH_PATTERNS: &[&str] = &[
-    "Guru Meditation Error",
-    "abort() was called",
-    "assert failed:",
-    "PANIC",
-    "Backtrace:",
-    "Rebooting...",
-    "LoadProhibited",
-    "StoreProhibited",
-    "IllegalInstruction",
-    "DivideByZero",
-    "Stack canary watchpoint triggered",
-    "Brownout",
-    "Core  0 register dump",
-    "Core  1 register dump",
-    "rst:",
-];
-
+/// 委托到 commands::serial::detect_crash_patterns（单一数据源）。
 fn detect_crash_patterns(serial_output: &str) -> String {
-    let mut found = Vec::new();
-    for pattern in CRASH_PATTERNS {
-        if serial_output.contains(pattern) {
-            found.push(*pattern);
-        }
-    }
-    if found.is_empty() {
-        return String::new();
-    }
-    format!("Detected crash signatures: {}", found.join(", "))
+    crate::commands::serial::detect_crash_patterns(serial_output)
 }
 
 fn read_gdb_crash_state(elf_path: &str, board: &str) -> Result<String, String> {
@@ -1763,6 +1997,13 @@ fn read_gdb_crash_state(elf_path: &str, board: &str) -> Result<String, String> {
     ) {
         return Err(format!("Failed to connect GDB for crash state: {}", e));
     }
+
+    // 竞态修复：立即 halt CPU，冻结崩溃现场。
+    // ESP32 崩溃后看门狗会很快触发重启，如果不先 halt，
+    // 读 backtrace 时 CPU 可能已重启导致状态丢失。
+    // -exec-interrupt 对已停止的 target 是 no-op，所以总是安全发送。
+    let _ = crate::commands::gdb_session::gdb_send_mi("-exec-interrupt");
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     match crate::commands::gdb_session::gdb_send_command("-stack-list-frames 0 20") {
         Ok(raw) => {

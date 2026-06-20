@@ -43,6 +43,7 @@ export interface PeripheralInstance {
 // 外设更新请求
 export interface PeripheralUpdate {
   name?: string;
+  definition_id?: string;
   pin_values?: Record<string, number>;
   library_choice?: string;
   notes?: string;
@@ -506,7 +507,7 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'res', display_name: 'RES', required: false, description: '复位引脚' },
     ],
     libraries: [
-      { id: 'u8g2', name: 'U8g2' },
+      { id: 'esp_lcd', name: 'ESP_LCD (官方组件)' },
       { id: 'ssd1306_esp', name: 'SSD1306 Driver' },
     ],
   },
@@ -519,7 +520,10 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
       { name: 'scl', display_name: 'SCL', required: true, description: 'I2C 时钟线' },
     ],
     optional_pins: [],
-    libraries: [{ id: 'u8g2', name: 'U8g2' }],
+    libraries: [
+      { id: 'esp_lcd', name: 'ESP_LCD (官方组件)' },
+      { id: 'sh1106_esp', name: 'SH1106 Driver' },
+    ],
   },
   {
     id: 'lcd1602_i2c',
@@ -1315,6 +1319,82 @@ export const PRESET_PERIPHERALS: PeripheralDefinition[] = [
     ],
     libraries: [
       { id: 'tft_espi', name: 'TFT_eSPI' },
+      { id: 'lvgl', name: 'LVGL Graphics' },
+    ],
+  },
+  {
+    id: 'ili9341_i2c',
+    name: 'ILI9341 TFT LCD (I2C, 2.8寸)',
+    category: 'display',
+    required_pins: [
+      { name: 'sda', display_name: 'SDA', required: true, description: 'I2C 数据线' },
+      { name: 'scl', display_name: 'SCL', required: true, description: 'I2C 时钟线' },
+    ],
+    optional_pins: [
+      { name: 'cs', display_name: 'CS', required: false, description: '片选(部分模块需要)' },
+      { name: 'dc', display_name: 'DC', required: false, description: '数据/命令(部分模块需要)' },
+      { name: 'rst', display_name: 'RST', required: false, description: '复位' },
+      { name: 'bl', display_name: 'BL', required: false, description: '背光控制' },
+    ],
+    libraries: [
+      { id: 'esp_lcd', name: 'ESP_LCD (官方组件)' },
+      { id: 'lvgl', name: 'LVGL Graphics' },
+    ],
+  },
+  {
+    id: 'st7789_i2c',
+    name: 'ST7789 TFT LCD (I2C)',
+    category: 'display',
+    required_pins: [
+      { name: 'sda', display_name: 'SDA', required: true, description: 'I2C 数据线' },
+      { name: 'scl', display_name: 'SCL', required: true, description: 'I2C 时钟线' },
+    ],
+    optional_pins: [
+      { name: 'cs', display_name: 'CS', required: false, description: '片选(部分模块需要)' },
+      { name: 'dc', display_name: 'DC', required: false, description: '数据/命令(部分模块需要)' },
+      { name: 'rst', display_name: 'RST', required: false, description: '复位' },
+      { name: 'bl', display_name: 'BL', required: false, description: '背光控制' },
+    ],
+    libraries: [
+      { id: 'esp_lcd', name: 'ESP_LCD (官方组件)' },
+      { id: 'lvgl', name: 'LVGL Graphics' },
+    ],
+  },
+  {
+    id: 'st7735_i2c',
+    name: 'ST7735 TFT LCD (I2C, 1.8寸)',
+    category: 'display',
+    required_pins: [
+      { name: 'sda', display_name: 'SDA', required: true, description: 'I2C 数据线' },
+      { name: 'scl', display_name: 'SCL', required: true, description: 'I2C 时钟线' },
+    ],
+    optional_pins: [
+      { name: 'cs', display_name: 'CS', required: false, description: '片选(部分模块需要)' },
+      { name: 'dc', display_name: 'DC', required: false, description: '数据/命令(部分模块需要)' },
+      { name: 'rst', display_name: 'RST', required: false, description: '复位' },
+      { name: 'bl', display_name: 'BL', required: false, description: '背光控制' },
+    ],
+    libraries: [
+      { id: 'esp_lcd', name: 'ESP_LCD (官方组件)' },
+      { id: 'lvgl', name: 'LVGL Graphics' },
+    ],
+  },
+  {
+    id: 'tft_ili9488_i2c',
+    name: 'ILI9488 TFT LCD (I2C, 3.5寸)',
+    category: 'display',
+    required_pins: [
+      { name: 'sda', display_name: 'SDA', required: true, description: 'I2C 数据线' },
+      { name: 'scl', display_name: 'SCL', required: true, description: 'I2C 时钟线' },
+    ],
+    optional_pins: [
+      { name: 'cs', display_name: 'CS', required: false, description: '片选(部分模块需要)' },
+      { name: 'dc', display_name: 'DC', required: false, description: '数据/命令(部分模块需要)' },
+      { name: 'rst', display_name: 'RST', required: false, description: '复位' },
+      { name: 'bl', display_name: 'BL', required: false, description: '背光控制' },
+    ],
+    libraries: [
+      { id: 'esp_lcd', name: 'ESP_LCD (官方组件)' },
       { id: 'lvgl', name: 'LVGL Graphics' },
     ],
   },

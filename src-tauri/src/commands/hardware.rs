@@ -40,6 +40,7 @@ pub struct PinConflict {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeripheralUpdate {
     pub name: Option<String>,
+    pub definition_id: Option<String>,
     pub pin_values: Option<HashMap<String, u32>>,
     pub library_choice: Option<String>,
     pub notes: Option<String>,
@@ -268,6 +269,9 @@ pub async fn hw_config_update_peripheral(
 
     if let Some(ref name) = update.name {
         instance.name = name.clone();
+    }
+    if let Some(ref definition_id) = update.definition_id {
+        instance.definition_id = definition_id.clone();
     }
     if let Some(ref pin_values) = update.pin_values {
         instance.pin_values = pin_values.clone();

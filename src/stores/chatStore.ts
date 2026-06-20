@@ -158,6 +158,18 @@ function getToolLabel(name: string, input: unknown): string {
             return 'List serial ports';
         case 'read_serial':
             return `Read serial: \`${inp?.port || 'port'}\``;
+        case 'serial_tail':
+            return `串口最近日志 (tail)${inp?.since_ms ? ` @>${inp.since_ms}` : ` ×${inp?.lines ?? 200}`}`;
+        case 'serial_search':
+            return `搜索串口日志: \`${String(inp?.pattern || '...').slice(0, 60)}\``;
+        case 'serial_status':
+            return '串口监视器状态';
+        case 'serial_get_crash':
+            return '取走崩溃现场';
+        case 'serial_send':
+            return `向设备发送: \`${String(inp?.data || '').slice(0, 60)}\``;
+        case 'reset_device':
+            return '复位设备 (DTR/RTS)';
         case 'run_gdb_command':
             return `Run GDB: \`${String(inp?.command || '').slice(0, 80)}\``;
         case 'get_hardware_config':
@@ -373,12 +385,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                     case 'build_flash_monitor':
                     case 'closed_loop':
                     case 'read_serial':
+                    case 'serial_tail':
+                    case 'serial_search':
+                    case 'serial_send':
+                    case 'serial_get_crash':
+                    case 'reset_device':
                     case 'run_gdb_command':
                         toolCounts.exec++;
                         break;
                     case 'list_dir': toolCounts.list++; break;
                     case 'list_directory':
                     case 'list_serial_ports':
+                    case 'serial_status':
                         toolCounts.list++;
                         break;
                 }

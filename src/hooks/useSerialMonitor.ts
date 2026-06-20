@@ -15,6 +15,7 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
   const [serialInput, setSerialInput] = useState('');
   const [serialConnected, setSerialConnected] = useState(false);
   const [serialBaudRate, setSerialBaudRate] = useState('115200');
+  const [crashTs, setCrashTs] = useState<number | null>(null);
   const serialBufferRef = useRef<string[]>([]);
 
   useEffect(() => {
@@ -39,9 +40,14 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
         });
         const unsubDisconnect = await listen<{ port: string; error: string; reason: string }>('serial-disconnected', (event) => {
           setSerialConnected(false);
-          setSerialOutput((prev) => [...prev, `[断开] ${event.payload.port}: ${event.payload.error || event.payload.reason || ''}`]);
+          setSerialOutput((prev) => [...prev, '', `[断开] ${event.payload.port}: ${event.payload.error || event.payload.reason || ''}`]);
         });
-        unlisten = () => { unsubData(); unsubDisconnect(); };
+        // 后端在串口日志中检测到崩溃模式时推送：高亮 + Toast 通知
+        const unsubCrash = await listen<{ port: string; summary: string; ts_ms: number }>('crash-detected', (event) => {
+          setCrashTs(event.payload.ts_ms);
+          showToast('error', `${event.payload.port}: ${event.payload.summary}`);
+        });
+        unlisten = () => { unsubData(); unsubDisconnect(); unsubCrash(); };
       } catch { /* serial events may not be available */ }
     })();
     return () => { unlisten?.(); };
@@ -95,6 +101,7 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
     serialBaudRate,
     setSerialBaudRate,
     serialBufferRef,
+    crashTs,
     handleSerialConnect,
     handleSerialSend,
   };

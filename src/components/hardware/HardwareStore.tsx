@@ -128,7 +128,7 @@ function PeripheralForm({
                 className="flex-1 px-2.5 py-1.5 text-[12px] bg-surface-overlay border border-border-subtle rounded-md text-text-primary font-mono placeholder:text-text-disabled focus:outline-none focus:border-accent"
               />
               <span className="text-[10px] text-text-disabled hidden sm:block w-16 shrink-0">
-                {pin.description}
+                {t('hardware.pinDesc.' + pin.description, { defaultValue: pin.description })}
               </span>
             </div>
           ))}
@@ -280,6 +280,10 @@ const PERIPHERAL_ICONS: Record<string, React.ElementType> = {
   lcd1602_parallel: Hash,
   epaper_29: Monitor,
   epaper_42: Monitor,
+  ili9341_i2c: Monitor,
+  st7789_i2c: Monitor,
+  st7735_i2c: Monitor,
+  tft_ili9488_i2c: Monitor,
   // 通信
   hc05_bluetooth: Wifi,
   nrf24l01: Radio,
@@ -632,6 +636,7 @@ export function HardwareStore() {
       if (editingInstance) {
         const update: PeripheralUpdate = {
           name: instance.name,
+          definition_id: instance.definition_id,
           pin_values: instance.pin_values,
           library_choice: instance.library_choice,
           notes: instance.notes,
@@ -701,12 +706,14 @@ export function HardwareStore() {
           <TypeSelector onSelect={handleSelectType} onManualAdd={handleManualAdd} />
         ) : view === 'manual' ? (
           <ManualAddForm
+            key={editingInstance?.id || 'new'}
             initialValues={editingInstance || undefined}
             onSave={handleSavePeripheral}
             onCancel={() => { setView('list'); setEditingInstance(null); }}
           />
         ) : view === 'configure' && selectedType ? (
           <PeripheralForm
+            key={editingInstance?.id || 'new'}
             peripheral={selectedType}
             initialValues={editingInstance || undefined}
             onSave={handleSavePeripheral}

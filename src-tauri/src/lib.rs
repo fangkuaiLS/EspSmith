@@ -141,6 +141,15 @@ fn init_logging() {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    // 捕获 panic 信息并记录到日志，避免崩溃时丢失诊断信息。
+    // 注意：原生崩溃（栈溢出、访问违规等）不会被 panic hook 捕获，
+    // 但 Rust panic（unwrap 失败、数组越界等）会被捕获。
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        tracing::error!("PANIC: {}\nBacktrace:\n{}", info, backtrace);
+        eprintln!("PANIC: {}\nBacktrace:\n{}", info, backtrace);
+    }));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -942,12 +951,16 @@ fn cmd_openocd_start(args: &[String]) -> Result<serde_json::Value, String> {
                 })
         })
         .unwrap_or_else(|| "esp32".to_string());
-    commands::openocd::ensure_openocd_running(&chip)?;
+    // --speed 参数：降低 JTAG 时钟频率可避免 ESP32-S3 USB-JTAG IN buffer overflow
+    let speed_khz = parse_named_arg(args, "speed")
+        .and_then(|s| s.parse::<u32>().ok());
+    commands::openocd::ensure_openocd_running(&chip, speed_khz)?;
     Ok(serde_json::json!({
         "success": true,
         "started": true,
         "chip": chip,
-        "message": format!("OpenOCD started for {}", chip)
+        "speed_khz": speed_khz,
+        "message": format!("OpenOCD started for {} (speed: {:?})", chip, speed_khz)
     }))
 }
 

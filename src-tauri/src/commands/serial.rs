@@ -7,10 +7,12 @@
 //! - 事件推送到前端
 
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -26,8 +28,286 @@ pub struct SerialPortInfo {
     pub chip_type: Option<String>,
 }
 
+/// 环形缓冲区中单行日志条目。
+/// `ts_ms` 为系统启动以来的单调毫秒数（Instant 基准），用于 since() 增量读取。
+#[derive(Debug, Clone, Serialize)]
+pub struct RingEntry {
+    /// 自进程串口读取起点起算的单调毫秒时间戳
+    pub ts_ms: u64,
+    pub line: String,
+}
+
+/// 内存环形缓冲区：持续累积串口日志，满容量后自动滚动。
+/// 同时供 GUI 与 AI（MCP 工具）读取，保证两者看到完全一致的数据。
+pub struct RingBuffer {
+    lines: VecDeque<RingEntry>,
+    max_lines: usize,
+    /// 读取线程启动时刻（作为 ts_ms 的零点）
+    epoch: Instant,
+}
+
+impl RingBuffer {
+    pub fn new(max_lines: usize) -> Self {
+        Self {
+            lines: VecDeque::with_capacity(max_lines.min(8192)),
+            max_lines,
+            epoch: Instant::now(),
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+
+    /// 写入一行（调用方负责行分割）。满容量时自动淘汰最旧条目。
+    pub fn push_line(&mut self, line: String) -> u64 {
+        let ts = self.now_ms();
+        if self.lines.len() >= self.max_lines {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(RingEntry { ts_ms: ts, line });
+        ts
+    }
+
+    /// 取最近 n 行
+    pub fn tail(&self, n: usize) -> Vec<RingEntry> {
+        let n = n.min(self.lines.len());
+        self.lines.iter().rev().take(n).rev().cloned().collect()
+    }
+
+    /// 取时间戳 since_ms 之后的所有行（不含等于）
+    pub fn since(&self, since_ms: u64) -> Vec<RingEntry> {
+        self.lines
+            .iter()
+            .filter(|e| e.ts_ms > since_ms)
+            .cloned()
+            .collect()
+    }
+
+    /// 正则搜索历史日志，返回最多 limit 条匹配
+    pub fn search(&self, re: &regex::Regex, limit: usize) -> Vec<RingEntry> {
+        self.lines
+            .iter()
+            .filter(|e| re.is_match(&e.line))
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    /// 当前最新一行的时间戳（无数据返回 0）
+    pub fn latest_ts(&self) -> u64 {
+        self.lines.back().map(|e| e.ts_ms).unwrap_or(0)
+    }
+}
+
+/// 待 AI 消费的崩溃现场快照。
+pub struct PendingCrash {
+    pub captured_at_unix: u64,
+    /// 崩溃前的日志（最近 ~300 行）
+    pub log_before: Vec<RingEntry>,
+    /// 崩溃信息摘要（detect_crash_patterns 的命中结果）
+    pub crash_summary: String,
+    /// 若 JTAG 可用，附带的 GDB backtrace（可选）
+    pub gdb_backtrace: Option<String>,
+}
+
 lazy_static::lazy_static! {
     static ref ACTIVE_PORT: Mutex<Option<Box<dyn serialport::SerialPort>>> = Mutex::new(None);
+
+    /// 共享环形缓冲区：GUI 与 AI 均通过此读取串口历史
+    static ref RING_BUFFER: Arc<RwLock<RingBuffer>> =
+        Arc::new(RwLock::new(RingBuffer::new(50_000)));
+
+    /// 待消费的崩溃现场（一次性的，AI 取走后清空）
+    static ref PENDING_CRASH: Arc<Mutex<Option<PendingCrash>>> =
+        Arc::new(Mutex::new(None));
+}
+
+/// 环形缓冲区行容量（默认 50000，约 10MB）。
+/// 可通过环境变量 ESPSMITH_RING_LINES 覆盖（仅首次读取时生效）。
+#[allow(dead_code)]
+fn configured_ring_lines() -> usize {
+    std::env::var("ESPSMITH_RING_LINES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &usize| n >= 1000)
+        .unwrap_or(50_000)
+}
+
+/// 崩溃捕获的上下文行数（崩溃前回溯多少行）
+fn configured_crash_capture_lines() -> usize {
+    std::env::var("ESPSMITH_CRASH_LINES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &usize| n >= 50)
+        .unwrap_or(300)
+}
+
+/// 是否在检测到崩溃时自动复位恢复（默认 true）
+pub fn auto_recover_on_crash() -> bool {
+    std::env::var("ESPSMITH_AUTO_RECOVER")
+        .ok()
+        .map(|v| !matches!(v.to_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true)
+}
+
+// ===== 公共读取 API（供 MCP 工具与 CLI 调用）=====
+
+/// 取环形缓冲区最近 n 行
+pub fn ring_tail(n: usize) -> Vec<RingEntry> {
+    RING_BUFFER.read().unwrap().tail(n)
+}
+
+/// 取 since_ms 之后的所有行
+pub fn ring_since(since_ms: u64) -> Vec<RingEntry> {
+    RING_BUFFER.read().unwrap().since(since_ms)
+}
+
+/// 正则搜索历史日志
+pub fn ring_search(pattern: &str, limit: usize) -> Result<Vec<RingEntry>, String> {
+    let re = regex::Regex::new(pattern).map_err(|e| format!("Invalid regex: {e}"))?;
+    Ok(RING_BUFFER.read().unwrap().search(&re, limit))
+}
+
+/// 缓冲区当前条目数
+pub fn ring_len() -> usize {
+    RING_BUFFER.read().unwrap().len()
+}
+
+/// 智能等待并返回新输出。
+///
+/// 行为：
+/// 1. 记录起始时间戳 ts0；
+/// 2. 在最多 `max_wait_ms`（上限 30s，由调用方传入）内轮询，每 100ms 检查一次；
+/// 3. 一旦累计字节数达到 `enough_bytes`，再等 300ms 收齐这批，然后返回；
+/// 4. 超时仍未达阈值，返回已收到的所有新行；
+/// 5. 完全无新数据时，返回最近 500 行作为兜底。
+///
+/// 这样既避免固定睡眠浪费时间，又能让复杂固件（WiFi/BLE 初始化）有足够启动时间。
+pub fn ring_wait_for_output(max_wait_ms: u64, enough_bytes: usize) -> String {
+    let max_wait_ms = max_wait_ms.min(30_000);
+    let ts0 = ring_latest_ts();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
+
+    loop {
+        let now_entries = RING_BUFFER.read().unwrap().since(ts0);
+        let total_bytes: usize = now_entries.iter().map(|e| e.line.len() + 1).sum();
+
+        if total_bytes >= enough_bytes {
+            // 收齐这批：再等 300ms 让连续输出落定
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            break;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    let entries = RING_BUFFER.read().unwrap().since(ts0);
+    if entries.is_empty() {
+        // 完全无新数据：返回最近 500 行兜底
+        ring_tail(500)
+            .iter()
+            .map(|e| e.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        entries
+            .iter()
+            .map(|e| e.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// 最新行时间戳（无数据返回 0）
+pub fn ring_latest_ts() -> u64 {
+    RING_BUFFER.read().unwrap().latest_ts()
+}
+
+/// 是否有串口处于连接（读取中）状态
+pub fn is_serial_open() -> bool {
+    ACTIVE_PORT.lock().unwrap().is_some()
+}
+
+/// 取走待消费的崩溃现场（取走后清空，避免重复投递给 AI）
+pub fn take_pending_crash() -> Option<PendingCrash> {
+    PENDING_CRASH.lock().unwrap().take()
+}
+
+/// 是否存在未消费的崩溃现场
+pub fn has_pending_crash() -> bool {
+    PENDING_CRASH.lock().unwrap().is_some()
+}
+
+// ===== 崩溃模式检测（与 mcp.rs 共用）=====
+
+/// ESP32 常见崩溃/异常模式。读线程与 closed_loop 验证共用此列表。
+pub const CRASH_PATTERNS: &[&str] = &[
+    "Guru Meditation Error",
+    "abort() was called",
+    "assert failed:",
+    "PANIC",
+    "Backtrace:",
+    "Rebooting...",
+    "LoadProhibited",
+    "StoreProhibited",
+    "IllegalInstruction",
+    "DivideByZero",
+    "Stack canary watchpoint triggered",
+    "Brownout",
+    "Core  0 register dump",
+    "Core  1 register dump",
+    "rst:",
+];
+
+/// 检测文本中是否包含崩溃特征，命中则返回拼接的命中模式字符串。
+pub fn detect_crash_patterns(text: &str) -> String {
+    let mut found = Vec::new();
+    for pattern in CRASH_PATTERNS {
+        if text.contains(pattern) {
+            found.push(*pattern);
+        }
+    }
+    if found.is_empty() {
+        return String::new();
+    }
+    format!("Detected crash signatures: {}", found.join(", "))
+}
+
+/// 捕获崩溃现场：截取环形缓冲尾部日志，调用方可选择附带 GDB backtrace。
+/// 写入 PENDING_CRASH 并返回是否首次写入（避免同一崩溃反复覆盖）。
+pub fn capture_crash_context(crash_summary: String, gdb_backtrace: Option<String>) -> bool {
+    let capture_lines = configured_crash_capture_lines();
+    let log_before = {
+        let ring = RING_BUFFER.read().unwrap();
+        ring.tail(capture_lines)
+    };
+    let captured_at_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let crash = PendingCrash {
+        captured_at_unix,
+        log_before,
+        crash_summary,
+        gdb_backtrace,
+    };
+    let mut slot = PENDING_CRASH.lock().unwrap();
+    let was_empty = slot.is_none();
+    *slot = Some(crash);
+    was_empty
 }
 
 fn disconnect_signal_path() -> std::path::PathBuf {
@@ -248,10 +528,18 @@ fn is_device_disconnect_error(e: &std::io::Error) -> bool {
 /// - TimedOut / WouldBlock：正常超时，继续读取
 /// - BrokenPipe / DeviceNotFound / ConnectionReset：设备断开，发送事件并退出
 /// - 其他错误：累计连续错误次数，超过阈值后断开
+///
+/// 数据流：每个字节块先按 `\n` 切分为完整行，完整行进入共享环形缓冲区
+/// （供 GUI 与 AI 一致读取），同时 emit "serial-data" 给前端。每行还会
+/// 扫描崩溃模式：命中即捕获现场、emit "crash-detected"，并可自动复位恢复。
 fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
     let mut buf = [0u8; 1024];
     let mut consecutive_errors: u32 = 0;
     const MAX_CONSECUTIVE_ERRORS: u32 = 100;
+    // 半行续接缓冲：ESP32 日志可能跨多个 read() 到达
+    let mut partial: String = String::new();
+    // 简易崩溃去抖：上次触发崩溃捕获的时间戳，避免崩溃转储的后续行反复触发
+    let mut last_crash_trigger_ts: u64 = 0;
 
     loop {
         if check_disconnect_signal() {
@@ -273,10 +561,56 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
             Ok(n) if n > 0 => {
                 consecutive_errors = 0;
                 let data = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                // 1) 前端：保留原始 chunk 推送（兼容现有 useSerialMonitor）
                 let _ = app.emit("serial-data", serde_json::json!({
                     "port": &port_name,
                     "data": data,
                 }));
+
+                // 2) 行分割 + 写入共享环形缓冲 + 崩溃扫描
+                partial.push_str(&data);
+                while let Some(idx) = partial.find('\n') {
+                    let mut line = partial.split_off(idx + 1);
+                    std::mem::swap(&mut line, &mut partial);
+                    // `line` 现在是本行内容（含可能的 \r）
+                    let trimmed = line.trim_end_matches('\r');
+
+                    let ts_ms = RING_BUFFER.write().unwrap().push_line(trimmed.to_string());
+
+                    // 崩溃模式扫描（去抖：距上次触发超过 3 秒才再次捕获）
+                    let crash = detect_crash_patterns(trimmed);
+                    if !crash.is_empty() && ts_ms.saturating_sub(last_crash_trigger_ts) > 3000 {
+                        last_crash_trigger_ts = ts_ms;
+                        let summary = crash.clone();
+                        // 捕获现场（无 GDB backtrace，读线程不阻塞连接 GDB）
+                        let is_new = capture_crash_context(crash, None);
+                        if is_new {
+                            warn!("Crash detected on {}: {}", port_name, summary);
+                            let _ = app.emit("crash-detected", serde_json::json!({
+                                "port": &port_name,
+                                "summary": summary,
+                                "ts_ms": ts_ms,
+                            }));
+                        }
+
+                        // 自动复位恢复（让崩溃转储写完后再复位）
+                        if auto_recover_on_crash() {
+                            let app_clone = app.clone();
+                            let port_clone = port_name.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(800));
+                                let _ = app_clone.emit("serial-auto-recover", serde_json::json!({
+                                    "port": &port_clone,
+                                }));
+                                match serial_reset_via_dtr_rts() {
+                                    Ok(msg) => info!("Auto-recover reset: {}", msg),
+                                    Err(e) => warn!("Auto-recover reset failed: {}", e),
+                                }
+                            });
+                        }
+                    }
+                }
             }
             Ok(_) => {
                 // read() 返回 Ok(0) 表示超时无数据，正常继续
@@ -362,11 +696,20 @@ pub fn disconnect_serial_sync() {
 #[tauri::command]
 pub async fn write_serial(data: String) -> Result<(), String> {
     info!("Writing to serial: {} bytes", data.len());
+    write_serial_shared(&data)?;
+    Ok(())
+}
+
+/// 同步写入共享串口（供 MCP 工具与读线程复位后调用）。
+/// 复用全局 ACTIVE_PORT，无需重新打开。
+pub fn write_serial_shared(data: &str) -> Result<(), String> {
     let mut guard = ACTIVE_PORT.lock().unwrap();
     if let Some(port) = guard.as_mut() {
         port.write(data.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        Err("No active serial port".into())
     }
-    Ok(())
 }
 
 /// 通过 DTR/RTS 信号复位 ESP32 芯片（供 Self-Healing recovery 调用）

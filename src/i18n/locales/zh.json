@@ -427,8 +427,9 @@
       "vl53l0x_esp": "VL53L0X Driver",
       "rotary_encoder": "Rotary Encoder Library",
       "ir_remote": "IRremote Library",
-      "u8g2": "U8g2",
+      "esp_lcd": "ESP_LCD (官方组件)",
       "ssd1306_esp": "SSD1306 Driver",
+      "sh1106_esp": "SH1106 Driver",
       "lcd_i2c": "LiquidCrystal I2C",
       "tft_espi": "TFT_eSPI",
       "lvgl": "LVGL Graphics",
@@ -572,7 +573,11 @@
       "weight_hx711": "HX711 称重传感器",
       "ph_sensor": "pH值传感器模块",
       "co2_mh_z19": "MH-Z19 CO2传感器",
-      "tft_ili9488": "ILI9488 TFT LCD (3.5寸)"
+      "tft_ili9488": "ILI9488 TFT LCD (3.5寸)",
+      "ili9341_i2c": "ILI9341 TFT LCD (I2C, 2.8寸)",
+      "st7789_i2c": "ST7789 TFT LCD (I2C)",
+      "st7735_i2c": "ST7735 TFT LCD (I2C, 1.8寸)",
+      "tft_ili9488_i2c": "ILI9488 TFT LCD (I2C, 3.5寸)"
     },
     "connectionMode": {
       "jtag": "JTAG",

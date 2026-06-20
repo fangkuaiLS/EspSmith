@@ -75,7 +75,7 @@ impl Adapter for GdbSessionVerifyAdapter {
                 }
             });
 
-        if let Err(e) = crate::commands::openocd::ensure_openocd_running(&target_chip) {
+        if let Err(e) = crate::commands::openocd::ensure_openocd_running(&target_chip, None) {
             return super::AdapterResult::fail(
                 format!("OpenOCD not running and cannot start: {}", e),
                 Some(e),

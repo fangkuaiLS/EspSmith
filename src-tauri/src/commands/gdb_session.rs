@@ -1,4 +1,4 @@
-//! GDB 会话持久化模块
+﻿//! GDB 会话持久化模块
 //!
 //! 通过 GDB/MI (Machine Interface) 协议与 GDB 子进程保持长连接，
 //! 替代旧的每次启动新 GDB 进程的 batch 模式。
@@ -60,13 +60,23 @@ pub struct VariableInfo {
 pub(crate) struct GdbSession {
     child: Child,
     stdin: std::process::ChildStdin,
-    stdout_lines: BufReader<std::process::ChildStdout>,
+    /// GDB stdout 读取泵的接收端。后台线程持续 read_line 并通过此通道投递，
+    /// 使 send_command 可用 recv_timeout 实现命令级超时，避免无限阻塞。
+    rx: std::sync::mpsc::Receiver<GdbLine>,
     #[allow(dead_code)] // 预留：GDB会话元数据
     target: String,
     #[allow(dead_code)] // 预留：GDB会话元数据
     gdb_binary: String,
     connected: bool,
     token: u32,
+}
+
+/// 读取泵投递的一行结果。
+enum GdbLine {
+    /// 一行 stdout 内容（不含尾随换行）
+    Line(String),
+    /// stdout 已关闭（GDB 进程退出），后续不会再有数据
+    Eof,
 }
 
 impl GdbSession {
@@ -83,21 +93,36 @@ impl GdbSession {
             .map_err(|e| format!("Failed to flush GDB stdin: {e}"))?;
 
         let mut output = String::new();
-        let mut line = String::new();
+        // 命令级超时：GDB 正常响应很快（<1s），15 秒无响应视为挂死。
+        // 注意：-target-select 涉及远程 JTAG 连接，可能需要几秒，15s 足够。
+        const CMD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
+        let mut recv_count = 0usize;
         loop {
-            line.clear();
-            let n = self
-                .stdout_lines
-                .read_line(&mut line)
-                .map_err(|e| format!("Failed to read GDB stdout: {e}"))?;
-            if n == 0 {
-                return Err("GDB process terminated unexpectedly".into());
-            }
-            let trimmed = line.trim_end_matches(['\r', '\n']);
+            let line = match self.rx.recv_timeout(CMD_DEADLINE) {
+                Ok(GdbLine::Line(l)) => l,
+                Ok(GdbLine::Eof) => {
+                    self.connected = false;
+                    return Err("GDB process terminated unexpectedly (EOF). Restart debug session.".into());
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    self.connected = false;
+                    return Err(format!(
+                        "GDB command timed out after {}s (no '(gdb)' prompt, received {} lines). GDB may be hung; restart debug session.",
+                        CMD_DEADLINE.as_secs(), recv_count
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    self.connected = false;
+                    return Err("GDB read pump disconnected unexpectedly.".into());
+                }
+            };
+            recv_count += 1;
+            let trimmed = line.trim();
             if trimmed == "(gdb)" {
                 break;
             }
             output.push_str(&line);
+            output.push('\n');
             if trimmed.starts_with(&format!("{token}^error")) {
                 let msg = extract_mi_field(trimmed, "msg");
                 return Err(format!("GDB error: {}", msg.unwrap_or_else(|| trimmed.into())));
@@ -121,6 +146,35 @@ impl GdbSession {
         }
         Ok(raw)
     }
+}
+
+/// 启动 GDB stdout 常驻读取泵。返回接收端。
+/// 后台线程持续 read_line 并通过通道投递，GdbSession::send_command 用 recv_timeout 消费。
+fn spawn_read_pump(stdout: std::process::ChildStdout) -> std::sync::mpsc::Receiver<GdbLine> {
+    let (tx, rx) = std::sync::mpsc::channel::<GdbLine>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    let _ = tx.send(GdbLine::Eof);
+                    break;
+                }
+                Ok(_) => {
+                    if tx.send(GdbLine::Line(std::mem::take(&mut line))).is_err() {
+                        break; // 接收端已丢弃
+                    }
+                }
+                Err(_) => {
+                    let _ = tx.send(GdbLine::Eof);
+                    break;
+                }
+            }
+        }
+    });
+    rx
 }
 
 lazy_static::lazy_static! {
@@ -181,10 +235,9 @@ pub(crate) fn resolve_gdb_binary(target_chip: Option<&str>) -> String {
     match target_chip.map(|c| c.to_ascii_lowercase()).as_deref() {
         Some("esp32c3") | Some("esp32c5") | Some("esp32c6") | Some("esp32c61")
         | Some("esp32h2") | Some("esp32p4") => "riscv32-esp-elf-gdb".into(),
-        Some("esp32") | Some("esp32s2") | Some("esp32s3") | Some(_) => {
-            "xtensa-esp32-elf-gdb".into()
-        }
-        None => "xtensa-esp32-elf-gdb".into(),
+        Some("esp32s2") => "xtensa-esp32s2-elf-gdb".into(),
+        Some("esp32s3") => "xtensa-esp32s3-elf-gdb".into(),
+        Some("esp32") | Some(_) | None => "xtensa-esp32-elf-gdb".into(),
     }
 }
 
@@ -351,12 +404,12 @@ pub async fn debug_start(
         .stdout
         .take()
         .ok_or("Failed to capture GDB stdout")?;
-    let stdout_lines = BufReader::new(stdout);
+    let rx = spawn_read_pump(stdout);
 
     let mut session = GdbSession {
         child,
         stdin,
-        stdout_lines,
+        rx,
         target: target_addr.clone(),
         gdb_binary: gdb_binary.clone(),
         connected: false,
@@ -838,12 +891,12 @@ pub async fn analyze_coredump_mi(
         .stdout
         .take()
         .ok_or("Failed to capture GDB stdout")?;
-    let stdout_lines = BufReader::new(stdout);
+    let rx = spawn_read_pump(stdout);
 
     let mut session = GdbSession {
         child,
         stdin,
-        stdout_lines,
+        rx,
         target: "coredump".into(),
         gdb_binary,
         connected: false,
@@ -912,7 +965,8 @@ pub fn disconnect_session_sync() {
     if let Ok(mut guard) = GDB_SESSION.lock() {
         if let Some(mut session) = guard.take() {
             info!("Disconnecting GDB session (sync)");
-            let _ = session.send_command("-gdb-exit");
+            // 直接 kill GDB 进程：当目标程序仍在运行时，GDB 不会响应 -gdb-exit，
+            // send_command 会阻塞 15s 超时。kill + wait 是最可靠的清理方式。
             let _ = session.child.kill();
             let _ = session.child.wait();
         }
@@ -942,36 +996,41 @@ pub fn connect_session_sync(elf_path: &str, target: &str, target_chip: &str) -> 
 
     let stdin = child.stdin.take().ok_or("Failed to capture GDB stdin")?;
     let stdout = child.stdout.take().ok_or("Failed to capture GDB stdout")?;
-    let stdout_lines = std::io::BufReader::new(stdout);
+
+    let rx = spawn_read_pump(stdout);
 
     let mut session = GdbSession {
         child,
         stdin,
-        stdout_lines,
+        rx,
         target: target.to_string(),
         gdb_binary: gdb_binary.clone(),
         connected: false,
         token: 0,
     };
 
+    // 读取初始化输出直到 (gdb) 提示符（5 秒超时）
     let mut init_output = String::new();
-    let mut line = String::new();
     let init_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut init_line_count = 0usize;
     while std::time::Instant::now() < init_deadline {
-        line.clear();
-        match session.stdout_lines.read_line(&mut line) {
-            Ok(0) => return Err("GDB process terminated during init".into()),
-            Ok(_) => {
-                init_output.push_str(&line);
-                let trimmed = line.trim();
+        match session.rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(GdbLine::Line(l)) => {
+                init_line_count += 1;
+                init_output.push_str(&l);
+                let trimmed = l.trim();
                 if trimmed == "(gdb)" || trimmed.ends_with("(gdb)") {
                     break;
                 }
             }
-            Err(e) => return Err(format!("GDB init read error: {}", e)),
+            Ok(GdbLine::Eof) => return Err("GDB process terminated during init".into()),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("GDB read pump disconnected during init".into())
+            }
         }
     }
-    info!("GDB init output: {} bytes", init_output.len());
+    info!("GDB init output: {} bytes, {} lines", init_output.len(), init_line_count);
 
     let elf_path_normalized = crate::adapters::normalize_path_for_gdb(elf_path);
     session.send_mi_and_get_result(&format!("-file-exec-and-symbols {}", elf_path_normalized))
@@ -1009,6 +1068,59 @@ pub fn send_mi_command_sync(cmd: &[u8]) -> Result<String, String> {
         }
     }
     Ok(raw)
+}
+
+/// After `-exec-continue`, GDB runs the program asynchronously. When a
+/// breakpoint is hit, GDB sends a `*stopped` async record followed by the
+/// `(gdb)` prompt. This function reads the channel for `*stopped` within
+/// the given timeout.
+///
+/// Returns `Ok(Some(output))` if `*stopped` was received (breakpoint hit).
+/// Returns `Ok(None)` if the timeout elapsed without `*stopped` (program
+/// still running — caller should skip state queries and proceed to cleanup).
+/// Returns `Err` on EOF / channel disconnect.
+pub fn read_async_stopped_event(timeout_ms: u64) -> Result<Option<String>, String> {
+    let mut guard = GDB_SESSION.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_mut().ok_or("No active GDB session")?;
+    check_session_alive(session)?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    let mut output = String::new();
+    let mut found_stopped = false;
+
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(if found_stopped { Some(output) } else { None });
+        }
+
+        match session.rx.recv_timeout(remaining) {
+            Ok(GdbLine::Line(l)) => {
+                let trimmed = l.trim();
+                output.push_str(&l);
+                output.push('\n');
+                if trimmed.starts_with("*stopped") {
+                    found_stopped = true;
+                } else if trimmed == "(gdb)" {
+                    if found_stopped {
+                        return Ok(Some(output));
+                    }
+                    // Prompt without *stopped — keep waiting for the actual stop event.
+                }
+            }
+            Ok(GdbLine::Eof) => {
+                session.connected = false;
+                return Err("GDB process terminated unexpectedly (EOF).".into());
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                return Ok(if found_stopped { Some(output) } else { None });
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                session.connected = false;
+                return Err("GDB read pump disconnected unexpectedly.".into());
+            }
+        }
+    }
 }
 
 pub fn get_debug_state_sync() -> String {

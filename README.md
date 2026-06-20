@@ -472,7 +472,7 @@ esp-ai-studio/
 
 本项目深受以下优秀工具的启发：
 
-- **[AEL (AI Embedded Lab)](https://github.com/nicekwell/AI-Instrument-Closed-Loop)** — 多仪器闭环调试系统，启发了 Self-Healing 引擎和 Experience 引擎的设计
+- **[AEL (AI Embedded Lab)](https://github.com/EZ32Inc/ai-embedded-lab)** — 多仪器闭环调试系统，启发了 Self-Healing 引擎和 Experience 引擎的设计
 - **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — 官方 ESP-IDF 扩展，启发了 IDF 工作流和串口管理
 - **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI 工具，提供 DeepSeek AI 能力支持
 - **[MiMo-Code](https://github.com/mimocode/mimo-code)** — AI Agent CLI 工具，提供多模型 AI 能力与内置工具调用支持

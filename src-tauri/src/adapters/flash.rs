@@ -109,7 +109,7 @@ impl Adapter for OpenOcdFlashAdapter {
             );
         }
 
-        if let Err(e) = crate::commands::openocd::ensure_openocd_running(&chip) {
+        if let Err(e) = crate::commands::openocd::ensure_openocd_running(&chip, None) {
             return AdapterResult::fail(
                 format!("Failed to start OpenOCD: {}", e),
                 Some(e),
