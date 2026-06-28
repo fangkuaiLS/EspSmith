@@ -68,10 +68,8 @@ fn main() {
     let startup_project = args.iter().enumerate().find_map(|(i, arg)| {
         if arg == "--project" {
             args.get(i + 1).cloned()
-        } else if let Some(rest) = arg.strip_prefix("--project=") {
-            Some(rest.to_string())
         } else {
-            None
+            arg.strip_prefix("--project=").map(|rest| rest.to_string())
         }
     });
     esp_smith_lib::commands::project::set_startup_project(startup_project);
