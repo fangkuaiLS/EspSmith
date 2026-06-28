@@ -233,9 +233,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     className="flex items-center gap-2 px-4 py-2 text-[12px] font-medium bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-50"
                   >
                     {isLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    {isLoading ? t('settings.detecting') : '检测IDF目录'}
+                    {isLoading ? t('settings.detecting') : t('settings.detectIdf')}
                   </button>
-                  <span className="text-[11px] text-text-tertiary">自动检测系统中的 ESP-IDF 安装</span>
+                  <span className="text-[11px] text-text-tertiary">{t('settings.detectIdfHint')}</span>
                 </div>
 
                 <InputGroup label={t('settings.idfPath')}>
@@ -272,7 +272,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 <details className="group">
                   <summary className="flex items-center gap-1.5 text-[12px] text-text-tertiary cursor-pointer hover:text-text-secondary transition-colors select-none">
                     <ChevronDown size={12} className="transition-transform group-open:rotate-180" />
-                    高级：手动配置 Python 路径
+                    {t('settings.advancedPythonConfig')}
                   </summary>
                   <div className="mt-3 space-y-3 pl-4 border-l-2 border-border-subtle">
                     <div className="flex gap-2">
@@ -288,7 +288,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                           if (isTauri()) {
                             try {
                               const { open } = await import('@tauri-apps/plugin-dialog');
-                              const selected = await open({ directory: false, multiple: false, title: '选择 Python', filters: [{ name: 'Python', extensions: ['exe'] }] });
+                              const selected = await open({ directory: false, multiple: false, title: t('settings.selectPython'), filters: [{ name: 'Python', extensions: ['exe'] }] });
                               if (selected) { const p = Array.isArray(selected) ? selected[0] : selected; setLocalSettings({ ...localSettings, pythonPath: p }); }
                             } catch {}
                           }
@@ -312,14 +312,14 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                             setPythonValidationError(null);
                           } catch (err: any) {
                             setPythonValidationResult('error');
-                            setPythonValidationError(err?.toString() || '验证失败');
+                            setPythonValidationError(err?.toString() || t('settings.pythonValidationFailed'));
                           } finally { setPythonValidating(false); }
                         }}
                         disabled={pythonValidating || !localSettings.pythonPath}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary disabled:opacity-50"
                       >
                         {pythonValidating ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                        验证
+                        {t('settings.validate')}
                       </button>
                       {pythonValidationResult === 'success' && <span className="text-[11px] text-success self-center">✓ {pythonVersion}</span>}
                       {pythonValidationResult === 'error' && <span className="text-[11px] text-error self-center">{pythonValidationError}</span>}
@@ -339,7 +339,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             {activeTab === 'ai' && (
               <div className="space-y-5">
                 <h3 className="text-[14px] font-semibold">{t('settings.aiConfig')}</h3>
-                <p className="text-[12px] text-text-tertiary">模型选择请在聊天面板顶部的下拉菜单中进行</p>
+                <p className="text-[12px] text-text-tertiary">{t('settings.modelSelectionHint')}</p>
 
                 <InputGroup label={t('settings.deepseekApiKey')}>
                   <input
@@ -441,8 +441,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                         MiMo-Code: {mimoStatus === 'checking'
                           ? '...'
                           : mimoStatus === 'system'
-                          ? '已安装 (系统)'
-                          : '未安装'}
+                          ? t('settings.mimoSystemInstalled')
+                          : t('settings.mimoNotInstalled')}
                       </span>
                     </div>
                     <button
@@ -457,7 +457,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   {mimoStatus === 'missing' && (
                     <div className="mt-3">
                       <p className="text-[12px] text-text-tertiary mb-2">
-                        请通过 npm 全局安装 MiMo-Code: <code className="px-1 py-0.5 bg-surface-overlay rounded text-[11px] font-mono">npm install -g @xiaomi/mimocode</code>
+                        {t('settings.mimoInstallHint')} <code className="px-1 py-0.5 bg-surface-overlay rounded text-[11px] font-mono">npm install -g @xiaomi/mimocode</code>
                       </p>
                     </div>
                   )}
@@ -467,10 +467,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 <div className="border-t border-border-subtle pt-5">
                   <h3 className="text-[13px] font-semibold mb-3 flex items-center gap-2">
                     <Database size={14} />
-                    经验库管理
+                    {t('settings.experience.title')}
                   </h3>
                   <p className="text-[11px] text-text-tertiary mb-3">
-                    经验库记录 AI 在 ESP32 开发中遇到的疑难杂症及修复方案，所有项目共享。重做系统或换电脑前请导出备份。
+                    {t('settings.experience.desc')}
                   </p>
 
                   <div className="p-3 bg-surface-overlay rounded-lg border border-border-subtle mb-3">
@@ -484,7 +484,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                           <HardDrive size={14} className="text-text-tertiary" />
                         )}
                         <span className="text-[13px] text-text-secondary">
-                          {expLoading ? '...' : expStats ? `${expStats.skillCount} 条经验记录` : '暂无经验记录'}
+                          {expLoading ? '...' : expStats ? t('settings.experience.recordCount', { n: expStats.skillCount }) : t('settings.experience.noRecords')}
                         </span>
                       </div>
                       <button
@@ -492,7 +492,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                         className="flex items-center gap-1 px-2 py-1 text-[11px] bg-surface-hover border border-border-subtle rounded-md text-text-tertiary hover:text-text-primary transition-colors"
                       >
                         <RefreshCw size={11} />
-                        刷新
+                        {t('settings.experience.refresh')}
                       </button>
                     </div>
                     {expStats?.path && (
@@ -513,13 +513,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                         try {
                           await safeInvoke<string>('experience_open_dir');
                         } catch (err: any) {
-                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || '打开失败') });
+                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || t('settings.experience.openFailed') ) });
                         }
                       }}
                       className="flex items-center gap-1.5 px-3 py-2 text-[12px] bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                     >
                       <FolderOpen size={14} />
-                      打开目录
+                      {t('settings.experience.openDir')}
                     </button>
                     <button
                       onClick={async () => {
@@ -532,17 +532,17 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                           });
                           if (path) {
                             const result = await safeInvoke<string>('experience_export', { exportPath: path });
-                            setExpMessage({ type: 'success', text: result || '导出成功' });
+                            setExpMessage({ type: 'success', text: result || t('settings.experience.exportSuccess') });
                             loadExpStats();
                           }
                         } catch (err: any) {
-                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || '导出失败') });
+                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || t('settings.experience.exportFailed') ) });
                         }
                       }}
                       className="flex items-center gap-1.5 px-3 py-2 text-[12px] bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                     >
                       <Download size={14} />
-                      导出
+                      {t('settings.experience.export')}
                     </button>
                     <button
                       onClick={async () => {
@@ -552,22 +552,22 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                           const selected = await open({
                             multiple: false,
                             filters: [{ name: 'JSON', extensions: ['json'] }],
-                            title: '选择经验库文件',
+                            title: t('settings.experience.selectFile'),
                           });
                           if (selected) {
                             const filePath = Array.isArray(selected) ? selected[0] : selected;
                             const result = await safeInvoke<string>('experience_import', { importPath: filePath });
-                            setExpMessage({ type: 'success', text: result || '导入成功' });
+                            setExpMessage({ type: 'success', text: result || t('settings.experience.importSuccess') });
                             loadExpStats();
                           }
                         } catch (err: any) {
-                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || '导入失败') });
+                          setExpMessage({ type: 'error', text: translateBackendString(err?.toString() || t('settings.experience.importFailed') ) });
                         }
                       }}
                       className="flex items-center gap-1.5 px-3 py-2 text-[12px] bg-surface-overlay border border-border-subtle rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
                     >
                       <Upload size={14} />
-                      导入
+                      {t('settings.experience.import')}
                     </button>
                   </div>
                 </div>

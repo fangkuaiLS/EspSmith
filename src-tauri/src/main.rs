@@ -40,6 +40,7 @@ fn main() {
         println!("  get-idf-path          Get ESP-IDF path from project or environment");
         println!();
         println!("Options:");
+        println!("  --project <path>      Open project in new GUI instance");
         println!("  --mcp-server          Run as MCP server over stdio");
         println!("  --version, -V         Show version");
         println!("  --help, -h            Show this help");
@@ -62,6 +63,18 @@ fn main() {
         let _ = esp_smith_lib::run_cli();
         return;
     }
+
+    // GUI 模式：解析 --project 参数（由 open_project_new_instance 传入）
+    let startup_project = args.iter().enumerate().find_map(|(i, arg)| {
+        if arg == "--project" {
+            args.get(i + 1).cloned()
+        } else if let Some(rest) = arg.strip_prefix("--project=") {
+            Some(rest.to_string())
+        } else {
+            None
+        }
+    });
+    esp_smith_lib::commands::project::set_startup_project(startup_project);
 
     // GUI 模式：启动时立即隐藏控制台窗口（避免 CodeWhale 子进程弹出黑框）
     // ShowWindow(SW_HIDE) 只隐藏窗口，不释放控制台，stdout/stderr 仍可正常输出

@@ -4,9 +4,11 @@
 
 import { create } from 'zustand';
 import { safeInvoke } from '../lib/invoke';
+import { devLog } from '../lib/devLog';
 import type { HardwareConfig, PeripheralInstance, PinConflict, ConnectionInfo, ConnectionMode, IDFEnvironment, PeripheralUpdate } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import i18n from '../i18n';
 
 const defaultConnectionInfo: ConnectionInfo = {
   mode: 'unknown',
@@ -73,7 +75,7 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
       console.error('Failed to save hardware config:', error);
       try {
         const { showToast } = await import('../components/ui/Toast');
-        showToast('error', `保存硬件配置失败: ${error instanceof Error ? error.message : String(error)}`);
+        showToast('error', i18n.t('hardware.saveFailed', { error: error instanceof Error ? error.message : String(error) }));
       } catch { /* toast not available */ }
     }
   },
@@ -98,7 +100,7 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
       console.error('Failed to add peripheral:', error);
       try {
         const { showToast } = await import('../components/ui/Toast');
-        showToast('error', `添加外设失败: ${error instanceof Error ? error.message : String(error)}`);
+        showToast('error', i18n.t('toast.addPeripheralFailed', { error: error instanceof Error ? error.message : String(error) }));
       } catch { }
       throw error;
     }
@@ -116,7 +118,7 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
       console.error('Failed to update peripheral:', error);
       try {
         const { showToast } = await import('../components/ui/Toast');
-        showToast('error', `更新外设失败: ${error instanceof Error ? error.message : String(error)}`);
+        showToast('error', i18n.t('toast.updatePeripheralFailed', { error: error instanceof Error ? error.message : String(error) }));
       } catch { }
       throw error;
     }
@@ -133,7 +135,7 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
       console.error('Failed to remove peripheral:', error);
       try {
         const { showToast } = await import('../components/ui/Toast');
-        showToast('error', `删除外设失败: ${error instanceof Error ? error.message : String(error)}`);
+        showToast('error', i18n.t('toast.removePeripheralFailed', { error: error instanceof Error ? error.message : String(error) }));
       } catch { }
     }
   },
@@ -181,7 +183,7 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
   detectConnection: async (port?: string) => {
     try {
       const info = await invoke<ConnectionInfo>('detect_connection', { port: port ?? null });
-      console.log('[HardwareStore] detectConnection result:', info.mode, info.port, `idfTarget=${info.idfTarget}`);
+      devLog('[HardwareStore] detectConnection result:', info.mode, info.port, `idfTarget=${info.idfTarget}`);
       set({ connectionInfo: info, connectionMode: info.mode });
       // 通知 App 组件进行自动选择（比 useEffect 更可靠）
       window.dispatchEvent(new CustomEvent('esp-device-detected', { detail: info }));
@@ -200,46 +202,52 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
   },
 }));
 
-listen<ConnectionInfo>('connection_changed', (event) => {
-  const info = event.payload;
-  const current = useHardwareStore.getState().connectionInfo;
+// HMR 安全：仅在首次加载时注册监听器，避免开发模式下重复注册
+let _hwListenersRegistered = false;
+if (!_hwListenersRegistered) {
+  _hwListenersRegistered = true;
 
-  // 只在端口匹配时更新连接信息，避免多设备场景下
-  // 非选中设备的信息覆盖用户选择的端口模式显示。
-  // 规则：info.port 与当前一致 → 更新；当前无端口 → 更新（首次检测）；
-  //       端口不同但模式从 unknown 变为已知 → 也更新（用户可能刚切换了选择）
-  const portMatch = !current.port || !info.port || current.port === info.port;
-  const modeUpgrading = current.mode === 'unknown' && info.mode !== 'unknown';
+  listen<ConnectionInfo>('connection_changed', (event) => {
+    const info = event.payload;
+    const current = useHardwareStore.getState().connectionInfo;
 
-  if (portMatch || modeUpgrading) {
-    console.log(
-      '[HardwareStore] connection_changed event:',
-      info.mode,
-      info.chipHint ? `(${info.chipHint})` : '',
-      info.port ? `on ${info.port}` : '',
-      `idfTarget=${info.idfTarget}`
-    );
-    useHardwareStore.setState({
-      connectionInfo: info,
-      connectionMode: info.mode,
-    });
-  } else {
-    console.log(
-      `[HardwareStore] connection_changed skipped: event port=${info.port} != current port=${current.port}, mode unchanged`
-    );
-  }
+    // 只在端口匹配时更新连接信息，避免多设备场景下
+    // 非选中设备的信息覆盖用户选择的端口模式显示。
+    // 规则：info.port 与当前一致 → 更新；当前无端口 → 更新（首次检测）；
+    //       端口不同但模式从 unknown 变为已知 → 也更新（用户可能刚切换了选择）
+    const portMatch = !current.port || !info.port || current.port === info.port;
+    const modeUpgrading = current.mode === 'unknown' && info.mode !== 'unknown';
 
-  // 始终通知 App 组件（它有自己的端口匹配逻辑）
-  window.dispatchEvent(new CustomEvent('esp-device-detected', { detail: info }));
-}).then(() => {
-  console.log('[HardwareStore] Port watcher listener registered');
-}).catch((err) => {
-  console.warn('[HardwareStore] Failed to register port watcher listener:', err);
-});
+    if (portMatch || modeUpgrading) {
+      devLog(
+        '[HardwareStore] connection_changed event:',
+        info.mode,
+        info.chipHint ? `(${info.chipHint})` : '',
+        info.port ? `on ${info.port}` : '',
+        `idfTarget=${info.idfTarget}`
+      );
+      useHardwareStore.setState({
+        connectionInfo: info,
+        connectionMode: info.mode,
+      });
+    } else {
+      devLog(
+        `[HardwareStore] connection_changed skipped: event port=${info.port} != current port=${current.port}, mode unchanged`
+      );
+    }
 
-listen<HardwareConfig>('hw-config-changed', (event) => {
-  console.log('[HardwareStore] Hardware config changed by AI:', Object.keys(event.payload.peripherals).length, 'peripherals');
-  useHardwareStore.setState({ config: event.payload });
-}).catch((err) => {
-  console.warn('[HardwareStore] Failed to register hw-config-changed listener:', err);
-});
+    // 始终通知 App 组件（它有自己的端口匹配逻辑）
+    window.dispatchEvent(new CustomEvent('esp-device-detected', { detail: info }));
+  }).then(() => {
+    devLog('[HardwareStore] Port watcher listener registered');
+  }).catch((err) => {
+    console.warn('[HardwareStore] Failed to register port watcher listener:', err);
+  });
+
+  listen<HardwareConfig>('hw-config-changed', (event) => {
+    devLog('[HardwareStore] Hardware config changed by AI:', Object.keys(event.payload.peripherals).length, 'peripherals');
+    useHardwareStore.setState({ config: event.payload });
+  }).catch((err) => {
+    console.warn('[HardwareStore] Failed to register hw-config-changed listener:', err);
+  });
+}

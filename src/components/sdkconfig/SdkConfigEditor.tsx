@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { SearchBar } from './components/SearchBar';
 import { SettingsTree } from './components/SettingsTree';
 import { ConfigElement } from './components/ConfigElement';
 import { Menu, menuType, KconfigResponse, rawToMenu, applyValues, applyConfserverUpdate } from './Menu';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { safeInvoke } from '../../lib/invoke';
+import { devLog } from '../../lib/devLog';
 import { showToast } from '../ui/Toast';
 import styles from './SdkConfigEditor.module.css';
 
@@ -35,7 +37,8 @@ function filterItems(items: Menu[], searchString: string): Menu[] {
   return filtered;
 }
 
-export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEditorProps) {
+function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEditorProps) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<Menu[]>([]);
@@ -58,7 +61,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
       if (!data || !data.menus) throw new Error('SDK config returned empty menu tree');
       const menus = rawToMenu(data.menus);
       const withValues = applyValues(menus, data.values || {});
-      console.log(`[SdkConfig] Loaded ${data.menus?.length} menus, ${Object.keys(data.values || {}).length} values (confserver)`);
+      devLog(`[SdkConfig] Loaded ${data.menus?.length} menus, ${Object.keys(data.values || {}).length} values (confserver)`);
       setItems(withValues);
     } catch (err: any) {
       console.error('[SdkConfigEditor] load error:', err);
@@ -148,7 +151,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
       safeInvoke('sdkconfig_set_value', { key: csKey, value: csValue })
         .then((resp: any) => {
           if (resp) {
-            console.log(`[SdkConfig] confserver set ${csKey}=${csValue} OK`);
+            devLog(`[SdkConfig] confserver set ${csKey}=${csValue} OK`);
             // Apply confserver's full response to sync visibility, values, etc.
             // This is critical: Kconfig dependencies can cause cascading changes
             // when a single option is toggled (e.g. enabling WiFi reveals sub-items).
@@ -178,12 +181,12 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
   const handleSave = useCallback(async () => {
     try {
       await safeInvoke('sdkconfig_save', { projectPath });
-      showToast('success', 'Saved SDK configuration');
+      showToast('success', t('sdkconfig.saveSuccess'));
     } catch (err: any) {
       console.error('[SdkConfig] Save error:', err);
-      showToast('error', `Save failed: ${err}`);
+      showToast('error', t('sdkconfig.saveFailed', { error: err }));
     }
-  }, [projectPath]);
+  }, [projectPath, t]);
 
   const handleDiscard = useCallback(() => { loadConfig(); }, [loadConfig]);
   const handleReset = useCallback(() => { showToast('info', 'Reset to defaults requested'); }, []);
@@ -191,7 +194,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
   const handleResetElement = useCallback((id: string) => { showToast('info', `Reset: ${id}`); }, []);
   const handleResetChildren = useCallback(() => { showToast('info', 'Reset children'); }, []);
 
-  const textDictionary = useMemo(() => ({ save: 'Save', discard: 'Discard', reset: 'Reset' }), []);
+  const textDictionary = useMemo(() => ({ save: t('sdkconfig.save'), discard: t('sdkconfig.discard'), reset: t('sdkconfig.reset') }), [t]);
 
   // --- Scroll sync ---
   const handleScroll = useCallback(() => {
@@ -249,7 +252,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={styles.spinner}>
           <circle cx="12" cy="12" r="10" strokeDasharray="31.4 31.4" strokeLinecap="round" />
         </svg>
-        <span>Loading SDK Configuration...</span>
+        <span>{t('sdkconfig.loading')}</span>
       </div>
     );
   }
@@ -257,11 +260,11 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
   if (error) {
     return (
       <div className={styles.errorContainer}>
-        <p className={styles.errorTitle}>Failed to load SDK Configuration</p>
+        <p className={styles.errorTitle}>{t('sdkconfig.loadError')}</p>
         <p className={styles.errorMessage}>{error}</p>
         <div className={styles.errorButtons}>
-          <button onClick={loadConfig} className={styles.btnPrimary}>Retry</button>
-          <button onClick={onClose} className={styles.btnSecondary}>Close</button>
+          <button onClick={loadConfig} className={styles.btnPrimary}>{t('sdkconfig.retry')}</button>
+          <button onClick={onClose} className={styles.btnSecondary}>{t('common.close')}</button>
         </div>
       </div>
     );
@@ -274,7 +277,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
         <SearchBar searchString={searchString} onSearchChange={setSearchString}
           onSave={handleSave} onDiscard={handleDiscard} onReset={handleReset}
           textDictionary={textDictionary} />
-        <button className={styles.closeBtn} onClick={onClose} title="Close">
+        <button className={styles.closeBtn} onClick={onClose} title={t('common.close')}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path fillRule="evenodd" d="M8 7.293l4.146-4.147.707.708L8.707 8l4.146 4.146-.707.708L8 8.707l-4.146 4.147-.707-.708L7.293 8 3.147 3.854l.707-.708L8 7.293z" />
           </svg>
@@ -295,7 +298,7 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
             </div>
           ))}
           {displayItems.length === 0 && (
-            <div className={styles.emptyState}>{searchString ? 'No matching items' : 'No configuration items'}</div>
+            <div className={styles.emptyState}>{searchString ? t('sdkconfig.noMatch') : t('sdkconfig.noConfigs')}</div>
           )}
         </div>
       </div>
@@ -304,4 +307,6 @@ export function SdkConfigEditor({ projectPath, idfPath, onClose }: SdkConfigEdit
   );
 }
 
-export default SdkConfigEditor;
+const SdkConfigEditorMemo = memo(SdkConfigEditor);
+export { SdkConfigEditorMemo as SdkConfigEditor };
+export default SdkConfigEditorMemo;

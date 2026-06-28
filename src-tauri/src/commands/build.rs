@@ -134,10 +134,12 @@ fn parse_compile_errors(output: &str) -> Vec<CompileError> {
 
     // GCC 错误格式: file:line:column: error: message
     // 例如: /path/to/file.c:10:5: error: 'xxx' undeclared
-    let re = regex::Regex::new(r"([^:]+):(\d+):(\d+):\s+(error|warning):\s+(.+)")
-        .unwrap_or_else(|_| {
-            regex::Regex::new(r"error").unwrap()
-        });
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"([^:]+):(\d+):(\d+):\s+(error|warning):\s+(.+)")
+            .unwrap_or_else(|_| regex::Regex::new(r"error").unwrap())
+    });
 
     for line in output.lines() {
         if let Some(caps) = re.captures(line) {

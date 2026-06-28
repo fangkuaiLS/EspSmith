@@ -1,4 +1,5 @@
 import { Menu, menuType } from '../Menu';
+import { useTranslation } from 'react-i18next';
 import { CheckboxInput } from './CheckboxInput';
 import { NumberInput } from './NumberInput';
 import { HexInput } from './HexInput';
@@ -21,6 +22,7 @@ export function ConfigElement({
   onResetChildren,
   confserverVersion,
 }: ConfigElementProps) {
+  const { t } = useTranslation();
   const canReset = confserverVersion >= 3;
 
   if (config.isVisible === false) return null;
@@ -54,7 +56,7 @@ export function ConfigElement({
                   e.stopPropagation();
                   onResetElement(config.id);
                 }}
-                title="Reset to default"
+                title={t('sdkconfig.resetToDefault')}
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                   <path fillRule="evenodd" d="M12.754 3.247a5.454 5.454 0 00-9.504 1.294H2v1h5V0H5.971v2.068A6.454 6.454 0 0114.5 5.5h-1a5.45 5.45 0 00-.746-2.253zM2.5 10.5h1a5.45 5.45 0 00.746 2.253 5.454 5.454 0 009.504-1.294H14v-1H9v5.5h1.029v-2.068A6.454 6.454 0 011.5 10.5z" />

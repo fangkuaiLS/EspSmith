@@ -390,7 +390,7 @@ openocd --version
 ## 项目目录结构
 
 ```
-esp-ai-studio/
+espsmith/
 ├── src/                          # 前端源码
 │   ├── App.tsx                   # 主应用组件（四区域布局）
 │   ├── main.tsx                  # 前端入口
@@ -436,8 +436,7 @@ esp-ai-studio/
 │   └── tauri.conf.json           # Tauri 应用配置
 ├── package.json                  # 前端依赖配置
 ├── vite.config.ts                # Vite 构建配置
-├── tsconfig.json                 # TypeScript 配置
-└── tailwind.config.js            # Tailwind CSS 配置（v4）
+└── tsconfig.json                 # TypeScript 配置
 ```
 
 ***
@@ -463,7 +462,7 @@ esp-ai-studio/
 | **[ESP-IDF](https://github.com/espressif/esp-idf)**      | ESP32 官方开发框架              | Apache-2.0 |
 | **[OpenOCD](https://openocd.org/)**                      | 片上调试器（JTAG 调试核心）          | GPL-2.0    |
 | **[DeepSeek](https://www.deepseek.com/)**                | 大语言模型 API                 | -          |
-| **[CodeWhale](https://github.com/anthropics/codewhale)** | AI Agent CLI（DeepSeek 引擎） | -          |
+| **[CodeWhale](https://www.npmjs.com/package/codewhale)** | AI Agent CLI（DeepSeek 引擎） | -          |
 | **[MiMo-Code](https://github.com/mimocode/mimo-code)**   | AI Agent CLI（多模型引擎）       | -          |
 
 ***
@@ -474,7 +473,7 @@ esp-ai-studio/
 
 - **[AEL (AI Embedded Lab)](https://github.com/EZ32Inc/ai-embedded-lab)** — 多仪器闭环调试系统，启发了 Self-Healing 引擎和 Experience 引擎的设计
 - **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — 官方 ESP-IDF 扩展，启发了 IDF 工作流和串口管理
-- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI 工具，提供 DeepSeek AI 能力支持
+- **[CodeWhale](https://www.npmjs.com/package/codewhale)** — AI Agent CLI 工具，提供 DeepSeek AI 能力支持
 - **[MiMo-Code](https://github.com/mimocode/mimo-code)** — AI Agent CLI 工具，提供多模型 AI 能力与内置工具调用支持
 - **[ESP-IDF](https://github.com/espressif/esp-idf)** — 乐鑫官方 ESP32 开发框架，提供完整的开发工具链
 

@@ -264,7 +264,14 @@ pub fn run_plan_with_progress(
                     // Rewind to anchor point
                     step_index = anchor_index.min(plan.steps.len().saturating_sub(1));
                     result.total_attempts += 1;
-                    budget_map.clear();
+                    // Only reset budgets from the anchor point onwards.
+                    // Previously this called `budget_map.clear()`, which reset
+                    // ALL step budgets and could cause the runner to retry the
+                    // same failing step until the global guard_limit was
+                    // exhausted. By only resetting from the anchor, earlier
+                    // successful steps keep their (already consumed) budgets
+                    // and the runner converges faster.
+                    budget_map.retain(|k, _| *k < anchor_index);
                     continue;
                 }
             }

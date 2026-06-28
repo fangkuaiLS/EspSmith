@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Play, Square, CornerDownRight, ArrowDown, ArrowUpRight,
@@ -13,7 +13,7 @@ interface DebugPanelProps {
 
 type SubTab = 'console' | 'breakpoints' | 'variables' | 'stack' | 'registers';
 
-export function DebugPanel({ targetChip }: DebugPanelProps) {
+function DebugPanel({ targetChip }: DebugPanelProps) {
   const { t } = useTranslation();
   const outputRef = useRef<HTMLDivElement>(null);
 
@@ -54,7 +54,7 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
       setDebugState(null);
       setBreakpoints([]);
       setWatchedVars([]);
-      addOutput('\n--- GDB detached ---\n');
+      addOutput(`\n${t('debug.gdbDetached')}\n`);
       return;
     }
 
@@ -64,7 +64,7 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
     }
 
     try {
-      addOutput(`\n--- Connecting GDB (${targetChip || 'esp32'}) to localhost:3333 ---\n`);
+      addOutput(`\n${t('debug.connectingGdb', { chip: targetChip || 'esp32' })}\n`);
       const state = await safeInvoke<DebugState>('debug_start', {
         elfPath: elfPath.trim(),
         target: 'localhost:3333',
@@ -73,7 +73,7 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
       if (state) {
         setConnected(true);
         setDebugState(state);
-        addOutput(`Connected. PC = ${state.pc}`);
+        addOutput(t('debug.connected', { pc: state.pc }));
         state.stack.slice(0, 5).forEach((f: StackFrame) => {
           addOutput(`  #${f.level} ${f.function} at ${f.file}:${f.line}`);
         });
@@ -87,7 +87,7 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
   const handleContinue = useCallback(async () => {
     if (!connected) return;
     try {
-      addOutput('\n▶ Continuing...');
+      addOutput(`\n${t('debug.continuing')}`);
       const state = await safeInvoke<DebugState>('debug_continue');
       if (state) {
         setDebugState(state);
@@ -105,7 +105,7 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
     setDebugState(null);
     setBreakpoints([]);
     setWatchedVars([]);
-    addOutput('\n--- Execution stopped ---\n');
+    addOutput(`\n${t('debug.executionStopped')}\n`);
   }, [connected, addOutput]);
 
   const handleStepOver = useCallback(async () => {
@@ -114,10 +114,10 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
       const state = await safeInvoke<DebugState>('debug_step_over');
       if (state) {
         setDebugState(state);
-        addOutput(`  Step over → PC = ${state.pc} | ${state.stack[0]?.function || '?'}`);
+        addOutput(t('debug.stepOverResult', { pc: state.pc, func: state.stack[0]?.function || '?' }));
       }
     } catch (err) {
-      addOutput(`  Step over error: ${err}`);
+      addOutput(t('debug.stepOverError', { error: String(err) }));
     }
   }, [connected, addOutput]);
 
@@ -127,10 +127,10 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
       const state = await safeInvoke<DebugState>('debug_step_into');
       if (state) {
         setDebugState(state);
-        addOutput(`  Step into → PC = ${state.pc} | ${state.stack[0]?.function || '?'}`);
+        addOutput(t('debug.stepIntoResult', { pc: state.pc, func: state.stack[0]?.function || '?' }));
       }
     } catch (err) {
-      addOutput(`  Step into error: ${err}`);
+      addOutput(t('debug.stepIntoError', { error: String(err) }));
     }
   }, [connected, addOutput]);
 
@@ -152,9 +152,9 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
     try {
       await safeInvoke('debug_delete_breakpoint', { id });
       setBreakpoints((prev) => prev.filter((b) => b.id !== id));
-      addOutput(`  Breakpoint #${id} deleted`);
+      addOutput(t('debug.breakpointDeleted', { id }));
     } catch (err) {
-      addOutput(`  Failed to delete breakpoint: ${err}`);
+      addOutput(t('debug.breakpointDeleteFailed', { error: String(err) }));
     }
   }, [connected, addOutput]);
 
@@ -168,11 +168,11 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
           const filtered = prev.filter((v) => v.name !== name);
           return [...filtered, info];
         });
-        addOutput(`  ${info.type_name} ${info.name} = ${info.value}`);
+        addOutput(t('debug.variableRead', { type: info.type_name, name: info.name, value: info.value }));
       }
       setWatchInput('');
     } catch (err) {
-      addOutput(`  Read ${name}: ${err}`);
+      addOutput(t('debug.variableReadError', { name, error: String(err) }));
     }
   }, [watchInput, connected, addOutput]);
 
@@ -331,7 +331,7 @@ export function DebugPanel({ targetChip }: DebugPanelProps) {
               disabled={!connected || !watchInput.trim()}
               className={`${btnBase} ${connected && watchInput.trim() ? 'text-accent hover:bg-surface-hover' : 'text-text-tertiary'} disabled:opacity-40`}
             >
-              <Plus size={10} /> Watch
+              <Plus size={10} /> {t('debug.watch')}
             </button>
             <button
               onClick={handleRefreshWatches}
@@ -451,3 +451,5 @@ function DebugBtn({
     </button>
   );
 }
+const DebugPanelMemo = memo(DebugPanel);
+export { DebugPanelMemo as DebugPanel };

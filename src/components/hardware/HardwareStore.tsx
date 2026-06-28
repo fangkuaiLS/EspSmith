@@ -8,7 +8,7 @@
  * - AI 可通过 Tauri 命令读写此配置表
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Cpu, Plus, Trash2, Edit3, ChevronLeft, Search, Info, Wrench,
@@ -22,6 +22,7 @@ import {
   Grid3x3,
 } from 'lucide-react';
 import { useHardwareStore, useProjectStore } from '../../stores';
+import { showToast } from '../ui/Toast';
 import { PRESET_PERIPHERALS, PeripheralDefinition, PeripheralInstance, PeripheralUpdate } from '../../types';
 
 function PeripheralForm({
@@ -569,7 +570,7 @@ function ManualAddForm({
   );
 }
 
-export function HardwareStore() {
+function HardwareStore() {
   const { t } = useTranslation();
   const [view, setView] = useState<'list' | 'selectType' | 'configure' | 'manual'>('list');
   const [selectedType, setSelectedType] = useState<PeripheralDefinition | null>(null);
@@ -659,7 +660,7 @@ export function HardwareStore() {
           const conflictMsg = conflicts
             .map((c) => `GPIO${c.pin}: ${c.peripheral_a} ↔ ${c.peripheral_b}`)
             .join('\n');
-          alert(t('hardware.pinConflict', { conflicts: conflictMsg }));
+          showToast('error', t('hardware.pinConflict', { conflicts: conflictMsg }));
           return;
         }
 
@@ -803,4 +804,6 @@ export function HardwareStore() {
   );
 }
 
-export default HardwareStore;
+const HardwareStoreMemo = memo(HardwareStore);
+export { HardwareStoreMemo as HardwareStore };
+export default HardwareStoreMemo;

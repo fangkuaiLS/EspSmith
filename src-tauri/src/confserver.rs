@@ -139,7 +139,7 @@ impl ConfserverProcess {
         eim_setup: &idf::EimIdfInstalled,
         sdkconfig: &str, idf_kconfig: &Path, config_env: &str,
     ) -> Result<(Self, serde_json::Value), String> {
-        let python = eim_setup.python.replace('/', "\\");
+        let python = idf::normalize_path_sep(&eim_setup.python);
         if !Path::new(&python).exists() {
             return Err(format!("EIM Python not found: {}", python));
         }
@@ -150,9 +150,9 @@ impl ConfserverProcess {
 
         let eim_path_entries = idf::build_eim_path_entries(&eim_setup.idf_tools_path);
         let new_path = if eim_path_entries.is_empty() {
-            format!("{};{}", py_scripts, system_path)
+            format!("{}{}{}", py_scripts, idf::PATH_LIST_SEP, system_path)
         } else {
-            format!("{};{};{}", eim_path_entries.join(";"), py_scripts, system_path)
+            format!("{}{}{}{}{}", eim_path_entries.join(idf::PATH_LIST_SEP), idf::PATH_LIST_SEP, py_scripts, idf::PATH_LIST_SEP, system_path)
         };
 
         let idf_python_env_path = Path::new(&python)
@@ -160,7 +160,7 @@ impl ConfserverProcess {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let idf_tools = format!("{}\\tools", idf_path);
+        let idf_tools = idf::join_path_parts(&[idf_path, "tools"]);
 
         // Step 1: Run prepare_kconfig_files.py to generate kconfigs.in / kconfigs_projbuild.in
         let prepare_py = Path::new(idf_path)
@@ -203,8 +203,8 @@ impl ConfserverProcess {
             .env("IDF_PYTHON_ENV_PATH", &idf_python_env_path)
             .env("ESP_IDF_VERSION", idf::get_idf_version_for_env(idf_path))
             .env("PATH", &new_path)
-            .env("PYTHONPATH", format!("{};{}", &idf_tools, std::env::var("PYTHONPATH").unwrap_or_default()))
-            .env("OPENOCD_SCRIPTS", format!("{}\\openocd-esp32", eim_setup.idf_tools_path))
+            .env("PYTHONPATH", format!("{}{}{}", &idf_tools, idf::PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
+            .env("OPENOCD_SCRIPTS", idf::join_path_parts(&[&eim_setup.idf_tools_path, "openocd-esp32"]))
             .current_dir(project_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

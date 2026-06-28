@@ -11,8 +11,27 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+
+/// OpenOCD telnet address used across adapters.
+/// Parsed once at startup to avoid repeated `.parse().unwrap()` calls.
+pub const OPENOCD_ADDR: &str = "127.0.0.1:4444";
+
+/// Parsed OpenOCD address — use this instead of `OPENOCD_ADDR.parse().unwrap()`.
+pub fn openocd_addr() -> SocketAddr {
+    OPENOCD_ADDR.parse().expect("OPENOCD_ADDR is a valid SocketAddr")
+}
+
+/// GDB address used by the verify adapter.
+/// Parsed once at startup to avoid repeated `.parse().unwrap()` calls.
+pub const GDB_ADDR: &str = "127.0.0.1:3333";
+
+/// Parsed GDB address — use this instead of `GDB_ADDR.parse().unwrap()`.
+pub fn gdb_addr() -> SocketAddr {
+    GDB_ADDR.parse().expect("GDB_ADDR is a valid SocketAddr")
+}
 
 /// Normalize a Windows path for GDB/OpenOCD consumption.
 ///
@@ -25,6 +44,22 @@ use std::time::Instant;
 pub fn normalize_path_for_gdb(path: &str) -> String {
     let stripped = path.strip_prefix("\\\\?\\").unwrap_or(path);
     stripped.replace('\\', "/")
+}
+
+/// Returns a platform-appropriate fallback serial port name.
+///
+/// This is ONLY used when no port is explicitly provided. Callers should
+/// always pass a real port detected via `serialport::available_ports()` or
+/// the connection detector. The fallback exists to produce meaningful error
+/// messages rather than silently using a Windows-only name on Unix.
+pub fn default_port_hint() -> &'static str {
+    if cfg!(windows) {
+        "COM3"
+    } else if cfg!(target_os = "macos") {
+        "/dev/cu.SLAB_USBtoUART"
+    } else {
+        "/dev/ttyUSB0"
+    }
 }
 
 pub mod build;
@@ -84,7 +119,7 @@ impl Adapter for PreflightCheckAdapter {
     fn description(&self) -> &str { "Pre-flight checks: validate serial port and board" }
 
     fn execute(&self, params: &serde_json::Value, _work_dir: &str) -> AdapterResult {
-        let port = params.get("port").and_then(|v| v.as_str()).unwrap_or("COM3");
+        let port = params.get("port").and_then(|v| v.as_str()).unwrap_or(default_port_hint());
         let _board = params.get("board").and_then(|v| v.as_str()).unwrap_or("esp32");
         let start = Instant::now();
 

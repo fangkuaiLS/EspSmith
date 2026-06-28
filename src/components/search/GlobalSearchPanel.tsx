@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Search, File, X, ChevronRight } from 'lucide-react';
 import { safeInvoke } from '../../lib/invoke';
 import { useFileStore, useProjectStore } from '../../stores';
@@ -14,6 +15,7 @@ interface GlobalSearchPanelProps {
 }
 
 export function GlobalSearchPanel({ onClose }: GlobalSearchPanelProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchMatch[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -88,11 +90,11 @@ export function GlobalSearchPanel({ onClose }: GlobalSearchPanelProps) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search in project files..."
+            placeholder={t('search.placeholder')}
             className="flex-1 bg-transparent text-[13px] text-text-primary placeholder:text-text-tertiary outline-none"
           />
           {isSearching && (
-            <span className="text-[11px] text-text-tertiary">Searching...</span>
+            <span className="text-[11px] text-text-tertiary">{t('search.searching')}</span>
           )}
           <button
             onClick={onClose}
@@ -104,12 +106,12 @@ export function GlobalSearchPanel({ onClose }: GlobalSearchPanelProps) {
         <div className="flex-1 overflow-y-auto">
           {results.length === 0 && query && !isSearching ? (
             <div className="px-3 py-6 text-center text-[12px] text-text-tertiary">
-              No results found
+              {t('search.noResults')}
             </div>
           ) : results.length > 0 ? (
             <div className="py-1">
               <div className="px-3 py-1 text-[11px] text-text-tertiary">
-                {results.length} results in {fileNames.length} files
+                {t('search.resultsCount', { count: results.length, files: fileNames.length })}
               </div>
               {fileNames.map((filePath) => (
                 <div key={filePath}>
@@ -128,8 +130,9 @@ export function GlobalSearchPanel({ onClose }: GlobalSearchPanelProps) {
                     <File size={13} className="text-text-tertiary shrink-0" />
                     <span className="font-medium">{getFileName(filePath)}</span>
                     <span className="text-text-tertiary ml-auto text-[10px]">
-                      {grouped[filePath].length} match
-                      {grouped[filePath].length > 1 ? 'es' : ''}
+                      {grouped[filePath].length === 1
+                        ? t('search.matchCountOne', { n: grouped[filePath].length })
+                        : t('search.matchCount', { n: grouped[filePath].length })}
                     </span>
                   </button>
                   {selectedFile === filePath &&
@@ -152,7 +155,7 @@ export function GlobalSearchPanel({ onClose }: GlobalSearchPanelProps) {
             </div>
           ) : (
             <div className="px-3 py-6 text-center text-[12px] text-text-tertiary">
-              Type a search query and press Enter
+              {t('search.hint')}
             </div>
           )}
         </div>

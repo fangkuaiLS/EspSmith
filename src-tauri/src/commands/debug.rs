@@ -42,7 +42,7 @@ fn gdb_command(script: &str, target_chip: Option<&str>) -> Result<String, String
     let gdb_binary = super::gdb_session::find_gdb_binary(target_chip)?;
     let mut cmd = Command::new(&gdb_binary);
     cmd.args(["-batch", "-nx", "-ex"])
-        .arg("target remote localhost:3333")
+        .arg(format!("target remote {}", crate::adapters::GDB_ADDR))
         .arg("-ex")
         .arg(script)
         .stdout(Stdio::piped())

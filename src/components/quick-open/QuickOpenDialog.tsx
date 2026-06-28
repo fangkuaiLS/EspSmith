@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Search, File, X } from 'lucide-react';
 import { safeInvoke } from '../../lib/invoke';
 import { useFileStore, useProjectStore } from '../../stores';
@@ -15,6 +16,7 @@ interface QuickOpenDialogProps {
 }
 
 export function QuickOpenDialog({ onClose }: QuickOpenDialogProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [files, setFiles] = useState<string[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -132,7 +134,7 @@ export function QuickOpenDialog({ onClose }: QuickOpenDialogProps) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search files by name..."
+            placeholder={t('quickOpen.placeholder')}
             className="flex-1 bg-transparent text-[13px] text-text-primary placeholder:text-text-tertiary outline-none"
           />
           <button onClick={onClose} className="text-text-tertiary hover:text-text-primary">
@@ -142,7 +144,7 @@ export function QuickOpenDialog({ onClose }: QuickOpenDialogProps) {
         <div ref={listRef} className="flex-1 overflow-y-auto py-1">
           {filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-[12px] text-text-tertiary">
-              {files.length === 0 ? 'No files in project' : 'No matching files'}
+              {files.length === 0 ? t('quickOpen.noFiles') : t('quickOpen.noMatch')}
             </div>
           ) : (
             filtered.slice(0, 100).map((path, index) => (
@@ -167,7 +169,7 @@ export function QuickOpenDialog({ onClose }: QuickOpenDialogProps) {
         </div>
         {filtered.length > 100 && (
           <div className="px-3 py-1.5 text-[10px] text-text-tertiary border-t border-border-default">
-            Showing 100 of {filtered.length} results
+            {t('quickOpen.showingPartial', { n: filtered.length })}
           </div>
         )}
       </div>

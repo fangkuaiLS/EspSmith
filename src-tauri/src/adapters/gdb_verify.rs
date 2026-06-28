@@ -86,7 +86,7 @@ impl Adapter for GdbSessionVerifyAdapter {
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         if std::net::TcpStream::connect_timeout(
-            &"127.0.0.1:3333".parse().unwrap(),
+            &super::gdb_addr(),
             std::time::Duration::from_millis(500),
         ).is_err() {
             return super::AdapterResult::fail(
@@ -194,7 +194,7 @@ impl Adapter for GdbSessionVerifyAdapter {
                     }
 
                     if let Ok(mut stream) = std::net::TcpStream::connect_timeout(
-                        &"127.0.0.1:4444".parse().unwrap(),
+                        &super::openocd_addr(),
                         std::time::Duration::from_secs(1),
                     ) {
                         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
@@ -207,7 +207,7 @@ impl Adapter for GdbSessionVerifyAdapter {
                     super::AdapterResult::ok(Some(verify_output.join("\n")), duration)
                 } else if lower.contains("connection refused") || lower.contains("not connected") {
                     super::AdapterResult::fail(
-                        "GDB cannot connect to OpenOCD (localhost:3333)".to_string(),
+                        format!("GDB cannot connect to OpenOCD ({})", super::GDB_ADDR),
                         Some(combined),
                         duration,
                     )

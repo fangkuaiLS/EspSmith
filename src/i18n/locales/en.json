@@ -62,7 +62,14 @@
     "delete": "Delete",
     "copy": "Copy",
     "copied": "Copied",
-    "ok": "OK"
+    "ok": "OK",
+    "refresh": "Refresh",
+    "errorBoundary": {
+      "title": "The application encountered an error",
+      "unknownError": "Unknown error",
+      "retry": "Retry",
+      "reload": "Reload application"
+    }
   },
   "dialog": {
     "cancel": "Cancel",
@@ -94,7 +101,17 @@
     "selectSerialPort": "Please select a serial port",
     "selectSerialPortFirst": "Please select a serial port first",
     "idfNotFound": "ESP-IDF not found. Please configure IDF path in settings",
-    "sdkconfigNotFound": "sdkconfig not found. Please build the project first"
+    "sdkconfigNotFound": "sdkconfig not found. Please build the project first",
+    "fileSaved": "File saved",
+    "saveFailed": "Save failed: {error}",
+    "saveHardwareConfigFailed": "Failed to save hardware config: {error}",
+    "addPeripheralFailed": "Failed to add peripheral: {error}",
+    "updatePeripheralFailed": "Failed to update peripheral: {error}",
+    "removePeripheralFailed": "Failed to remove peripheral: {error}",
+    "createProjectFailed": "Failed to create project: {error}",
+    "openProjectFailed": "Failed to open project: {error}",
+    "restoreCacheFailed": "Failed to restore project cache: {error}",
+    "aiDesktopOnly": "Please use the EspSmith desktop app for full AI functionality.\n\nRun `npm run tauri dev` to start the desktop app."
   },
   "window": {
     "minimize": "Minimize",
@@ -118,7 +135,14 @@
     "connectToGDB": "Connect to GDB server to start debugging.\nTarget: localhost:3333",
     "attach": "Attach",
     "detach": "Detach",
-    "selectPort": "Select port..."
+    "selectPort": "Select port...",
+    "serialDisconnected": "[Disconnected] {port}: {error}",
+    "filterPlaceholder": "Filter...",
+    "followOutput": "Follow output",
+    "copyOutput": "Copy output",
+    "copied": "Copied",
+    "crashDetected": "Crash detected — check GDB backtrace for details",
+    "processing": "Processing..."
   },
   "chat": {
     "aiAssistant": "AI Assistant",
@@ -154,11 +178,117 @@
     "enqueue": "Enqueue",
     "queuedCount": "{count} queued",
     "queuedNext": "Next",
-    "clearQueue": "Clear queue"
+    "clearQueue": "Clear queue",
+    "permission": {
+      "title": "AI is trying to perform a sensitive operation",
+      "deny": "Deny",
+      "allow": "Allow",
+      "askMode": "Ask Mode",
+      "fullMode": "Full Mode",
+      "askModeDesc": "Confirm sensitive operations",
+      "fullModeDesc": "No restrictions on any operation"
+    },
+    "tools": {
+      "listDir": "List directory: {path}",
+      "readFile": "Read file: {path}",
+      "writeFile": "Write file: {path}",
+      "execShell": "Execute command: {command}",
+      "closedLoop": "Closed-loop: Build→Flash→Verify",
+      "serialTail": "Serial recent logs (tail)",
+      "serialSearch": "Search serial logs: {pattern}",
+      "serialStatus": "Serial monitor status",
+      "serialGetCrash": "Retrieve crash state",
+      "serialSend": "Send to device: {data}",
+      "resetDevice": "Reset device (DTR/RTS)",
+      "search": "Search: {query}",
+      "invokeTool": "Invoke tool: {name}",
+      "resultTruncated": "... (result truncated)"
+    },
+    "summary": {
+      "readFiles": "Read {count} files",
+      "writeFiles": "Modified {count} files",
+      "deleteFiles": "Deleted {count} files",
+      "execCommands": "Executed {count} commands",
+      "listDirs": "Browsed {count} directories",
+      "taskComplete": "✅ Task completed: {summary}",
+      "taskCompleteNoOps": "✅ Task completed"
+    },
+    "error": {
+      "requestFailed": "\n\n❌ Request failed: {error}",
+      "aiStartFailed": "AI start failed: {error}",
+      "desktopOnly": "Please use the Tauri desktop app for full functionality",
+      "writeFailed": "Write failed: {error}",
+      "inactivityTimeout": "\n\n⏱ AI response timed out (no output for {seconds}s), automatically terminated. This is usually because a tool call is stuck or the device is not responding. Please check device connection and retry."
+    },
+    "time": {
+      "justNow": "Just now",
+      "minutesAgo": "{n} minutes ago",
+      "hoursAgo": "{n} hours ago"
+    },
+    "tokens": {
+      "cacheHit": "Cache hit tokens"
+    },
+    "apply": {
+      "filePathPrompt": "Enter file path (relative to project root)",
+      "filePathPlaceholder": "e.g.: main/components/led/main.c",
+      "writing": "Writing..."
+    },
+    "toolchain": {
+      "switch": "Switch toolchain"
+    },
+    "history": {
+      "title": "Chat History",
+      "empty": "No chat history",
+      "messageCount": "{n} messages ·",
+      "delete": "Delete session"
+    },
+    "input": {
+      "dropHint": "Release to insert file/folder path"
+    },
+    "model": {
+      "switch": "Switch model",
+      "mimoAuto": "MiMo Auto (MiMo-V2.5 free trial)"
+    },
+    "rollback": {
+      "confirmTitle": "Are you sure you want to roll back to before this conversation?",
+      "restoreFiles": "The following files will be restored:",
+      "deleteFiles": "The following files will be deleted:",
+      "confirm": "Confirm Rollback"
+    },
+    "toolCalls": {
+      "groupLabel": "AI execution · {n} steps",
+      "input": "Input: {input}",
+      "output": "Output: {output}",
+      "inputLabel": "Input:",
+      "outputLabel": "Output:",
+      "openFile": "Open {filePath}",
+      "copyDetails": "Copy tool call details",
+      "copyOutput": "Copy output",
+      "collapse": "Collapse",
+      "expandAll": "Expand all {n} lines"
+    },
+    "thinking": {
+      "thought": "Thought",
+      "process": "Thinking process",
+      "charCount": "({n} chars)",
+      "copy": "Copy thinking content"
+    },
+    "message": {
+      "rollback": "Roll back to before this conversation",
+      "rollbackBtn": "Rollback",
+      "reedit": "Re-edit"
+    },
+    "copyMessage": "Copy message",
+    "codeBlock": {
+      "apply": "Apply"
+    }
   },
   "editor": {
     "selectFile": "Select a file to edit",
-    "createProject": "or create a new project"
+    "createProject": "or create a new project",
+    "loading": "Loading editor...",
+    "unsavedChanges": "{name} has unsaved changes that will be lost if closed. Confirm close?",
+    "confirmClose": "Confirm Close"
   },
   "fileTree": {
     "openInNewWindow": "Open in New Window",
@@ -242,7 +372,33 @@
     "reportIssueDesc": "Submit a bug report or feature request on GitHub",
     "updateBanner": "New version {version} available",
     "updateBannerInstall": "Update",
-    "updateBannerDismiss": "Later"
+    "updateBannerDismiss": "Later",
+    "detectIdf": "Detect IDF Directory",
+    "detectIdfHint": "Auto-detect ESP-IDF installation on the system",
+    "advancedPythonConfig": "Advanced: Manual Python path configuration",
+    "selectPython": "Select Python",
+    "pythonValidationFailed": "Validation failed",
+    "validate": "Validate",
+    "modelSelectionHint": "Select model from the dropdown at the top of the chat panel",
+    "mimoSystemInstalled": "Installed (System)",
+    "mimoNotInstalled": "Not installed",
+    "mimoInstallHint": "Please install MiMo-Code globally via npm:",
+    "experience": {
+      "title": "Experience Library Management",
+      "desc": "The experience library records difficult problems and solutions encountered by AI in ESP32 development, helping AI solve similar issues faster in future projects.",
+      "recordCount": "{n} experience records",
+      "noRecords": "No experience records",
+      "refresh": "Refresh",
+      "openFailed": "Open failed",
+      "openDir": "Open directory",
+      "exportSuccess": "Export succeeded",
+      "exportFailed": "Export failed",
+      "export": "Export",
+      "selectFile": "Select experience library file",
+      "importSuccess": "Import succeeded",
+      "importFailed": "Import failed",
+      "import": "Import"
+    }
   },
   "projectWizard": {
     "title": "Create New Project",
@@ -359,7 +515,9 @@
     "noStackFrames": "No stack frames available",
     "noRegisterData": "No register data",
     "locals": "Locals",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "variableRead": "{type} {name} = {value}",
+    "variableReadError": "Read {name}: {error}"
   },
   "hardware": {
     "title": "Hardware Config",
@@ -381,6 +539,7 @@
     "searchType": "Search peripheral types...",
     "noTypeFound": "No matching peripheral type found",
     "peripheralType": "Peripheral Type",
+    "saveFailed": "Failed to save hardware config: {error}",
     "instanceName": "Instance Name",
     "notes": "Notes",
     "notesPlaceholder": "Usage notes, caveats, etc...",
@@ -717,11 +876,35 @@
     "refresh": "Refresh",
     "reset": "Reset",
     "save": "Save",
+    "saveSuccess": "Saved SDK configuration",
+    "saveFailed": "Save failed: {error}",
     "showHelp": "Show help",
     "searchPlaceholder": "Search configuration...",
     "noConfigs": "No configurations found. Please build the project first.",
     "totalConfigs": "configurations",
-    "hint": "Click Save to apply changes"
+    "hint": "Click Save to apply changes",
+    "errorTitle": "SDK Configuration Error",
+    "errorDesc": "An unexpected error occurred while rendering the SDK configuration.",
+    "resetToDefault": "Reset to default",
+    "toggleHelp": "Toggle help",
+    "kconfigName": "KCONFIG Name:",
+    "noMatch": "No matching items",
+    "discard": "Discard"
+  },
+  "search": {
+    "placeholder": "Search in project files...",
+    "searching": "Searching...",
+    "noResults": "No results found",
+    "resultsCount": "{count} results in {files} files",
+    "matchCount": "{n} matches",
+    "matchCountOne": "{n} match",
+    "hint": "Type a search query and press Enter"
+  },
+  "quickOpen": {
+    "placeholder": "Search files by name...",
+    "noFiles": "No files in project",
+    "noMatch": "No matching files",
+    "showingPartial": "Showing 100 of {n} results"
   },
   "aiOp": {
     "jtagClosedLoop": "JTAG Closed-Loop Verification",
@@ -756,25 +939,28 @@
     }
   },
   "aiBackend": {
-    "codewhaleNotFound": "CodeWhale not found. {{error}}",
-    "codewhaleStartFailed": "Cannot start CodeWhale ({{path}}): {{error}}. Please confirm CodeWhale is properly installed",
+    "codewhaleNotFound": "CodeWhale not found. {error}",
+    "codewhaleStartFailed": "Cannot start CodeWhale ({path}): {error}. Please confirm CodeWhale is properly installed",
     "userRefused": "User refused execution",
-    "invalidPermissionMode": "Invalid permission mode: {{mode}}",
+    "invalidPermissionMode": "Invalid permission mode: {mode}",
     "noPendingPermission": "No pending permission request",
     "nodejsNotInstalled": "Node.js is not installed. Please visit https://nodejs.org to download and install, or manually run npm install -g codewhale",
-    "createDirFailed": "Failed to create directory: {{error}}",
-    "npmStartFailed": "Failed to start npm: {{error}}",
+    "createDirFailed": "Failed to create directory: {error}",
+    "npmStartFailed": "Failed to start npm: {error}",
     "codewhaleInstallFailed": "CodeWhale installation failed. Please check your network and retry, or manually run: npm install -g codewhale",
-    "installFileNotGenerated": "Install file not generated. Please manually run: npm install -g codewhale --prefix \"{{path}}\"",
+    "installFileNotGenerated": "Install file not generated. Please manually run: npm install -g codewhale --prefix \"{path}\"",
     "codewhaleNotFoundAlt": "CodeWhale not found. Please ensure the app is properly packaged, or manually install: npm install -g codewhale",
-    "waitingConfirmation": "\n\n⏳ Waiting for confirmation: {{description}}\n",
+    "waitingConfirmation": "\n\n⏳ Waiting for confirmation: {description}\n",
     "permissionAllowed": "\n✅ Allowed\n",
     "permissionDenied": "\n\n⛔ User denied this operation\n",
     "unknown": "Unknown",
     "unknownCommand": "Unknown command",
-    "deleteFile": "Delete file: {{path}}",
-    "writeFile": "Write file: {{path}}",
-    "execCommand": "Execute command: {{command}}",
-    "operationName": "{{name}} operation"
+    "deleteFile": "Delete file: {path}",
+    "writeFile": "Write file: {path}",
+    "execCommand": "Execute command: {command}",
+    "operationName": "{name} operation"
+  },
+  "project": {
+    "openFailed": "Failed to open project: {error}"
   }
 }

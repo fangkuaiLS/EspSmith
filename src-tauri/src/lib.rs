@@ -12,7 +12,7 @@
 //! - idf.rs                 - ESP-IDF 工具封装
 //! - ai_assistant.rs        - codewhale 集成
 
-mod commands;
+pub mod commands;
 mod connection;
 mod mcp;
 mod idf;
@@ -189,6 +189,8 @@ pub fn run() {
             project::create_project_from_template,
             project::save_project_config,
             project::load_project_config,
+            project::get_startup_project,
+            project::open_project_new_instance,
             // 文件系统命令
             filesystem::read_file,
             filesystem::write_file,
@@ -260,6 +262,8 @@ pub fn run() {
             connection::force_refresh_connection,
             // Git 命令
             git_cmd::get_status,
+            git_cmd::get_current_branch,
+            git_cmd::create_branch,
             git_cmd::start_ai_session,
             git_cmd::commit_ai_changes,
             git_cmd::revert_ai_changes,

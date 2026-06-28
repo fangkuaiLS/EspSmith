@@ -8,7 +8,7 @@
 
 import { useSettingsStore } from '../stores/settingsStore';
 import { useProjectStore } from '../stores/projectStore';
-import { translateBackendString } from '../i18n';
+import i18n, { translateBackendString } from '../i18n';
 
 // ==================== 环境检测 ====================
 
@@ -40,7 +40,7 @@ export async function sendChatMessage(
         }
     }
 
-    return '请在 EspSmith 桌面应用中体验完整 AI 功能。\n\n运行 `npm run tauri dev` 启动桌面应用。';
+    return i18n.t('toast.aiDesktopOnly');
 }
 
 export async function clearConversation() {

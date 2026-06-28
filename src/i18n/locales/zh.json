@@ -62,7 +62,14 @@
     "delete": "删除",
     "copy": "复制",
     "copied": "已复制",
-    "ok": "确定"
+    "ok": "确定",
+    "refresh": "刷新",
+    "errorBoundary": {
+      "title": "应用遇到了错误",
+      "unknownError": "未知错误",
+      "retry": "重试",
+      "reload": "重新加载应用"
+    }
   },
   "dialog": {
     "cancel": "取消",
@@ -94,7 +101,17 @@
     "selectSerialPort": "请选择串口",
     "selectSerialPortFirst": "请先选择一个串口",
     "idfNotFound": "未检测到 ESP-IDF，请在设置中配置 IDF 路径",
-    "sdkconfigNotFound": "未找到 sdkconfig 文件，请先编译项目生成配置"
+    "sdkconfigNotFound": "未找到 sdkconfig 文件，请先编译项目生成配置",
+    "fileSaved": "文件已保存",
+    "saveFailed": "保存失败: {error}",
+    "saveHardwareConfigFailed": "保存硬件配置失败: {error}",
+    "addPeripheralFailed": "添加外设失败: {error}",
+    "updatePeripheralFailed": "更新外设失败: {error}",
+    "removePeripheralFailed": "删除外设失败: {error}",
+    "createProjectFailed": "创建项目失败: {error}",
+    "openProjectFailed": "打开项目失败: {error}",
+    "restoreCacheFailed": "恢复项目缓存失败: {error}",
+    "aiDesktopOnly": "请在 EspSmith 桌面应用中体验完整 AI 功能。\n\n运行 `npm run tauri dev` 启动桌面应用。"
   },
   "window": {
     "minimize": "最小化",
@@ -118,7 +135,14 @@
     "connectToGDB": "连接到 GDB 服务器以开始调试。\n目标: localhost:3333",
     "attach": "附加",
     "detach": "分离",
-    "selectPort": "选择串口..."
+    "selectPort": "选择串口...",
+    "serialDisconnected": "[断开] {port}: {error}",
+    "filterPlaceholder": "过滤...",
+    "followOutput": "跟踪输出",
+    "copyOutput": "复制输出",
+    "copied": "已复制",
+    "crashDetected": "检测到崩溃 — 查看 GDB backtrace 获取详情",
+    "processing": "处理中..."
   },
   "chat": {
     "aiAssistant": "AI 助手",
@@ -154,11 +178,117 @@
     "enqueue": "加入队列",
     "queuedCount": "队列中 {count} 条",
     "queuedNext": "下一条",
-    "clearQueue": "清空队列"
+    "clearQueue": "清空队列",
+    "permission": {
+      "title": "AI 正在尝试执行敏感操作",
+      "deny": "拒绝",
+      "allow": "允许",
+      "askMode": "询问模式",
+      "fullMode": "完全模式",
+      "askModeDesc": "敏感操作需确认",
+      "fullModeDesc": "不限制任何操作"
+    },
+    "tools": {
+      "listDir": "列出目录: {path}",
+      "readFile": "读取文件: {path}",
+      "writeFile": "写入文件: {path}",
+      "execShell": "执行命令: {command}",
+      "closedLoop": "一键闭环: 编译→烧录→验证",
+      "serialTail": "串口最近日志 (tail)",
+      "serialSearch": "搜索串口日志: {pattern}",
+      "serialStatus": "串口监视器状态",
+      "serialGetCrash": "取走崩溃现场",
+      "serialSend": "向设备发送: {data}",
+      "resetDevice": "复位设备 (DTR/RTS)",
+      "search": "搜索: {query}",
+      "invokeTool": "调用工具: {name}",
+      "resultTruncated": "... (结果已截断)"
+    },
+    "summary": {
+      "readFiles": "读取了 {count} 个文件",
+      "writeFiles": "修改了 {count} 个文件",
+      "deleteFiles": "删除了 {count} 个文件",
+      "execCommands": "执行了 {count} 个命令",
+      "listDirs": "浏览了 {count} 个目录",
+      "taskComplete": "✅ 任务完成：{summary}",
+      "taskCompleteNoOps": "✅ 任务完成"
+    },
+    "error": {
+      "requestFailed": "\n\n❌ 请求失败: {error}",
+      "aiStartFailed": "AI 启动失败: {error}",
+      "desktopOnly": "请在 Tauri 桌面应用中体验完整功能",
+      "writeFailed": "写入失败: {error}",
+      "inactivityTimeout": "\n\n⏱ AI 响应超时（{seconds}秒无输出），已自动终止。这通常是因为工具调用卡住或设备未响应。请检查设备连接后重试。"
+    },
+    "time": {
+      "justNow": "刚刚",
+      "minutesAgo": "{n} 分钟前",
+      "hoursAgo": "{n} 小时前"
+    },
+    "tokens": {
+      "cacheHit": "缓存命中 tokens"
+    },
+    "apply": {
+      "filePathPrompt": "请输入文件路径（相对于项目根目录）",
+      "filePathPlaceholder": "例如: main/components/led/main.c",
+      "writing": "写入中..."
+    },
+    "toolchain": {
+      "switch": "切换工具链"
+    },
+    "history": {
+      "title": "历史会话",
+      "empty": "暂无历史会话",
+      "messageCount": "{n} 条消息 ·",
+      "delete": "删除会话"
+    },
+    "input": {
+      "dropHint": "释放以插入文件/文件夹路径"
+    },
+    "model": {
+      "switch": "切换模型",
+      "mimoAuto": "MiMo Auto（MiMo-V2.5 限免中）"
+    },
+    "rollback": {
+      "confirmTitle": "确定退回到本次对话发起前吗？",
+      "restoreFiles": "以下文件将被恢复：",
+      "deleteFiles": "以下文件将被删除：",
+      "confirm": "确认回退"
+    },
+    "toolCalls": {
+      "groupLabel": "AI 执行过程 · {n} steps",
+      "input": "输入: {input}",
+      "output": "输出: {output}",
+      "inputLabel": "输入:",
+      "outputLabel": "输出:",
+      "openFile": "打开 {filePath}",
+      "copyDetails": "复制工具调用详情",
+      "copyOutput": "复制输出",
+      "collapse": "收起",
+      "expandAll": "展开全部 {n} 行"
+    },
+    "thinking": {
+      "thought": "Thought",
+      "process": "思考过程",
+      "charCount": "({n} 字)",
+      "copy": "复制思考内容"
+    },
+    "message": {
+      "rollback": "回退到本次对话前",
+      "rollbackBtn": "回退",
+      "reedit": "重新编辑"
+    },
+    "copyMessage": "复制消息",
+    "codeBlock": {
+      "apply": "Apply"
+    }
   },
   "editor": {
     "selectFile": "选择一个文件以编辑",
-    "createProject": "或创建一个新项目"
+    "createProject": "或创建一个新项目",
+    "loading": "加载编辑器中...",
+    "unsavedChanges": "{name} 有未保存的修改，关闭后将丢失。是否确认关闭？",
+    "confirmClose": "确认关闭"
   },
   "fileTree": {
     "openInNewWindow": "在新窗口打开",
@@ -242,7 +372,33 @@
     "reportIssueDesc": "在 GitHub 上提交 Bug 报告或功能建议",
     "updateBanner": "新版本 {version} 可用",
     "updateBannerInstall": "更新",
-    "updateBannerDismiss": "稍后"
+    "updateBannerDismiss": "稍后",
+    "detectIdf": "检测IDF目录",
+    "detectIdfHint": "自动检测系统中的 ESP-IDF 安装",
+    "advancedPythonConfig": "高级：手动配置 Python 路径",
+    "selectPython": "选择 Python",
+    "pythonValidationFailed": "验证失败",
+    "validate": "验证",
+    "modelSelectionHint": "模型选择请在聊天面板顶部的下拉菜单中进行",
+    "mimoSystemInstalled": "已安装 (系统)",
+    "mimoNotInstalled": "未安装",
+    "mimoInstallHint": "请通过 npm 全局安装 MiMo-Code:",
+    "experience": {
+      "title": "经验库管理",
+      "desc": "经验库记录 AI 在 ESP32 开发中遇到的疑难杂症和解决方案，帮助 AI 在后续项目中更快速地解决类似问题。",
+      "recordCount": "{n} 条经验记录",
+      "noRecords": "暂无经验记录",
+      "refresh": "刷新",
+      "openFailed": "打开失败",
+      "openDir": "打开目录",
+      "exportSuccess": "导出成功",
+      "exportFailed": "导出失败",
+      "export": "导出",
+      "selectFile": "选择经验库文件",
+      "importSuccess": "导入成功",
+      "importFailed": "导入失败",
+      "import": "导入"
+    }
   },
   "projectWizard": {
     "title": "创建新项目",
@@ -359,7 +515,9 @@
     "noStackFrames": "暂无调用栈信息",
     "noRegisterData": "暂无寄存器数据",
     "locals": "局部变量",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "variableRead": "{type} {name} = {value}",
+    "variableReadError": "读取 {name}: {error}"
   },
   "hardware": {
     "title": "硬件配置表",
@@ -381,6 +539,7 @@
     "searchType": "搜索外设类型...",
     "noTypeFound": "未找到匹配的外设类型",
     "peripheralType": "外设类型",
+    "saveFailed": "保存硬件配置失败: {error}",
     "instanceName": "实例名称",
     "notes": "备注",
     "notesPlaceholder": "用途说明、注意事项等...",
@@ -600,11 +759,35 @@
     "refresh": "刷新",
     "reset": "重置",
     "save": "保存",
+    "saveSuccess": "已保存 SDK 配置",
+    "saveFailed": "保存失败: {error}",
     "showHelp": "查看帮助",
     "searchPlaceholder": "搜索配置项...",
     "noConfigs": "未找到配置项，请先编译项目",
     "totalConfigs": "个配置项",
-    "hint": "修改后点击保存按钮应用更改"
+    "hint": "修改后点击保存按钮应用更改",
+    "errorTitle": "SDK 配置错误",
+    "errorDesc": "渲染 SDK 配置时发生意外错误。",
+    "resetToDefault": "恢复默认值",
+    "toggleHelp": "切换帮助",
+    "kconfigName": "KCONFIG 名称:",
+    "noMatch": "没有匹配项",
+    "discard": "放弃"
+  },
+  "search": {
+    "placeholder": "在项目文件中搜索...",
+    "searching": "搜索中...",
+    "noResults": "未找到结果",
+    "resultsCount": "{count} 个结果，分布在 {files} 个文件中",
+    "matchCount": "{n} 个匹配",
+    "matchCountOne": "{n} 个匹配",
+    "hint": "输入搜索内容并按回车"
+  },
+  "quickOpen": {
+    "placeholder": "按文件名搜索...",
+    "noFiles": "项目中没有文件",
+    "noMatch": "没有匹配的文件",
+    "showingPartial": "显示 100 条结果，共 {n} 条"
   },
   "aiOp": {
     "jtagClosedLoop": "JTAG 闭环验证",
@@ -639,25 +822,28 @@
     }
   },
   "aiBackend": {
-    "codewhaleNotFound": "CodeWhale 未找到。{{error}}",
-    "codewhaleStartFailed": "无法启动 CodeWhale ({{path}}): {{error}}。请确认 CodeWhale 已正确安装",
+    "codewhaleNotFound": "CodeWhale 未找到。{error}",
+    "codewhaleStartFailed": "无法启动 CodeWhale ({path}): {error}。请确认 CodeWhale 已正确安装",
     "userRefused": "用户拒绝执行",
-    "invalidPermissionMode": "无效的权限模式: {{mode}}",
+    "invalidPermissionMode": "无效的权限模式: {mode}",
     "noPendingPermission": "没有待确认的权限请求",
     "nodejsNotInstalled": "Node.js 未安装。请访问 https://nodejs.org 下载安装后重试，或手动执行 npm install -g codewhale",
-    "createDirFailed": "创建目录失败: {{error}}",
-    "npmStartFailed": "启动 npm 失败: {{error}}",
+    "createDirFailed": "创建目录失败: {error}",
+    "npmStartFailed": "启动 npm 失败: {error}",
     "codewhaleInstallFailed": "CodeWhale 安装失败，请检查网络连接后重试。也可以手动执行: npm install -g codewhale",
-    "installFileNotGenerated": "安装文件未生成，请手动执行: npm install -g codewhale --prefix \"{{path}}\"",
+    "installFileNotGenerated": "安装文件未生成，请手动执行: npm install -g codewhale --prefix \"{path}\"",
     "codewhaleNotFoundAlt": "CodeWhale 未找到。请确保应用已正确打包，或手动安装: npm install -g codewhale",
-    "waitingConfirmation": "\n\n⏳ 等待确认: {{description}}\n",
+    "waitingConfirmation": "\n\n⏳ 等待确认: {description}\n",
     "permissionAllowed": "\n✅ 已允许\n",
     "permissionDenied": "\n\n⛔ 用户拒绝了此操作\n",
     "unknown": "未知",
     "unknownCommand": "未知命令",
-    "deleteFile": "删除文件: {{path}}",
-    "writeFile": "写入文件: {{path}}",
-    "execCommand": "执行命令: {{command}}",
-    "operationName": "{{name}} 操作"
+    "deleteFile": "删除文件: {path}",
+    "writeFile": "写入文件: {path}",
+    "execCommand": "执行命令: {command}",
+    "operationName": "{name} 操作"
+  },
+  "project": {
+    "openFailed": "打开项目失败: {error}"
   }
 }

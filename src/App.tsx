@@ -26,6 +26,7 @@ import { SettingsDialog } from './components/settings';
 import { GitPanel } from './components/git';
 import { NewProjectDialog } from './components/NewProjectDialog';
 import { InputDialog } from './components/ui/InputDialog';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { DebugPanel, BuildOutputPanel, SerialMonitorPanel } from './components/debug';
 import { ToastContainer, showToast } from './components/ui/Toast';
 import { GlobalSearchPanel } from './components/search/GlobalSearchPanel';
@@ -35,6 +36,7 @@ import { SdkConfigEditor } from './components/sdkconfig';
 import { useProjectStore, useFileStore, useChatStore, useHardwareStore, useSettingsStore } from './stores';
 import type { Update } from '@tauri-apps/plugin-updater';
 import { safeInvoke, isTauri } from './lib/invoke';
+import { devLog } from './lib/devLog';
 import { useBuildOutput } from './hooks/useBuildOutput';
 import { useSerialMonitor } from './hooks/useSerialMonitor';
 import type { SerialPortInfo, ChipTargetInfo, ConnectionInfo } from './types';
@@ -362,6 +364,22 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     detectIDF();
   }, [detectIDF]);
 
+  // 启动时检查是否有 --project 参数传入的项目路径（新窗口打开项目时）
+  useEffect(() => {
+    if (!isTauri()) return;
+    (async () => {
+      try {
+        const startupPath = await safeInvoke<string | null>('get_startup_project');
+        if (startupPath) {
+          devLog('[App] Startup project path:', startupPath);
+          await openProject(startupPath);
+        }
+      } catch (err) {
+        console.warn('[App] Failed to get startup project:', err);
+      }
+    })();
+  }, [openProject]);
+
   // 获取当前可用的 IDF 路径（优先 active，fallback 到 settings 中配置的路径）
   const getIdfPath = useCallback(() => {
     return idfStatus.active?.idf_path || settings.idfPath || '';
@@ -402,7 +420,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
     if (!selectedPort || selectedChipRef.current) return;
     const p = availablePorts.find(x => (x.port_name || x.name || x.path) === selectedPort && x.chip_type);
     if (p?.chip_type) {
-      console.log('[AutoSelect] Chip auto-selected:', p.chip_type, 'for port:', selectedPort);
+      devLog('[AutoSelect] Chip auto-selected:', p.chip_type, 'for port:', selectedPort);
       setSelectedChip(p.chip_type);
     }
   }, [selectedPort, availablePorts]);
@@ -427,7 +445,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         }
         const target = ports.find(x => (x.port_name || x.name || x.path) === selectedPort && x.chip_type);
         if (target?.chip_type && !selectedChipRef.current && !cancelled) {
-          console.log('[AutoSelect] Chip auto-selected via esptool:', target.chip_type);
+          devLog('[AutoSelect] Chip auto-selected via esptool:', target.chip_type);
           setSelectedChip(target.chip_type);
         }
       } catch { /* ignore */ }
@@ -462,7 +480,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           if (newPorts.length > 0) {
             const currentSelected = selectedPortRef.current;
             if (!currentSelected || !currentNames.includes(currentSelected)) {
-              console.log('[AutoSelect] New port detected, auto-selecting:', newPorts[0]);
+              devLog('[AutoSelect] New port detected, auto-selecting:', newPorts[0]);
               setSelectedPort(newPorts[0]);
             }
           }
@@ -500,7 +518,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
 
       // 自动选择端口
       if (info.port && !selectedPortRef.current) {
-        console.log('[AutoSelect] Port auto-selected from connectionInfo:', info.port);
+        devLog('[AutoSelect] Port auto-selected from connectionInfo:', info.port);
         setSelectedPort(info.port);
       }
 
@@ -511,7 +529,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           || (info.chipHint && info.chipHint !== 'ESP32-USB-JTAG'
             ? info.chipHint : null);
         if (chip) {
-          console.log('[AutoSelect] Chip auto-selected from VID/PID:', chip);
+          devLog('[AutoSelect] Chip auto-selected from VID/PID:', chip);
           setSelectedChip(chip);
         }
       }
@@ -541,19 +559,19 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
 
   // Override handleMenuconfig to show in-app SDK config editor
   const handleMenuconfig = useCallback(() => {
-    console.log('[App] handleMenuconfig called, currentProject:', currentProject?.path);
+    devLog('[App] handleMenuconfig called, currentProject:', currentProject?.path);
     if (!currentProject) {
       showToast('error', t('toast.noProjectOpen'));
       return;
     }
-    console.log('[App] setting showSdkConfig = true');
+    devLog('[App] setting showSdkConfig = true');
     showToast('info', 'Opening SDK Configuration...');
     setShowSdkConfig(true);
   }, [currentProject, t]);
 
   // Debug: log when showSdkConfig changes
   useEffect(() => {
-    console.log('[App] showSdkConfig changed to:', showSdkConfig, 'currentProject:', currentProject?.path);
+    devLog('[App] showSdkConfig changed to:', showSdkConfig, 'currentProject:', currentProject?.path);
   }, [showSdkConfig, currentProject]);
 
   const {
@@ -581,6 +599,11 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         const { open } = await import('@tauri-apps/plugin-dialog');
         const selected = await open({ directory: true, multiple: false, title: 'Open ESP32 Project' });
         if (selected && typeof selected === 'string') {
+          // 如果当前已有项目打开，则在新窗口中打开新项目
+          if (currentProject) {
+            await safeInvoke('open_project_new_instance', { projectPath: selected });
+            return;
+          }
           await openProject(selected);
         }
         return;
@@ -606,7 +629,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
         if (path) await openProject(path);
       }
     }
-  }, [openProject]);
+  }, [openProject, currentProject]);
 
   const handleNewFile = useCallback(() => {
     if (!currentProject) {
@@ -648,6 +671,10 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
   const handleSave = useCallback(() => {
     if (activeTabId) saveFile(activeTabId);
   }, [activeTabId, saveFile]);
+
+  const handleClearBuildOutput = useCallback(() => setBuildOutput([]), []);
+  const handleClearSerialOutput = useCallback(() => setSerialOutput([]), []);
+  const handleCloseSdkConfig = useCallback(() => setShowSdkConfig(false), []);
 
   if (!currentProject) {
     return (
@@ -856,7 +883,9 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
             className="bg-surface-base"
           >
             <div className="h-full border-r border-border-default">
-              <HardwareStore />
+              <ErrorBoundary name="HardwareStore" inline>
+                <HardwareStore />
+              </ErrorBoundary>
             </div>
           </Panel>
 
@@ -866,7 +895,9 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           {/* ===== 右侧：AI 聊天 ===== */}
           <Panel defaultSize={72} minSize={35} className="bg-surface-base">
             <div className="h-full border-l border-border-default">
-              <ChatPanel />
+              <ErrorBoundary name="ChatPanel" inline>
+                <ChatPanel />
+              </ErrorBoundary>
             </div>
           </Panel>
         </PanelGroup>
@@ -905,13 +936,17 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
               <PanelGroup direction="vertical" className="flex-1">
                 <Panel defaultSize={62} minSize={30}>
                   <div className="h-full overflow-hidden">
-                    {leftPanel === 'files' ? <FileTree /> : <HardwareStore />}
+                    <ErrorBoundary name={leftPanel === 'files' ? 'FileTree' : 'HardwareStore'} inline>
+                      {leftPanel === 'files' ? <FileTree /> : <HardwareStore />}
+                    </ErrorBoundary>
                   </div>
                 </Panel>
                 <PanelResizeHandle className="h-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
                 <Panel defaultSize={38} minSize={15}>
                   <div className="h-full">
-                    <GitPanel />
+                    <ErrorBoundary name="GitPanel" inline>
+                      <GitPanel />
+                    </ErrorBoundary>
                   </div>
                 </Panel>
               </PanelGroup>
@@ -928,7 +963,9 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
               <PanelGroup direction="vertical">
                 <Panel defaultSize={70} minSize={30}>
                   <div className="h-full bg-surface-root">
-                    <CodeEditor />
+                    <ErrorBoundary name="CodeEditor" inline>
+                      <CodeEditor />
+                    </ErrorBoundary>
                   </div>
                 </Panel>
 
@@ -974,28 +1011,30 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
                       </button>
                     </div>
                     <div className="flex-1 overflow-hidden">
-                      {activeBottomTab === 'build' ? (
-                        <BuildOutputPanel
-                          output={buildOutput}
-                          onClear={() => setBuildOutput([])}
-                          isBuilding={isBuilding || isFlashing}
-                        />
-                      ) : activeBottomTab === 'serial' ? (
-                        <SerialMonitorPanel
-                          output={serialOutput}
-                          input={serialInput}
-                          connected={serialConnected}
-                          port={selectedPort}
-                          baudRate={serialBaudRate}
-                          onInputChange={setSerialInput}
-                          onSend={handleSerialSend}
-                          onConnect={handleSerialConnect}
-                          onBaudRateChange={setSerialBaudRate}
-                          onClear={() => setSerialOutput([])}
-                        />
-                      ) : (
-                        <DebugPanel targetChip={selectedChip} />
-                      )}
+                      <ErrorBoundary name="BottomPanel" inline>
+                        {activeBottomTab === 'build' ? (
+                          <BuildOutputPanel
+                            output={buildOutput}
+                            onClear={handleClearBuildOutput}
+                            isBuilding={isBuilding || isFlashing}
+                          />
+                        ) : activeBottomTab === 'serial' ? (
+                          <SerialMonitorPanel
+                            output={serialOutput}
+                            input={serialInput}
+                            connected={serialConnected}
+                            port={selectedPort}
+                            baudRate={serialBaudRate}
+                            onInputChange={setSerialInput}
+                            onSend={handleSerialSend}
+                            onConnect={handleSerialConnect}
+                            onBaudRateChange={setSerialBaudRate}
+                            onClear={handleClearSerialOutput}
+                          />
+                        ) : (
+                          <DebugPanel targetChip={selectedChip} />
+                        )}
+                      </ErrorBoundary>
                     </div>
                   </div>
                 </Panel>
@@ -1019,7 +1058,9 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
             className="bg-surface-base"
           >
             <div className="h-full border-l border-border-default">
-              <ChatPanel />
+              <ErrorBoundary name="ChatPanel" inline>
+                <ChatPanel />
+              </ErrorBoundary>
             </div>
           </Panel>
         </PanelGroup>
@@ -1113,11 +1154,13 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
       {showQuickOpen && <QuickOpenDialog onClose={() => setShowQuickOpen(false)} />}
       {showSdkConfig && currentProject && (
         <div className="fixed inset-0 z-50 bg-surface-base">
-          <SdkConfigEditor
-            projectPath={currentProject.path}
-            idfPath={getIdfPath()}
-            onClose={() => setShowSdkConfig(false)}
-          />
+          <ErrorBoundary name="SdkConfigEditor">
+            <SdkConfigEditor
+              projectPath={currentProject.path}
+              idfPath={getIdfPath()}
+              onClose={handleCloseSdkConfig}
+            />
+          </ErrorBoundary>
         </div>
       )}
 

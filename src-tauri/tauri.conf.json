@@ -70,7 +70,11 @@
     "macOS": {
       "minimumSystemVersion": "11.0"
     },
-    "linux": {}
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+      }
+    }
   },
   "plugins": {
     "updater": {
@@ -86,7 +90,7 @@
       }
     },
     "shell": {
-      "open": true
+      "open": "^https?://"
     }
   }
 }

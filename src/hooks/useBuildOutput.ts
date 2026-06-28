@@ -32,6 +32,7 @@ export function useBuildOutput(options: UseBuildOutputOptions) {
   const [isRunningDoctor, setIsRunningDoctor] = useState(false);
   const [lastBuildSuccess, setLastBuildSuccess] = useState<boolean | null>(null);
   const buildBufferRef = useRef<string[]>([]);
+  const aiOpTypeRef = useRef<string | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -47,6 +48,8 @@ export function useBuildOutput(options: UseBuildOutputOptions) {
   useEffect(() => {
     let unlistenOutput: (() => void) | undefined;
     let unlistenDone: (() => void) | undefined;
+    let unlistenOpProgress: (() => void) | undefined;
+    let unlistenOpDone: (() => void) | undefined;
     let cancelled = false;
 
     listen<{ line: string; is_stderr: boolean }>('build-output', (event) => {
@@ -64,10 +67,33 @@ export function useBuildOutput(options: UseBuildOutputOptions) {
       setIsFlashing(false);
     }).then((unlisten) => { if (!cancelled) { unlistenDone = unlisten; } else { unlisten(); } });
 
+    // AI 触发的编译/烧录操作同步 isBuilding/isFlashing，让状态栏和 BuildOutputPanel 动画生效
+    listen<{ operationType: string }>('ai-operation-progress', (event) => {
+      const opType = event.payload.operationType;
+      aiOpTypeRef.current = opType;
+      if (opType === 'build') {
+        setIsBuilding(true);
+      } else if (opType === 'flash') {
+        setIsFlashing(true);
+      }
+    }).then((unlisten) => { if (!cancelled) { unlistenOpProgress = unlisten; } else { unlisten(); } });
+
+    listen('ai-operation-done', () => {
+      const opType = aiOpTypeRef.current;
+      if (opType === 'build') {
+        setIsBuilding(false);
+      } else if (opType === 'flash') {
+        setIsFlashing(false);
+      }
+      aiOpTypeRef.current = null;
+    }).then((unlisten) => { if (!cancelled) { unlistenOpDone = unlisten; } else { unlisten(); } });
+
     return () => {
       cancelled = true;
       unlistenOutput?.();
       unlistenDone?.();
+      unlistenOpProgress?.();
+      unlistenOpDone?.();
     };
   }, []);
 
@@ -76,7 +102,8 @@ export function useBuildOutput(options: UseBuildOutputOptions) {
       const ports = await safeInvoke<Array<{ path: string }>>('list_ports');
       if (ports && ports.length > 0) return ports[0].path;
     } catch { /* ignore */ }
-    return prompt('Enter serial port (e.g., COM3):');
+    // No browser prompt — return null so caller shows a toast asking the user to pick a port.
+    return null;
   }
 
   const handleBuild = useCallback(async () => {

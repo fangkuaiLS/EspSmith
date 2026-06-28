@@ -175,7 +175,7 @@ fn reconnect_gdb_after_recovery() -> Result<String, String> {
         Some((elf, chip)) => {
             crate::commands::gdb_session::disconnect_session_sync();
             std::thread::sleep(std::time::Duration::from_millis(500));
-            crate::commands::gdb_session::connect_session_sync(elf, "localhost:3333", chip)?;
+            crate::commands::gdb_session::connect_session_sync(elf, crate::adapters::GDB_ADDR, chip)?;
             Ok(format!("GDB session reconnected for {chip}"))
         }
         None => Ok("No GDB recovery context; skipping GDB reconnect.".into()),
@@ -222,7 +222,7 @@ fn probe_hard_reset_via_openocd() -> Result<String, String> {
     use std::net::TcpStream;
 
     let mut stream = TcpStream::connect_timeout(
-        &"127.0.0.1:4444".parse().unwrap(),
+        &crate::adapters::openocd_addr(),
         std::time::Duration::from_secs(2),
     ).map_err(|e| format!("Cannot connect to OpenOCD telnet (port 4444): {}. Is OpenOCD running?", e))?;
     stream

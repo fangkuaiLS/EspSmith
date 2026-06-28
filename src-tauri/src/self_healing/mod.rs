@@ -32,13 +32,13 @@ static BROADCAST_LISTENERS: Mutex<Vec<Arc<dyn Fn(&RunnerEvent) + Send + Sync>>> 
 
 /// 注册一个全局事件监听器。返回的 Arc 用于后续移除（drop 即可）。
 pub fn add_global_listener(listener: Arc<dyn Fn(&RunnerEvent) + Send + Sync>) {
-    let mut listeners = BROADCAST_LISTENERS.lock().unwrap();
+    let mut listeners = BROADCAST_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
     listeners.push(listener);
 }
 
 /// 向所有已注册的监听器广播一个 RunnerEvent。
 pub fn broadcast_event(event: &RunnerEvent) {
-    let listeners = BROADCAST_LISTENERS.lock().unwrap();
+    let listeners = BROADCAST_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
     for listener in listeners.iter() {
         listener(event);
     }

@@ -85,7 +85,7 @@ static DELEGATE_HANDLER: Mutex<Option<Box<DelegateHandlerFn>>> = Mutex::new(None
 
 /// Register the delegate handler. Called once from `lib.rs::run()` setup.
 pub fn register_delegate_handler(handler: Box<DelegateHandlerFn>) {
-    let mut guard = DELEGATE_HANDLER.lock().unwrap();
+    let mut guard = DELEGATE_HANDLER.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(handler);
     tracing::info!("[IPC] Delegate handler registered");
 }
@@ -130,8 +130,20 @@ pub fn start_ipc_server() {
         }
     };
 
-    // Set the env var so child processes know where to connect
-    std::env::set_var(ENV_PIPE_NAME, &addr);
+    // Set the env var so child processes know where to connect.
+    // SAFETY: `std::env::set_var` is unsafe in Rust 2024 edition because
+    // concurrent reads of env vars from other threads may see inconsistent
+    // state. We mitigate by:
+    // 1. Only calling this once (guarded by SERVER_RUNNING check above).
+    // 2. Writing the addr to a temp file as a fallback discovery mechanism.
+    // The risk of data race is accepted because the env var is only read by
+    // child processes spawned after this point, not by concurrent Rust code.
+    // If this becomes a problem, switch to a `Mutex<String>` + `std::env::var`
+    // wrapper.
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var(ENV_PIPE_NAME, &addr);
+    }
 
     // Also write to a temp file as a fallback discovery mechanism.
     // This ensures CLI processes can find the IPC server even when
@@ -229,7 +241,7 @@ fn handle_client(mut stream: TcpStream) {
 
 /// Run a delegate request using the registered handler.
 fn run_delegate(command: &str, args: &serde_json::Value) -> DelegateResult {
-    let guard = DELEGATE_HANDLER.lock().unwrap();
+    let guard = DELEGATE_HANDLER.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref handler) = *guard {
         handler(command, args)
     } else {

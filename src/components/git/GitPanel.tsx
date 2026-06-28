@@ -3,16 +3,19 @@
  *
  * 功能：
  * - 查看变更文件列表
- * - 创建分支
+ * - 创建分支（使用用户输入的名字）
  * - 提交变更
  * - 回退 AI 修改
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GitBranch, GitCommit, Plus, RotateCcw, RefreshCw, FileCode, Loader2 } from 'lucide-react';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { safeInvoke } from '../../lib/invoke';
 import { useProjectStore } from '../../stores';
+import { showToast } from '../ui/Toast';
+import { InputDialog } from '../ui/InputDialog';
 
 interface FileStatus {
   path: string;
@@ -35,16 +38,17 @@ const STATUS_LABELS: Record<string, string> = {
   unknown: '?',
 };
 
-export function GitPanel() {
+function GitPanel() {
   const { t } = useTranslation();
   const [files, setFiles] = useState<FileStatus[]>([]);
-  const [branch, setBranch] = useState('main');
+  const [branch, setBranch] = useState('');
   const [commitMessage, setCommitMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [branchDialogOpen, setBranchDialogOpen] = useState(false);
   const { currentProject } = useProjectStore();
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     if (!currentProject) return;
     setIsLoading(true);
     try {
@@ -56,21 +60,41 @@ export function GitPanel() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [currentProject]);
+
+  const loadBranch = useCallback(async () => {
+    if (!currentProject) return;
+    try {
+      const name = await safeInvoke<string>('get_current_branch', { projectPath: currentProject.path });
+      setBranch(name || '');
+    } catch (error) {
+      console.error('Failed to load current branch:', error);
+      setBranch('');
+    }
+  }, [currentProject]);
 
   useEffect(() => {
     loadStatus();
-  }, [currentProject]);
+    loadBranch();
+  }, [currentProject, loadStatus, loadBranch]);
 
-  const handleCreateBranch = async () => {
-    const name = prompt(t('git.branchNamePrompt'));
+  const handleCreateBranchClick = () => {
+    setBranchDialogOpen(true);
+  };
+
+  const handleBranchDialogConfirm = async (name: string) => {
+    setBranchDialogOpen(false);
     if (!name || !currentProject) return;
     try {
-      const branchName = await safeInvoke<string>('start_ai_session', { projectPath: currentProject.path });
-      setBranch(branchName || 'main');
-      alert(t('git.branchCreated', { name: branchName }));
+      const branchName = await safeInvoke<string>('create_branch', {
+        projectPath: currentProject.path,
+        name,
+      });
+      setBranch(branchName || name);
+      showToast('success', t('git.branchCreated', { name: branchName }));
+      await loadStatus();
     } catch (error) {
-      alert(t('git.branchCreateFailed', { error }));
+      showToast('error', t('git.branchCreateFailed', { error: String(error) }));
     }
   };
 
@@ -78,12 +102,16 @@ export function GitPanel() {
     if (!commitMessage.trim() || !currentProject) return;
     setIsCommitting(true);
     try {
-      await safeInvoke('commit_ai_changes', { projectPath: currentProject.path, message: commitMessage });
+      await safeInvoke('commit_ai_changes', {
+        projectPath: currentProject.path,
+        message: commitMessage,
+      });
       setCommitMessage('');
       await loadStatus();
-      alert(t('git.commitSuccess'));
+      await loadBranch();
+      showToast('success', t('git.commitSuccess'));
     } catch (error) {
-      alert(t('git.commitFailed', { error }));
+      showToast('error', t('git.commitFailed', { error: String(error) }));
     } finally {
       setIsCommitting(false);
     }
@@ -91,13 +119,20 @@ export function GitPanel() {
 
   const handleRevert = async () => {
     if (!currentProject) return;
-    if (!confirm(t('git.revertConfirm'))) return;
+    const confirmed = await ask(t('git.revertConfirm'), {
+      title: t('git.revert'),
+      kind: 'warning',
+      okLabel: t('git.revert'),
+      cancelLabel: t('common.cancel', 'Cancel'),
+    });
+    if (!confirmed) return;
     try {
       await safeInvoke('revert_ai_changes', { projectPath: currentProject.path });
       await loadStatus();
-      alert(t('git.revertSuccess'));
+      await loadBranch();
+      showToast('success', t('git.revertSuccess'));
     } catch (error) {
-      alert(t('git.revertFailed', { error }));
+      showToast('error', t('git.revertFailed', { error: String(error) }));
     }
   };
 
@@ -108,22 +143,24 @@ export function GitPanel() {
         <div className="flex items-center gap-2">
           <GitBranch size={14} className="text-text-tertiary" />
           <span className="text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">{t('git.title')}</span>
-          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-surface-active text-text-secondary rounded-sm border border-border-subtle">
-            {branch}
-          </span>
+          {branch && (
+            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-surface-active text-text-secondary rounded-sm border border-border-subtle">
+              {branch}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-0.5">
           <button
-            onClick={handleCreateBranch}
+            onClick={handleCreateBranchClick}
             className="p-1 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
             title={t('git.newBranch')}
           >
             <Plus size={13} />
           </button>
           <button
-            onClick={loadStatus}
+            onClick={() => { loadStatus(); loadBranch(); }}
             className="p-1 rounded-sm text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors"
-            title="Refresh"
+            title={t('common.refresh', 'Refresh')}
           >
             <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
           </button>
@@ -148,9 +185,9 @@ export function GitPanel() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {files.map((file, i) => (
+            {files.map((file) => (
               <div
-                key={i}
+                key={file.path}
                 className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-surface-hover transition-colors group"
               >
                 <span className={`text-[10px] font-mono font-bold w-4 ${STATUS_COLORS[file.status]}`}>
@@ -197,8 +234,22 @@ export function GitPanel() {
           </div>
         </div>
       )}
+
+      {/* Branch Creation Dialog */}
+      <InputDialog
+        open={branchDialogOpen}
+        title={t('git.newBranch')}
+        label={t('git.branchNamePrompt')}
+        placeholder="feature/..."
+        okLabel={t('common.ok', 'OK')}
+        cancelLabel={t('common.cancel', 'Cancel')}
+        onConfirm={handleBranchDialogConfirm}
+        onCancel={() => setBranchDialogOpen(false)}
+      />
     </div>
   );
 }
 
-export default GitPanel;
+const GitPanelMemo = memo(GitPanel);
+export { GitPanelMemo as GitPanel };
+export default GitPanelMemo;

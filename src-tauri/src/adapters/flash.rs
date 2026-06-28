@@ -27,9 +27,9 @@ impl Adapter for IdfEsptoolFlashAdapter {
             .and_then(|v| v.as_str()).unwrap_or("");
 
         let start = Instant::now();
-        // Use port from params or default "auto"
+        // Use port from params or platform-appropriate default
         let port = params.get("port")
-            .and_then(|v| v.as_str()).unwrap_or("COM3");
+            .and_then(|v| v.as_str()).unwrap_or(super::default_port_hint());
 
         if idf_path.is_empty() {
             return AdapterResult::fail(
@@ -183,7 +183,7 @@ fn flash_full_firmware_via_openocd(elf_path: &str, work_dir: &str, _port: &str) 
     }
 
     let mut stream = TcpStream::connect_timeout(
-        &"127.0.0.1:4444".parse().unwrap(),
+        &super::openocd_addr(),
         std::time::Duration::from_secs(2),
     ).map_err(|e| format!("Cannot connect to OpenOCD telnet: {}. Is OpenOCD running?", e))?;
     stream
@@ -236,7 +236,7 @@ fn flash_full_firmware_via_openocd(elf_path: &str, work_dir: &str, _port: &str) 
 fn wait_for_openocd_telnet(max_retries: u32) -> Result<(), String> {
     for i in 0..max_retries {
         if TcpStream::connect_timeout(
-            &"127.0.0.1:4444".parse().unwrap(),
+            &super::openocd_addr(),
             std::time::Duration::from_millis(500),
         ).is_ok() {
             tracing::info!("OpenOCD telnet ready after {} attempts", i + 1);
@@ -248,10 +248,10 @@ fn wait_for_openocd_telnet(max_retries: u32) -> Result<(), String> {
 }
 
 fn flash_via_openocd_telnet(elf_path: &str) -> Result<String, String> {
-    tracing::info!("flash_via_openocd_telnet: connecting to localhost:4444...");
+    tracing::info!("flash_via_openocd_telnet: connecting to {}...", super::OPENOCD_ADDR);
 
     let mut stream = TcpStream::connect_timeout(
-        &"127.0.0.1:4444".parse().unwrap(),
+        &super::openocd_addr(),
         std::time::Duration::from_secs(2),
     ).map_err(|e| format!("Cannot connect to OpenOCD telnet (port 4444): {}. Is OpenOCD running?", e))?;
     tracing::info!("flash_via_openocd_telnet: connected to telnet");

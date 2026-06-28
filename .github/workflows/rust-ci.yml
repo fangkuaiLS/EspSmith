@@ -19,9 +19,31 @@ on:
       - '.github/workflows/rust-ci.yml'
 
 jobs:
-  check:
-    name: Build & Check
+  fmt:
+    name: Rustfmt
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.95.0'
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+  check:
+    name: Build & Test (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu
+            runner: ubuntu-latest
+          - platform: windows
+            runner: windows-latest
+          - platform: macos
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +57,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -56,8 +79,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.95.0
-          components: clippy, rustfmt
+          toolchain: '1.95.0'
+          components: clippy
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -70,6 +93,9 @@ jobs:
 
       - name: Check Rust compilation
         run: cargo check --manifest-path src-tauri/Cargo.toml --lib --bins
+
+      - name: Run tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
       - name: Lint with clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --bins -- -D warnings

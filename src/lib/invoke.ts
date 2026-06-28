@@ -6,6 +6,7 @@
  */
 
 import * as MockFS from './fs-mock';
+import { devLog } from './devLog';
 
 /** 检测是否在 Tauri 环境（Tauri v2 使用 __TAURI_INTERNALS__） */
 export function isTauri(): boolean {
@@ -235,7 +236,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
                 }
             }
             MockFS.mockWriteFile(sdkconfigFile, lines.join('\n'));
-            console.log(`[Mock] Saved ${newValues.size} sdkconfig values to ${sdkconfigFile}`);
+            devLog(`[Mock] Saved ${newValues.size} sdkconfig values to ${sdkconfigFile}`);
             return null;
         }
 

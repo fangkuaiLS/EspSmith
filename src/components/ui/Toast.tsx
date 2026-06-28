@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { X, AlertCircle, CheckCircle, Info, TriangleAlert } from 'lucide-react';
+import { devLog } from '../../lib/devLog';
 
 export interface ToastMessage {
   id: number;
@@ -20,7 +21,7 @@ export function showToast(type: ToastMessage['type'], message: string) {
     addToastFn({ type, message });
   } else {
     // 回退到 console（Toast 组件未挂载时）
-    console.log(`[Toast:${type}] ${message}`);
+    devLog(`[Toast:${type}] ${message}`);
   }
 }
 

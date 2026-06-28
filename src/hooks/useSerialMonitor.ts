@@ -40,7 +40,7 @@ export function useSerialMonitor(options: UseSerialMonitorOptions) {
         });
         const unsubDisconnect = await listen<{ port: string; error: string; reason: string }>('serial-disconnected', (event) => {
           setSerialConnected(false);
-          setSerialOutput((prev) => [...prev, '', `[断开] ${event.payload.port}: ${event.payload.error || event.payload.reason || ''}`]);
+          setSerialOutput((prev) => [...prev, '', t('bottomPanel.serialDisconnected', { port: event.payload.port, error: event.payload.error || event.payload.reason || '' })]);
         });
         // 后端在串口日志中检测到崩溃模式时推送：高亮 + Toast 通知
         const unsubCrash = await listen<{ port: string; summary: string; ts_ms: number }>('crash-detected', (event) => {

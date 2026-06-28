@@ -68,11 +68,11 @@ fn start_python_script(
     script_path: &Path, sdkconfig_arg: &str,
 ) -> Result<Child, String> {
     if let Some(eim_setup) = idf::find_eim_setup(idf_path) {
-        let python = eim_setup.python.replace('/', "\\");
+        let python = idf::normalize_path_sep(&eim_setup.python);
         if !Path::new(&python).exists() {
             return Err(format!("EIM Python not found: {}", python));
         }
-        let idf_tools = format!("{}\\tools", idf_path);
+        let idf_tools = idf::join_path_parts(&[idf_path, "tools"]);
         let sys_path = std::env::var("PATH").unwrap_or_default();
         let py_scripts = Path::new(&python).parent()
             .map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
@@ -82,8 +82,8 @@ fn start_python_script(
             .env("IDF_PATH", idf_path)
             .env("IDF_TOOLS_PATH", &eim_setup.idf_tools_path)
             .env("ESP_IDF_VERSION", idf::get_idf_version_for_env(idf_path))
-            .env("PATH", format!("{};{}", py_scripts, sys_path))
-            .env("PYTHONPATH", format!("{};{}", &idf_tools, std::env::var("PYTHONPATH").unwrap_or_default()))
+            .env("PATH", format!("{}{}{}", py_scripts, idf::PATH_LIST_SEP, sys_path))
+            .env("PYTHONPATH", format!("{}{}{}", &idf_tools, idf::PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(windows)] { cmd.creation_flags(0x08000000); }
         cmd.spawn().map_err(|e| format!("Failed to run kconfig_dump.py: {}", e))

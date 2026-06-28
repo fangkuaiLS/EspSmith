@@ -38,7 +38,7 @@ impl Adapter for GdbDebugAdapter {
 
     fn execute(&self, params: &serde_json::Value, _work_dir: &str) -> AdapterResult {
         let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("info registers");
-        let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("localhost:3333");
+        let target = params.get("target").and_then(|v| v.as_str()).unwrap_or(super::GDB_ADDR);
 
         let start = Instant::now();
         let mut cmd = Command::new(&self.gdb_binary);

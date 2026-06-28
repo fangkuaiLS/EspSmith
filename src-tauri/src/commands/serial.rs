@@ -125,7 +125,7 @@ lazy_static::lazy_static! {
 
     /// 共享环形缓冲区：GUI 与 AI 均通过此读取串口历史
     static ref RING_BUFFER: Arc<RwLock<RingBuffer>> =
-        Arc::new(RwLock::new(RingBuffer::new(50_000)));
+        Arc::new(RwLock::new(RingBuffer::new(configured_ring_lines())));
 
     /// 待消费的崩溃现场（一次性的，AI 取走后清空）
     static ref PENDING_CRASH: Arc<Mutex<Option<PendingCrash>>> =
@@ -133,8 +133,7 @@ lazy_static::lazy_static! {
 }
 
 /// 环形缓冲区行容量（默认 50000，约 10MB）。
-/// 可通过环境变量 ESPSMITH_RING_LINES 覆盖（仅首次读取时生效）。
-#[allow(dead_code)]
+/// 可通过环境变量 ESPSMITH_RING_LINES 覆盖（最小 1000）。
 fn configured_ring_lines() -> usize {
     std::env::var("ESPSMITH_RING_LINES")
         .ok()
@@ -164,23 +163,36 @@ pub fn auto_recover_on_crash() -> bool {
 
 /// 取环形缓冲区最近 n 行
 pub fn ring_tail(n: usize) -> Vec<RingEntry> {
-    RING_BUFFER.read().unwrap().tail(n)
+    RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).tail(n)
 }
 
 /// 取 since_ms 之后的所有行
 pub fn ring_since(since_ms: u64) -> Vec<RingEntry> {
-    RING_BUFFER.read().unwrap().since(since_ms)
+    RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).since(since_ms)
 }
 
 /// 正则搜索历史日志
 pub fn ring_search(pattern: &str, limit: usize) -> Result<Vec<RingEntry>, String> {
     let re = regex::Regex::new(pattern).map_err(|e| format!("Invalid regex: {e}"))?;
-    Ok(RING_BUFFER.read().unwrap().search(&re, limit))
+    Ok(RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).search(&re, limit))
 }
 
 /// 缓冲区当前条目数
 pub fn ring_len() -> usize {
-    RING_BUFFER.read().unwrap().len()
+    RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).len()
+}
+
+/// `ring_wait_for_output` 的返回值，带来源标识。
+/// AI 可通过 `source` 字段区分"有新数据"和"兜底返回历史日志"。
+#[derive(Debug, Clone)]
+pub struct WaitOutput {
+    /// 串口文本内容
+    pub text: String,
+    /// 数据来源：
+    /// - `"new_data"`: flash 后收到的新输出
+    /// - `"fallback_tail"`: 无新数据，返回最近 500 行兜底（设备可能未启动）
+    /// - `"empty"`: ring buffer 完全为空
+    pub source: &'static str,
 }
 
 /// 智能等待并返回新输出。
@@ -193,13 +205,13 @@ pub fn ring_len() -> usize {
 /// 5. 完全无新数据时，返回最近 500 行作为兜底。
 ///
 /// 这样既避免固定睡眠浪费时间，又能让复杂固件（WiFi/BLE 初始化）有足够启动时间。
-pub fn ring_wait_for_output(max_wait_ms: u64, enough_bytes: usize) -> String {
+pub fn ring_wait_for_output(max_wait_ms: u64, enough_bytes: usize) -> WaitOutput {
     let max_wait_ms = max_wait_ms.min(30_000);
     let ts0 = ring_latest_ts();
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
 
     loop {
-        let now_entries = RING_BUFFER.read().unwrap().since(ts0);
+        let now_entries = RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).since(ts0);
         let total_bytes: usize = now_entries.iter().map(|e| e.line.len() + 1).sum();
 
         if total_bytes >= enough_bytes {
@@ -214,41 +226,55 @@ pub fn ring_wait_for_output(max_wait_ms: u64, enough_bytes: usize) -> String {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    let entries = RING_BUFFER.read().unwrap().since(ts0);
+    let entries = RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).since(ts0);
     if entries.is_empty() {
         // 完全无新数据：返回最近 500 行兜底
-        ring_tail(500)
-            .iter()
-            .map(|e| e.line.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
+        let tail = ring_tail(500);
+        if tail.is_empty() {
+            WaitOutput {
+                text: String::new(),
+                source: "empty",
+            }
+        } else {
+            WaitOutput {
+                text: tail
+                    .iter()
+                    .map(|e| e.line.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                source: "fallback_tail",
+            }
+        }
     } else {
-        entries
-            .iter()
-            .map(|e| e.line.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
+        WaitOutput {
+            text: entries
+                .iter()
+                .map(|e| e.line.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            source: "new_data",
+        }
     }
 }
 
 /// 最新行时间戳（无数据返回 0）
 pub fn ring_latest_ts() -> u64 {
-    RING_BUFFER.read().unwrap().latest_ts()
+    RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).latest_ts()
 }
 
 /// 是否有串口处于连接（读取中）状态
 pub fn is_serial_open() -> bool {
-    ACTIVE_PORT.lock().unwrap().is_some()
+    ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner()).is_some()
 }
 
 /// 取走待消费的崩溃现场（取走后清空，避免重复投递给 AI）
 pub fn take_pending_crash() -> Option<PendingCrash> {
-    PENDING_CRASH.lock().unwrap().take()
+    PENDING_CRASH.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 /// 是否存在未消费的崩溃现场
 pub fn has_pending_crash() -> bool {
-    PENDING_CRASH.lock().unwrap().is_some()
+    PENDING_CRASH.lock().unwrap_or_else(|e| e.into_inner()).is_some()
 }
 
 // ===== 崩溃模式检测（与 mcp.rs 共用）=====
@@ -291,7 +317,7 @@ pub fn detect_crash_patterns(text: &str) -> String {
 pub fn capture_crash_context(crash_summary: String, gdb_backtrace: Option<String>) -> bool {
     let capture_lines = configured_crash_capture_lines();
     let log_before = {
-        let ring = RING_BUFFER.read().unwrap();
+        let ring = RING_BUFFER.read().unwrap_or_else(|e| e.into_inner());
         ring.tail(capture_lines)
     };
     let captured_at_unix = SystemTime::now()
@@ -304,7 +330,7 @@ pub fn capture_crash_context(crash_summary: String, gdb_backtrace: Option<String
         crash_summary,
         gdb_backtrace,
     };
-    let mut slot = PENDING_CRASH.lock().unwrap();
+    let mut slot = PENDING_CRASH.lock().unwrap_or_else(|e| e.into_inner());
     let was_empty = slot.is_none();
     *slot = Some(crash);
     was_empty
@@ -318,7 +344,7 @@ fn check_disconnect_signal() -> bool {
     let path = disconnect_signal_path();
     if path.exists() {
         let _ = std::fs::remove_file(&path);
-        let mut guard = ACTIVE_PORT.lock().unwrap();
+        let mut guard = ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner());
         *guard = None;
         true
     } else {
@@ -496,7 +522,7 @@ pub async fn open_serial_port(
         .open()
         .map_err(|e| format!("Failed to open port: {}", e))?;
 
-    let mut guard = ACTIVE_PORT.lock().unwrap();
+    let mut guard = ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(serial);
 
     // 启动后台读取线程
@@ -551,7 +577,7 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
             break;
         }
 
-        let mut guard = ACTIVE_PORT.lock().unwrap();
+        let mut guard = ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
             break;
         }
@@ -576,7 +602,7 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
                     // `line` 现在是本行内容（含可能的 \r）
                     let trimmed = line.trim_end_matches('\r');
 
-                    let ts_ms = RING_BUFFER.write().unwrap().push_line(trimmed.to_string());
+                    let ts_ms = RING_BUFFER.write().unwrap_or_else(|e| e.into_inner()).push_line(trimmed.to_string());
 
                     // 崩溃模式扫描（去抖：距上次触发超过 3 秒才再次捕获）
                     let crash = detect_crash_patterns(trimmed);
@@ -688,7 +714,7 @@ pub fn disconnect_serial_sync() {
     let signal_path = disconnect_signal_path();
     let _ = std::fs::write(&signal_path, "disconnect");
     // 同时清除本进程的 ACTIVE_PORT（CLI 进程中通常为 None）
-    let mut guard = ACTIVE_PORT.lock().unwrap();
+    let mut guard = ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner());
     *guard = None;
 }
 
@@ -703,7 +729,7 @@ pub async fn write_serial(data: String) -> Result<(), String> {
 /// 同步写入共享串口（供 MCP 工具与读线程复位后调用）。
 /// 复用全局 ACTIVE_PORT，无需重新打开。
 pub fn write_serial_shared(data: &str) -> Result<(), String> {
-    let mut guard = ACTIVE_PORT.lock().unwrap();
+    let mut guard = ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(port) = guard.as_mut() {
         port.write(data.as_bytes()).map_err(|e| e.to_string())?;
         Ok(())
@@ -720,7 +746,7 @@ pub fn write_serial_shared(data: &str) -> Result<(), String> {
 /// 3. RTS=Low → EN 拉高（芯片退出复位）
 /// 4. 等待 50ms 让芯片启动
 pub fn serial_reset_via_dtr_rts() -> Result<String, String> {
-    let mut guard = ACTIVE_PORT.lock().unwrap();
+    let mut guard = ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner());
     let port = guard.as_mut().ok_or("No active serial port for reset")?;
 
     info!("Executing DTR/RTS reset sequence");
@@ -744,8 +770,8 @@ pub fn probe_soft_reset() -> Result<String, String> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    let stream = TcpStream::connect("localhost:4444")
-        .map_err(|e| format!("Cannot connect to OpenOCD telnet (localhost:4444): {}", e))?;
+    let stream = TcpStream::connect(crate::adapters::OPENOCD_ADDR)
+        .map_err(|e| format!("Cannot connect to OpenOCD telnet ({}): {}", crate::adapters::OPENOCD_ADDR, e))?;
     stream.set_read_timeout(Some(std::time::Duration::from_secs(3)))
         .map_err(|e| e.to_string())?;
 
@@ -780,7 +806,8 @@ pub fn read_serial_data(port: &str, baudrate: u32, duration_ms: u64) -> Result<S
         match serial.read(&mut buf) {
             Ok(n) if n > 0 => {
                 output.extend_from_slice(&buf[..n]);
-                if output.len() > 4096 {
+                // 上限 64KB，防止极端情况下的内存膨胀（正常 boot 日志 < 8KB）
+                if output.len() > 65536 {
                     break;
                 }
             }

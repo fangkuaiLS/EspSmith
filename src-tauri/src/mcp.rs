@@ -13,6 +13,40 @@ use crate::connection;
 use crate::self_healing::{self, runner, types::*};
 use crate::adapters::flash::find_elf_in_build_dir;
 
+/// Safely block on an async future from a synchronous context.
+///
+/// This handles two scenarios:
+/// 1. **Inside a Tokio runtime** (e.g. called from a Tauri command): uses
+///    `tokio::task::block_in_place` to convert the current worker thread into
+///    a blocking thread, then `Handle::block_on` to drive the future. Without
+///    `block_in_place`, `Handle::block_on` would panic.
+/// 2. **Outside any runtime** (e.g. MCP stdio server running on a plain
+///    `std::thread`): creates a single-threaded runtime, runs the future,
+///    and drops the runtime.
+///
+/// Previously the code called `tokio::runtime::Handle::current().block_on`
+/// directly, which panics inside a multi-threaded Tokio runtime.
+fn safe_block_on<F, T>(future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            // We're inside a Tokio runtime. Use block_in_place to avoid
+            // the "Cannot block the current thread" panic.
+            tokio::task::block_in_place(|| handle.block_on(future))
+        }
+        Err(_) => {
+            // No runtime available — create a single-threaded one.
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create runtime for safe_block_on");
+            rt.block_on(future)
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Tool {
     pub name: String,
@@ -213,7 +247,7 @@ impl MCPServer {
                 "type": "object",
                 "properties": {
                     "elf_path": { "type": "string", "description": "Path to ELF file (e.g. build/app.elf)" },
-                    "target": { "type": "string", "default": "localhost:3333" },
+                    "target": { "type": "string", "default": crate::adapters::GDB_ADDR },
                     "target_chip": { "type": "string", "description": "Target chip for GDB binary selection" }
                 },
                 "required": ["elf_path"]
@@ -587,6 +621,10 @@ impl MCPServer {
             return build;
         }
 
+        // flash 前不需要额外操作：
+        // - GUI 已连接时，ring_wait_for_output 内部会记录起始时间戳，只返回 flash 后的新输出
+        // - GUI 未连接时，read_serial_once 会主动 DTR/RTS 复位芯片，捕获完整 boot 日志
+
         let flashed = self.flash_project(args);
         let flash_ok = flashed
             .data
@@ -598,16 +636,25 @@ impl MCPServer {
             return flashed;
         }
 
-        let serial = read_serial_once(port, baudrate, monitor_ms);
-        match serial {
-            Ok(output) => ok(json!({
-                "success": true,
-                "port": port,
-                "baudrate": baudrate,
-                "serial_output": output
-            })),
-            Err(e) => err(e),
-        }
+        // 读取串口输出：
+        // - GUI 已连接：从 ring buffer 读取 flash 后的新输出（esptool 自动复位，ring buffer 捕获 boot 日志）
+        // - GUI 未连接：read_serial_once 会主动 DTR/RTS 复位芯片，捕获完整 boot 日志
+        let serial_output = if crate::commands::serial::is_serial_open() {
+            let wait = crate::commands::serial::ring_wait_for_output(monitor_ms.min(30_000), 40);
+            wait.text
+        } else {
+            match read_serial_once(port, baudrate, monitor_ms) {
+                Ok(o) => o,
+                Err(e) => return err(e),
+            }
+        };
+
+        ok(json!({
+            "success": true,
+            "port": port,
+            "baudrate": baudrate,
+            "serial_output": serial_output
+        }))
     }
 
     fn list_serial_ports(&self) -> ToolResult {
@@ -671,8 +718,9 @@ impl MCPServer {
         let baudrate = u32_arg(args, "baudrate").unwrap_or(115200);
         let monitor_ms = u64_arg(args, "monitor_ms").unwrap_or(5000);
         // 断点探测窗口：GDB continue 后轮询"stopped"状态的最长时间。
-        // 默认 600ms 适配快速路径；断点位于深层回调（如 WiFi/BLE 事件）时可调大。
-        let bp_probe_ms = u64_arg(args, "bp_probe_ms").unwrap_or(600);
+        // 默认 3000ms 适配 ESP32 启动到 app_main 的典型时延（bootloader + FreeRTOS 初始化）。
+        // 断点位于深层回调（如 WiFi/BLE 事件）时可调大至 10000ms+。
+        let bp_probe_ms = u64_arg(args, "bp_probe_ms").unwrap_or(3000);
         // JTAG 时钟频率：默认 20000 kHz (20MHz)，避免 ESP32-S3 USB-JTAG IN buffer overflow。
         // OpenOCD 默认 40000 kHz (40MHz) 在某些 ESP32-S3 板子上会导致缓冲区溢出。
         let speed_khz = u32_arg(args, "speed_khz").or(Some(20000));
@@ -727,16 +775,16 @@ impl MCPServer {
         let mut breakpoints_failed: Vec<String> = vec![];
 
         for bp in &bp_args {
-            let bp_cmd = format!("break {}", bp);
+            // 使用 MI 命令 -break-insert 而非 CLI break：
+            // MI 失败时返回 ^error，send_mi_command_sync 会捕获为 Err；
+            // CLI break 在 MI 模式下失败仍返回 ^done，错误检测失效。
+            // -f 允许设置 pending breakpoint（符号未解析时仍保留）。
+            let bp_cmd = format!("-break-insert -f {}", bp);
             timeline.push(json!({"phase": "breakpoint_set", "location": bp, "ms": start_total.elapsed().as_millis()}));
             match crate::commands::gdb_session::send_mi_command_sync(bp_cmd.as_bytes()) {
                 Ok(resp) => {
-                    if resp.to_lowercase().contains("error") {
-                        breakpoints_failed.push(format!("{} → {}", bp, resp));
-                    } else {
-                        breakpoints_set += 1;
-                        timeline.push(json!({"phase": "breakpoint_ok", "location": bp, "response": resp, "ms": start_total.elapsed().as_millis()}));
-                    }
+                    breakpoints_set += 1;
+                    timeline.push(json!({"phase": "breakpoint_ok", "location": bp, "response": resp, "ms": start_total.elapsed().as_millis()}));
                 }
                 Err(e) => {
                     breakpoints_failed.push(format!("{} → {}", bp, e));
@@ -751,8 +799,19 @@ impl MCPServer {
             "ms": start_total.elapsed().as_millis()
         }));
 
-        timeline.push(json!({"phase": "continue", "ms": start_total.elapsed().as_millis()}));
-        let _cont_resp = crate::commands::gdb_session::send_mi_command_sync(b"-exec-continue");
+        // 所有断点都失败时跳过 continue（程序会无约束运行，断点等待必然超时，浪费时间）
+        let skip_continue = !bp_args.is_empty() && breakpoints_set == 0;
+        if skip_continue {
+            timeline.push(json!({"phase": "skip_continue_all_bp_failed", "ms": start_total.elapsed().as_millis()}));
+        } else {
+            timeline.push(json!({"phase": "continue", "ms": start_total.elapsed().as_millis()}));
+            match crate::commands::gdb_session::send_mi_command_sync(b"-exec-continue") {
+                Ok(_) => {}
+                Err(e) => {
+                    timeline.push(json!({"phase": "continue_failed", "error": e, "ms": start_total.elapsed().as_millis()}));
+                }
+            }
+        }
 
         // 等待断点命中：GDB 在异步模式下，断点命中时会自动发送 *stopped 事件，
         // 然后返回 (gdb) 提示符。直接读取通道中的 *stopped 事件即可。
@@ -762,6 +821,12 @@ impl MCPServer {
         let mut gdb_stopped_pc = String::new();
         let mut gdb_hit_breakpoint = false;
 
+        // 跳过断点等待的情况：所有断点设置失败，或未设置断点
+        let skip_bp_wait = skip_continue || bp_args.is_empty();
+
+        if skip_bp_wait {
+            timeline.push(json!({"phase": "skip_bp_wait", "ms": start_total.elapsed().as_millis()}));
+        } else {
         match crate::commands::gdb_session::read_async_stopped_event(bp_probe_ms) {
             Ok(Some(stopped_output)) => {
                 gdb_stopped_info = stopped_output.clone();
@@ -781,6 +846,7 @@ impl MCPServer {
                 }));
             }
         }
+        } // end if !skip_bp_wait
 
         if gdb_hit_breakpoint {
             timeline.push(json!({
@@ -810,8 +876,14 @@ impl MCPServer {
                 }));
             }
 
+            // 按架构选择寄存器名：Xtensa (ESP32/S2/S3) vs RISC-V (C3/C5/C6/H2/P4)
+            let reg_names: &[&str] = if chip.starts_with("esp32s") || chip == "esp32" {
+                &["pc", "sp", "a0", "a1", "a2", "ps", "sar"]
+            } else {
+                &["pc", "sp", "a0", "a1", "ra", "mie", "mstatus"]
+            };
             let mut reg_values = serde_json::Map::new();
-            for reg_name in &["pc", "sp", "a0", "a1", "ra", "mie", "mstatus"] {
+            for reg_name in reg_names {
                 let cmd = format!("-data-evaluate-expression ${}", reg_name);
                 if let Ok(val) = crate::commands::gdb_session::send_mi_command_sync(cmd.as_bytes()) {
                     reg_values.insert(reg_name.to_string(), json!(val));
@@ -829,15 +901,19 @@ impl MCPServer {
 
         timeline.push(json!({"phase": "serial_monitor_start", "ms": start_total.elapsed().as_millis()}));
         // 优先从共享 ring buffer 读取（避免与 GUI 监视器端口竞争）
+        let serial_source: &'static str;
         let serial_output = if crate::commands::serial::is_serial_open() {
-            crate::commands::serial::ring_wait_for_output(monitor_ms.min(30_000), 40)
+            let wait = crate::commands::serial::ring_wait_for_output(monitor_ms.min(30_000), 40);
+            serial_source = wait.source;
+            wait.text
         } else {
+            serial_source = "direct_sample";
             read_serial_once(port, baudrate, monitor_ms).unwrap_or_default()
         };
         timeline.push(json!({
             "phase": "serial_captured",
             "length": serial_output.len(),
-            "source": if crate::commands::serial::is_serial_open() { "ring_buffer" } else { "direct_sample" },
+            "source": serial_source,
             "ms": start_total.elapsed().as_millis()
         }));
 
@@ -845,10 +921,14 @@ impl MCPServer {
         if !crash.is_empty() {
             timeline.push(json!({"phase": "crash_detected", "type": crash, "ms": start_total.elapsed().as_millis()}));
 
+            // 先断开当前 GDB 会话，避免 read_gdb_crash_state 内部 connect_session_sync
+            // 丢弃旧会话时泄漏 GDB 进程（缺陷4修复）
+            crate::commands::gdb_session::disconnect_session_sync();
+
             let gdb_state = read_gdb_crash_state(&elf, chip).unwrap_or_default();
             timeline.push(json!({"phase": "gdb_crash_state_captured", "ms": start_total.elapsed().as_millis()}));
 
-            crate::commands::gdb_session::disconnect_session_sync();
+            // read_gdb_crash_state 内部已 disconnect，这里只 kill OpenOCD
             crate::commands::openocd::kill_openocd_sync();
 
             return ok(json!({
@@ -1084,7 +1164,8 @@ impl MCPServer {
             Err(e) => return err(format!("GDB not found: {e}")),
         };
         let mut cmd = std::process::Command::new(&gdb_binary);
-        cmd.args(["-batch", "-nx", "-ex", "target remote localhost:3333", "-ex", command])
+        let target_remote = format!("target remote {}", crate::adapters::GDB_ADDR);
+        cmd.args(["-batch", "-nx", "-ex", &target_remote, "-ex", command])
             .current_dir(&self.project_root);
         #[cfg(windows)]
         { cmd.creation_flags(0x08000000); }
@@ -1112,7 +1193,8 @@ impl MCPServer {
             let hint = h.to_ascii_lowercase().replace('-', "");
             hint != "esp32usbjtag" && hint != configured_chip.to_ascii_lowercase().replace('-', "")
         });
-        let detected_port = conn_info.port.clone().unwrap_or_else(|| "COM3".to_string());
+        let detected_port = conn_info.port.clone()
+            .unwrap_or_else(|| crate::adapters::default_port_hint().to_string());
 
         let mut workflow = vec![
             "1. Edit code: write_file if user explicitly asks for code changes.",
@@ -1338,7 +1420,7 @@ impl MCPServer {
                 let out = if crate::commands::serial::is_serial_open() {
                     // 智能轮询：收到足够字节后仍短暂等待收齐一批，避免截断 boot 序列，
                     // 同时允许 AI 传入更大的 monitor_ms（上限 30s）以适配复杂固件启动。
-                    crate::commands::serial::ring_wait_for_output(verify_monitor.min(30_000), MIN_VERIFY_BYTES * 4)
+                    crate::commands::serial::ring_wait_for_output(verify_monitor.min(30_000), MIN_VERIFY_BYTES * 4).text
                 } else {
                     // 回退：无 GUI 连接，直接开端口采样（兼容 CLI 场景）
                     match read_serial_once(verify_port, verify_baud, verify_monitor) {
@@ -1382,11 +1464,13 @@ impl MCPServer {
                                 &board_clone,
                             ).is_ok() {
                                 report.push_str("\n--- GDB Crash State (auto-captured) ---\n");
+                                // read_gdb_crash_state 会重连 GDB，先 disconnect 当前会话避免泄漏
+                                crate::commands::gdb_session::disconnect_session_sync();
                                 match read_gdb_crash_state(elf, &board_clone) {
                                     Ok(state) => report.push_str(&state),
                                     Err(e) => report.push_str(&format!("GDB state read failed: {}\n", e)),
                                 }
-                                crate::commands::gdb_session::disconnect_session_sync();
+                                // read_gdb_crash_state 内部已 disconnect
                             }
                         }
                     }
@@ -1483,7 +1567,7 @@ impl MCPServer {
                 })
             }
         }, &move |event| {
-            collected_events_clone.lock().unwrap().push(event.clone());
+            collected_events_clone.lock().unwrap_or_else(|e| e.into_inner()).push(event.clone());
             if let Some(sink) = sink_arc.as_ref() {
                 sink(event);
             }
@@ -1499,10 +1583,13 @@ impl MCPServer {
 
         // 只在闭环失败且触发了自愈修复时才记录 skill（真正的疑难杂症），
         // 成功的运行只更新 stats，不生成无价值的流水账记录。
+        // 使用稳定语义化 ID（trigger+board），同一问题迭代更新而非重复创建。
         if !result.passed && !result.recovery_applied.is_empty() {
+            let trigger = format!("closed_loop_{}_failed", if is_jtag { "jtag" } else { "uart" });
+            let now = chrono::Utc::now().to_rfc3339();
             let record = experience::ExperienceRecord {
-                id: format!("{}_{}_{}", plan.name, board, chrono::Utc::now().timestamp()),
-                trigger: format!("closed_loop_{}_failed", if is_jtag { "jtag" } else { "uart" }),
+                id: experience::stable_skill_id(&trigger, &board),
+                trigger,
                 fix: format!("Self-healing applied on {} ({}: {:?})", board, connection_label, conn_info.mode),
                 lesson: format!("{} steps: {} pass / {} fail. Recovery: {}",
                     result.total_steps, result.passed_steps, result.total_steps - result.passed_steps,
@@ -1510,7 +1597,11 @@ impl MCPServer {
                 scope: board.clone(),
                 board_id: None,
                 source_ref: None,
-                timestamp: chrono::Utc::now().to_rfc3339(),
+                timestamp: now.clone(),
+                last_updated: now,
+                hit_count: 0,
+                last_hit: None,
+                iterations: 1,
             };
             experience::record_skill(record);
         }
@@ -1521,7 +1612,7 @@ impl MCPServer {
             "passed_steps": result.passed_steps,
             "total_attempts": result.total_attempts,
             "duration_ms": result.total_duration_ms,
-            "recovery_applied": result.recovery_applied,            "runner_events": collected_events.lock().unwrap().iter().cloned().collect::<Vec<_>>(),
+            "recovery_applied": result.recovery_applied,            "runner_events": collected_events.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect::<Vec<_>>(),
             "summary": result.summary,
             "connection_mode": conn_info.mode.as_str(),
             "connection_label": connection_label,
@@ -1571,21 +1662,38 @@ impl MCPServer {
         };
         let scope = str_arg(args, "scope").unwrap_or("all");
 
+        let now = chrono::Utc::now().to_rfc3339();
         let record = experience::engine::ExperienceRecord {
-            id: format!("skill_{}", chrono_id()),
+            id: experience::stable_skill_id(trigger, scope),
             trigger: trigger.to_string(),
             fix: fix.to_string(),
             lesson: lesson.to_string(),
             scope: scope.to_string(),
             board_id: None,
             source_ref: None,
-            timestamp: chrono_timestamp(),
+            timestamp: now.clone(),
+            last_updated: now,
+            hit_count: 0,
+            last_hit: None,
+            iterations: 1,
         };
 
-        if experience::record_skill(record) {
-            ok(json!({ "recorded": true, "message": "Experience recorded successfully" }))
-        } else {
-            err("Experience engine not initialized. Start an AI session first.".into())
+        match experience::record_skill(record) {
+            Some(outcome) => {
+                let msg = match outcome {
+                    experience::SaveOutcome::Created => {
+                        "Experience recorded successfully".to_string()
+                    }
+                    experience::SaveOutcome::Updated { iterations } => {
+                        format!("Experience updated (iteration #{})", iterations)
+                    }
+                    experience::SaveOutcome::Failed => {
+                        "Experience recording failed — see logs for details".to_string()
+                    }
+                };
+                ok(json!({ "recorded": true, "outcome": outcome, "message": msg }))
+            }
+            None => err("Experience engine not initialized. Start an AI session first.".into()),
         }
     }
 
@@ -1621,7 +1729,7 @@ impl MCPServer {
     }
 
     fn openocd_stop_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::openocd::openocd_stop().await
         });
         match result {
@@ -1631,7 +1739,7 @@ impl MCPServer {
     }
 
     fn openocd_is_running_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::openocd::openocd_is_running().await
         });
         match result {
@@ -1644,7 +1752,7 @@ impl MCPServer {
         let elf = str_arg(args, "elf_path");
         let target = str_arg(args, "target");
         let chip = str_arg(args, "target_chip");
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_start(
                 elf.map(|s| s.to_string()),
                 target.map(|s| s.to_string()),
@@ -1658,7 +1766,7 @@ impl MCPServer {
     }
 
     fn debug_stop_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_stop().await
         });
         match result {
@@ -1673,7 +1781,7 @@ impl MCPServer {
             Some(v) => v as u32,
             None => return err("Missing required parameter 'line'".into()),
         };
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_set_breakpoint(file.to_string(), line).await
         });
         match result {
@@ -1683,7 +1791,7 @@ impl MCPServer {
     }
 
     fn debug_continue_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_continue().await
         });
         match result {
@@ -1693,7 +1801,7 @@ impl MCPServer {
     }
 
     fn debug_step_over_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_step_over().await
         });
         match result {
@@ -1703,7 +1811,7 @@ impl MCPServer {
     }
 
     fn debug_get_state_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_get_state().await
         });
         match result {
@@ -1714,7 +1822,7 @@ impl MCPServer {
 
     fn debug_read_variable_mcp(&self, args: &Value) -> ToolResult {
         let name = match required_str_arg(args, "name") { Ok(v) => v, Err(e) => return err(e), };
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_read_variable(name.to_string()).await
         });
         match result {
@@ -1724,7 +1832,7 @@ impl MCPServer {
     }
 
     fn debug_get_registers_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_get_registers().await
         });
         match result {
@@ -1734,7 +1842,7 @@ impl MCPServer {
     }
 
     fn debug_get_backtrace_mcp(&self) -> ToolResult {
-        let result = tokio::runtime::Handle::current().block_on(async {
+        let result = safe_block_on(async {
             crate::commands::gdb_session::debug_get_backtrace().await
         });
         match result {
@@ -1881,6 +1989,16 @@ fn read_serial_once(port: &str, baudrate: u32, duration_ms: u64) -> Result<Strin
         .timeout(Duration::from_millis(100))
         .open()
         .map_err(|e| format!("Failed to open serial port: {e}"))?;
+
+    // 主动复位芯片，确保从 boot 开始捕获完整启动日志。
+    // esptool flash 完成后虽会自动复位，但从 flash 结束到此处打开串口之间存在延迟，
+    // 可能错过 boot 日志头部。这里再复位一次，保证完整捕获。
+    // 序列与 serial_reset_via_dtr_rts 一致：DTR=Low, RTS=High(EN拉低) → 等100ms → RTS=Low(EN拉高)
+    let _ = serial.write_data_terminal_ready(false);
+    let _ = serial.write_request_to_send(true);
+    std::thread::sleep(Duration::from_millis(100));
+    let _ = serial.write_request_to_send(false);
+
     let deadline = Instant::now() + Duration::from_millis(duration_ms);
     let mut output = Vec::new();
     let mut buf = [0u8; 512];
@@ -1896,7 +2014,9 @@ fn read_serial_once(port: &str, baudrate: u32, duration_ms: u64) -> Result<Strin
 }
 
 fn parse_compile_errors(output: &str) -> Vec<Value> {
-    let re = regex::Regex::new(r"([^:\r\n]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap();
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"([^:\r\n]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap());
     output
         .lines()
         .filter_map(|line| {
@@ -1971,15 +2091,6 @@ fn u64_arg(args: &Value, key: &str) -> Option<u64> {
 
 fn bool_arg(args: &Value, key: &str) -> Option<bool> {
     args.get(key).and_then(|v| v.as_bool())
-}
-
-fn chrono_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    format!("{:x}", ms)
 }
 
 /// 委托到 commands::serial::detect_crash_patterns（单一数据源）。
@@ -2071,15 +2182,6 @@ fn read_gdb_crash_state(elf_path: &str, board: &str) -> Result<String, String> {
     crate::commands::gdb_session::disconnect_session_sync();
 
     Ok(report)
-}
-
-fn chrono_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    secs.to_string()
 }
 
 fn is_protected_hardware_file(path: &Path) -> bool {

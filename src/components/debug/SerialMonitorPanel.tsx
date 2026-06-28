@@ -1,6 +1,6 @@
-import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import { useRef, useEffect, useMemo, useState, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Usb, AlertTriangle, Search, ChevronDown, X } from 'lucide-react';
+import { Usb, AlertTriangle, Search, ChevronDown, X, Copy, Check } from 'lucide-react';
 
 const CRASH_PATTERNS = [
   'Guru Meditation Error', 'abort() was called', 'assert failed:',
@@ -33,7 +33,7 @@ interface SerialMonitorPanelProps {
   onClear: () => void;
 }
 
-export function SerialMonitorPanel({
+function SerialMonitorPanel({
   output, input, connected, port, baudRate,
   onInputChange, onSend, onConnect, onBaudRateChange, onClear,
 }: SerialMonitorPanelProps) {
@@ -43,6 +43,7 @@ export function SerialMonitorPanel({
   const [searchText, setSearchText] = useState('');
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(600);
+  const [copied, setCopied] = useState(false);
 
   const crashDetected = useMemo(() => hasCrash(output), [output]);
 
@@ -78,6 +79,14 @@ export function SerialMonitorPanel({
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     setFollowing(atBottom);
   }, []);
+
+  const handleCopy = useCallback(() => {
+    if (output.length === 0) return;
+    navigator.clipboard.writeText(output.join('\n')).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [output]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -135,7 +144,7 @@ export function SerialMonitorPanel({
             type="text"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            placeholder="Filter..."
+            placeholder={t('bottomPanel.filterPlaceholder')}
             className="w-24 text-[11px] bg-transparent text-text-secondary placeholder:text-text-disabled focus:outline-none"
           />
           {searchText && (
@@ -153,9 +162,19 @@ export function SerialMonitorPanel({
           className={`p-1 rounded-sm transition-colors ${
             following ? 'text-accent bg-accent/10' : 'text-text-tertiary hover:text-text-primary'
           }`}
-          title="Follow output"
+          title={t('bottomPanel.followOutput')}
         >
           <ChevronDown size={14} />
+        </button>
+
+        <button
+          onClick={handleCopy}
+          disabled={output.length === 0}
+          className="px-2 py-1 text-[11px] bg-surface-overlay border border-border-subtle rounded-sm text-text-tertiary hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+          title={copied ? t('bottomPanel.copied') : t('bottomPanel.copyOutput')}
+        >
+          {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
+          {copied ? t('bottomPanel.copied') : t('bottomPanel.copyOutput')}
         </button>
 
         <button
@@ -170,7 +189,7 @@ export function SerialMonitorPanel({
         {crashDetected && (
           <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-2 px-2 py-1 bg-error/10 border-b border-error/30 text-error text-[11px] font-medium">
             <AlertTriangle size={12} />
-            Crash detected — check GDB backtrace for details
+            {t('bottomPanel.crashDetected')}
           </div>
         )}
         <div
@@ -229,3 +248,6 @@ export function SerialMonitorPanel({
     </div>
   );
 }
+
+const SerialMonitorPanelMemo = memo(SerialMonitorPanel);
+export { SerialMonitorPanelMemo as SerialMonitorPanel };

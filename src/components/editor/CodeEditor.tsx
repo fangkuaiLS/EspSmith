@@ -8,7 +8,7 @@
  * - 文件修改状态指示
  */
 
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import Editor, { OnMount, Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
@@ -18,7 +18,8 @@ import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 loader.config({ monaco });
 
-import { X, FileCode, FileJson, FileText, FileCog, Image } from 'lucide-react';
+import { X, FileText, FileCode } from 'lucide-react';
+import { FILE_ICONS } from '../../lib/fileIcons';
 import { useFileStore } from '../../stores';
 
 const ESP32_THEME = {
@@ -83,23 +84,6 @@ function registerCompletions(monaco: Monaco) {
     },
   });
 }
-
-const FILE_ICONS: Record<string, React.ComponentType<{ size?: number | string; className?: string }>> = {
-  c: FileCode,
-  h: FileCode,
-  cpp: FileCode,
-  hpp: FileCode,
-  py: FileCode,
-  json: FileJson,
-  md: FileText,
-  txt: FileText,
-  toml: FileCog,
-  yaml: FileCog,
-  yml: FileCog,
-  png: Image,
-  jpg: Image,
-  svg: Image,
-};
 
 function getTabIcon(filename: string) {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
@@ -173,7 +157,7 @@ function TabBar({ tabs, activeTabId, onTabClick, onTabClose }: TabBarProps) {
   );
 }
 
-export function CodeEditor() {
+function CodeEditor() {
   const { t } = useTranslation();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const { tabs, activeTabId, setActiveTab, closeTab, updateTabContent, saveFile, updateCursorPosition, updateEditorLanguage } = useFileStore();
@@ -192,9 +176,21 @@ export function CodeEditor() {
   };
 
   // 关闭标签时清理对应的 Monaco model，避免内存泄漏
-  const handleCloseTab = useCallback((id: string) => {
+  const handleCloseTab = useCallback(async (id: string) => {
     const tab = tabs.find((t) => t.id === id);
-    if (tab?.path) {
+    if (!tab) return;
+
+    // 未保存修改时弹出确认对话框
+    if (tab.modified && !tab.deleted) {
+      const { ask } = await import('@tauri-apps/plugin-dialog');
+      const confirmed = await ask(
+        t('editor.unsavedChanges', { name: tab.name }),
+        { title: t('editor.confirmClose'), kind: 'warning', okLabel: t('common.close'), cancelLabel: t('common.cancel') }
+      );
+      if (!confirmed) return;
+    }
+
+    if (tab.path) {
       try {
         const uri = monaco.Uri.parse(tab.path);
         const model = monaco.editor.getModel(uri);
@@ -237,6 +233,23 @@ export function CodeEditor() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [activeTabId, saveFile]);
+
+  // 监听构建输出面板的跳转请求
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { line: number; column?: number };
+      if (editorRef.current && detail?.line) {
+        editorRef.current.revealLineInCenter(detail.line);
+        editorRef.current.setPosition({
+          lineNumber: detail.line,
+          column: detail.column || 1,
+        });
+        editorRef.current.focus();
+      }
+    };
+    window.addEventListener('editor-goto-line', handler);
+    return () => window.removeEventListener('editor-goto-line', handler);
+  }, []);
 
   return (
     <div className="h-full flex flex-col">
@@ -303,4 +316,6 @@ export function CodeEditor() {
   );
 }
 
-export default CodeEditor;
+const CodeEditorMemo = memo(CodeEditor);
+export { CodeEditorMemo as CodeEditor };
+export default CodeEditorMemo;

@@ -401,6 +401,26 @@ pub async fn ai_start(app_handle: tauri::AppHandle, config: AIConfig) -> Result<
 #[tauri::command]
 pub async fn ai_stop() -> Result<String, String> {
     kill_running_child().await;
+    // Clear any active JTAG operation and emit ai-operation-done so frontend
+    // subscribers (useBuildOutput's isBuilding/isFlashing, chatStore's
+    // activeOperation) reset cleanly. Without this, killing the child mid-tool
+    // leaves the frontend stuck in building/flashing state because tool_result
+    // never arrives and ai-operation-done is never emitted by the event loop.
+    let active_op = {
+        let mut op_guard = ACTIVE_JTAG_OPERATION
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        op_guard.take()
+    };
+    if let (Some(handle), Some(active)) = (app_handle(), active_op) {
+        let _ = handle.emit(
+            "ai-operation-done",
+            serde_json::json!({
+                "toolUseId": active.tool_use_id,
+                "status": "error",
+            }),
+        );
+    }
     Ok("stopped".into())
 }
 
@@ -470,7 +490,7 @@ pub async fn ai_send_message(
 
     kill_running_child().await;
     {
-        let mut status = AI_STATUS.lock().unwrap();
+        let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
         *status = AIStatus::Thinking;
     }
 
@@ -590,9 +610,9 @@ pub async fn ai_send_message(
 
     // Inactivity timeout: if the subprocess produces no output for this duration,
     // it is likely stuck (e.g. read_file hanging). Kill it and return an error.
-    // 300s is generous enough for long-running build/flash operations while still
-    // catching genuinely stuck tool calls.
-    let inactivity_timeout = Duration::from_secs(300);
+    // 600s (10min) accommodates long-running build/flash operations and scenarios
+    // where AI waits for device connection (device may take minutes to boot & connect).
+    let inactivity_timeout = Duration::from_secs(600);
     let inactivity_timer = tokio::time::sleep(inactivity_timeout);
     tokio::pin!(inactivity_timer);
 
@@ -694,7 +714,7 @@ pub async fn ai_send_message(
                                             AIStatus::ToolCall
                                         };
                                         {
-                                            let mut status = AI_STATUS.lock().unwrap();
+                                            let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
                                             *status = new_status;
                                         }
                                         let tool_use_id_str = extract_id_as_string(&event, "id");
@@ -738,7 +758,7 @@ pub async fn ai_send_message(
                                                     tool_use_id
                                                 );
                                                 {
-                                                    let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap();
+                                                    let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|e| e.into_inner());
                                                     match *op {
                                                         Some(ref mut existing) => {
                                                             // run_delegate_command 可能已经预设置了 ACTIVE_JTAG_OPERATION，
@@ -757,7 +777,7 @@ pub async fn ai_send_message(
                                                 // 发送初始进度卡片（步骤全部 pending）
                                                 // 注意：如果 run_delegate_command 已经预设置了，这里会重新 emit，
                                                 // 但 operationId 相同，前端会正确更新
-                                                let op = ACTIVE_JTAG_OPERATION.lock().unwrap();
+                                                let op = ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|e| e.into_inner());
                                                 if let Some(ref active) = *op {
                                                     let _ = app_handle.emit("ai-operation-progress", active);
                                                 }
@@ -814,7 +834,7 @@ pub async fn ai_send_message(
                                             output_text.as_ref().map(|s| s.len()).unwrap_or(0)
                                         );
                                         let should_emit_done = {
-                                            let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap();
+                                            let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|e| e.into_inner());
                                             let matches = op.as_ref().is_some_and(|o| {
                                                 // Empty tool_use_id on the op (legacy / unknown) is
                                                 // treated as a wildcard match so older call sites
@@ -990,7 +1010,7 @@ pub async fn ai_send_message(
                                                         *guard = None;
                                                         drop(guard);
                                                         {
-                                                            let mut s = AI_STATUS.lock().unwrap();
+                                                            let mut s = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
                                                             *s = AIStatus::Idle;
                                                         }
                                                         break;
@@ -1008,7 +1028,7 @@ pub async fn ai_send_message(
                                     }
                                     "done" => {
                                         {
-                                            let mut status = AI_STATUS.lock().unwrap();
+                                            let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
                                             *status = AIStatus::Idle;
                                         }
                                         // 提取 session_id（CodeWhale 格式）
@@ -1101,11 +1121,15 @@ pub async fn ai_send_message(
                     provider_name, inactivity_timeout.as_secs()
                 );
                 kill_running_child().await;
-                let _ = app_handle.emit("ai-chunk", &format!(
-                    "\n\n⏱ AI 响应超时（{}秒无输出），已自动终止。这通常是因为工具调用（如 read_file）卡住。请重试或检查文件是否被占用。",
+                // 发送 i18n 事件 key，前端根据 key 显示本地化消息
+                let _ = app_handle.emit("ai-timeout", &serde_json::json!({
+                    "timeout_s": inactivity_timeout.as_secs(),
+                }));
+                // 返回错误而非 Ok，让前端知道是超时终止而非正常完成
+                return Err(format!(
+                    "AI_INACTIVITY_TIMEOUT:{}",
                     inactivity_timeout.as_secs()
                 ));
-                break;
             }
         }
     }
@@ -1120,7 +1144,7 @@ pub async fn ai_send_message(
     }
     // 清理操作状态（会话结束）
     {
-        let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap();
+        let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|e| e.into_inner());
         *op = None;
     }
 
@@ -1130,7 +1154,7 @@ pub async fn ai_send_message(
     }
 
     if output.is_empty() {
-        let mut status = AI_STATUS.lock().unwrap();
+        let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
         *status = AIStatus::Error;
         if !stderr_lines.is_empty() {
             return Err(format!("{} error:\n{}", provider_name, stderr_lines.join("\n")));
@@ -1139,7 +1163,7 @@ pub async fn ai_send_message(
     }
 
     {
-        let mut status = AI_STATUS.lock().unwrap();
+        let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
         *status = AIStatus::Idle;
     }
 
@@ -1166,7 +1190,7 @@ pub async fn ai_send_message(
 
 #[tauri::command]
 pub async fn ai_get_status() -> Result<AIStatus, String> {
-    let status = AI_STATUS.lock().unwrap();
+    let status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
     Ok(status.clone())
 }
 
@@ -1474,12 +1498,8 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         .map(|addr| format!(" --ipc-addr {}", addr))
         .unwrap_or_default();
 
-    let chip_warn = if target_chip.as_ref().map_or(true, |c| *c == "auto") {
-        "芯片型号未配置,请先让用户在工具栏选择。"
-    } else { "" };
-    let port_warn = if flash_port.as_ref().map_or(true, |p| p.trim().is_empty()) {
-        "烧录串口未配置,烧录前请先让用户在工具栏选择。"
-    } else { "" };
+    // chip_warn / port_warn 已移除 —— AI 通过 project_context MCP 工具按需查询配置状态，
+    // 不再在 prompt 中预注入文本警告（避免与 project_context 返回的结构化字段重复）。
 
     // 基于用户选择的 flash_port 检测连接模式
     // 优先使用缓存，避免每次请求都枚举串口（50-300ms 开销）
@@ -1494,10 +1514,9 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
     let is_jtag = conn_info.mode.is_jtag();
     let detected_port = conn_info.port.as_deref().unwrap_or(port);
 
-    let civ_context = target_chip
-        .and_then(|chip| crate::experience::build_context_prompt(chip, "verify"))
-        .map(|ctx| format!("。{}", ctx))
-        .unwrap_or_default();
+    // 经验上下文不再预先注入 prompt —— system prompt 已引导 AI 在遇到疑难问题时
+    // 主动调用 `query_experience` MCP 工具按需查询，避免上下文污染和泛化匹配。
+    // 详见 ai_assistant.rs 中 EXPERIENCE-ENGINE 块的"疑难杂症闭环工作流"。
 
     let resolved_chip = target_chip
         .map(|s| s.to_string())
@@ -1510,92 +1529,23 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         .unwrap_or_else(|| "esp32".to_string());
 
     if is_jtag {
-        let jtag_label = conn_info.mode_label.as_str();
         let closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
         let jtag_check_cmd = format!("{cli} jtag-runtime-check --project \"{project}\" --idf \"{idf}\" --port \"{port}\" --chip {chip}{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, chip=resolved_chip, ipc=ipc_addr_arg);
         let openocd_start_cmd = format!("{cli} openocd-start --chip {chip}", cli=cli_exe, chip=resolved_chip);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者，连接模式={jtag_label}(JTAG)，芯片={chip}。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
-            shell=shell_cmd, cli=cli_exe, chip=resolved_chip, msg=user_message,
+            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
+            shell=shell_cmd, cli=cli_exe, msg=user_message,
             build_cmd=build_cmd, closed_loop_cmd=closed_loop_cmd, jtag_check_cmd=jtag_check_cmd,
             openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd,
         ))
     } else {
         let uart_closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者，连接模式=UART。请先读取AGENTS.md了解工作流规则。{chip_warn}{port_warn}{civ_context}\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
+            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
             shell=shell_cmd, cli=cli_exe, msg=user_message,
             build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, closed_loop_cmd=uart_closed_loop_cmd,
         ))
     }
-}
-
-#[allow(dead_code)] // 安全策略预留
-fn is_forbidden_shell_tool(name: &str, input: Option<&serde_json::Value>) -> bool {
-    let lower_name = name.to_ascii_lowercase();
-    if !matches!(
-        lower_name.as_str(),
-        "exec_shell" | "shell" | "run_command" | "bash" | "cmd" | "terminal" | "powershell" | "pwsh"
-    ) {
-        return false;
-    }
-    let command = input
-        .and_then(|v| {
-            v.get("command")
-                .or_else(|| v.get("cmd"))
-                .or_else(|| v.get("args"))
-                .and_then(|c| c.as_str())
-        })
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    if command.is_empty() {
-        return false;
-    }
-
-    let current_pid = std::process::id().to_string();
-    let lower_cmd = command.to_ascii_lowercase();
-
-    // 禁止任何试图杀死 espsmith 自身进程的命令
-    let kill_patterns = [
-        "taskkill", "taskkill.exe", "tskill", "stop-process",
-        "kill", "pkill", "killall", "wmic", "get-process",
-    ];
-    let targets_espsmith = lower_cmd.contains("espsmith") || lower_cmd.contains(&current_pid);
-    if targets_espsmith {
-        for pat in &kill_patterns {
-            if lower_cmd.contains(pat) {
-                return true;
-            }
-        }
-    }
-
-    if command.contains("espsmith") {
-        return false;
-    }
-
-    let forbidden_invocations = [
-        "idf.py", "export.bat", "export.sh", "install.bat", "install.sh",
-        "pip install", "pip3 install",
-    ];
-    for pat in forbidden_invocations {
-        if let Some(pos) = command.find(pat) {
-            let before = if pos > 0 { &command[..pos] } else { "" };
-            let last_char = before.chars().last();
-            if last_char.map_or(true, |c| c == ' ' || c == '&' || c == '|' || c == ';' || c == '\t') {
-                return true;
-            }
-        }
-    }
-
-    let dangerous_cmds = [
-        "curl ", "wget ",
-        "regedit", "reg ",
-        "net user", "taskkill", "tasklist",
-        "del /", "rmdir /", "rm -", "format ", "diskpart",
-        "stop-process", "get-process", "wmic", "tskill",
-    ];
-    dangerous_cmds.iter().any(|needle| command.contains(needle))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1635,7 +1585,7 @@ pub fn detect_jtag_operation_for_delegate(command: &str, is_jtag_mode: bool) -> 
 /// 供 lib.rs 调用：尝试设置 ACTIVE_JTAG_OPERATION（仅在当前为 None 时设置）
 /// 返回 true 表示成功设置（之前为 None）
 pub fn try_set_active_operation(op: OperationProgress) -> bool {
-    let mut active = ACTIVE_JTAG_OPERATION.lock().unwrap();
+    let mut active = ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|e| e.into_inner());
     if active.is_none() {
         *active = Some(op);
         true
@@ -1840,7 +1790,8 @@ fn ensure_project_agent_instructions(
     let existing = std::fs::read_to_string(&agents_path).unwrap_or_default();
     let start = "<!-- ESPSMITH:START -->";
     let end = "<!-- ESPSMITH:END -->";
-    let idf_ver = idf_path.map(crate::idf::get_idf_version).unwrap_or_else(|| "unknown".into());
+    // idf_path/idf_ver 不再预注入 AGENTS.md —— AI 通过 project_context MCP 工具按需查询
+    let _ = idf_path;
 
     // 根据 AI Provider 选择适配的工具名
     let (shell_tool, file_tools, edit_tool, edit_desc, edit_rules) = if *provider_kind == crate::ai_provider::ProviderKind::MiMoCode {
@@ -1866,8 +1817,8 @@ fn ensure_project_agent_instructions(
 # EspSmith 嵌入式闭环工作流
 
 ## 环境
-- 目标框架: ESP-IDF {idf_ver}
-- ESP-IDF 路径: `{idf_path}`（已预配置，无需检查 idf.py 存在性）
+- ESP-IDF 已预配置，无需检查或验证 IDF 路径/工具链
+- 需要环境信息（项目路径、IDF 版本、芯片型号、连接模式、可用串口等）时，调用 `project_context` MCP 工具按需查询，不要依赖 prompt 中的预注入信息
 - 编译烧录通过 `{shell_tool}` 调用 `espsmith-cli.exe` 子命令完成（必须用 espsmith-cli.exe 而非 espsmith.exe，因为后者是GUI程序无法输出到管道）
 - {file_tools} 仅限项目目录内使用
 {edit_desc}
@@ -1942,6 +1893,41 @@ fn ensure_project_agent_instructions(
 - 失败时根据返回的错误信息修复代码后重试
 - 所有文件修改限制在项目目录内
 
+<!-- PROJECT-CONTEXT:START -->
+# 项目上下文按需查询
+
+## 不要依赖 prompt 中的预注入信息获取环境参数。需要环境信息时，调用 `project_context` MCP 工具按需查询。
+
+## project_context 返回的字段
+
+| 字段 | 说明 |
+|------|------|
+| `project_root` | 项目根路径（构造 CLI 命令时使用） |
+| `idf_path` | ESP-IDF 路径（构造 CLI 命令时使用） |
+| `idf_version` | ESP-IDF 版本（处理版本特定 API 时使用） |
+| `configured_chip` | 用户配置的芯片型号（如 esp32s3） |
+| `chip_hint` | 自动检测到的芯片型号 |
+| `detected_port` | 检测到的串口路径 |
+| `connection.mode` | 连接模式（JTAG/UART） |
+| `connection.is_jtag` | 是否为 JTAG 连接 |
+| `available_tools` | 可用工具列表 |
+| `workflow` | 工作流指导 |
+| `forbidden` | 禁止事项 |
+
+## 何时调用
+
+- 构造 CLI 命令时（获取 `project_root`, `idf_path`, `detected_port`）
+- 需要确认芯片型号时（获取 `configured_chip`）
+- 需要确认连接模式时（获取 `connection.mode`）
+- 需要列出可用串口时（改用 `list_serial_ports` 工具）
+- 需要检测连接模式时（改用 `detect_connection` 工具）
+
+## 关键规则
+- **不要假设**芯片型号或连接模式，始终通过工具查询确认
+- **不要硬编码**项目路径或 IDF 路径，始终从 `project_context` 获取
+- 烧录前如果 `detected_port` 为空，调用 `list_serial_ports` 查询可用端口
+<!-- PROJECT-CONTEXT:END -->
+
 <!-- EXPERIENCE-ENGINE:START -->
 # Experience 经验引擎（AI 疑难杂症积累与自愈）
 
@@ -1985,8 +1971,6 @@ fn ensure_project_agent_instructions(
 - 重复犯相同疑难错误是严重问题，经验引擎的核心目的就是避免此类情况
 <!-- EXPERIENCE-ENGINE:END -->
 {end}"#,
-        idf_ver = idf_ver,
-        idf_path = idf_path.unwrap_or("(not configured)")
     );
 
     let updated = if existing.contains(start) && existing.contains(end) {
@@ -2036,119 +2020,6 @@ fn ensure_project_agent_instructions(
         info!("[AGENTS.md] content unchanged, skipping write (shell_tool='{}')", shell_tool);
     }
     Ok(Some(agents_path))
-}
-
-#[allow(dead_code)] // MCP Server模式预留
-fn ensure_codewhale_mcp_server(
-    project_path: Option<&str>,
-    idf_path: Option<&str>,
-) -> Result<(), String> {
-    let project_path = match project_path {
-        Some(path) if !path.trim().is_empty() => path,
-        _ => return Ok(()),
-    };
-
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("Cannot locate EspSmith executable: {e}"))?;
-    let mcp_path = deepseek_mcp_config_path()?;
-    if let Some(parent) = mcp_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    let mut root: serde_json::Value = if mcp_path.exists() {
-        std::fs::read_to_string(&mcp_path)
-            .ok()
-            .and_then(|content| serde_json::from_str(&content).ok())
-            .unwrap_or_else(default_mcp_config)
-    } else {
-        default_mcp_config()
-    };
-
-    if let Some(obj) = root.as_object_mut() {
-        obj.remove("mcpServers");
-    }
-
-    if !root.get("servers").map(|v| v.is_object()).unwrap_or(false) {
-        root["servers"] = serde_json::json!({});
-    }
-
-    root["servers"]["espsmith"] = serde_json::json!({
-        "command": current_exe.to_string_lossy(),
-        "args": ["--mcp-server"],
-        "env": {
-            "ESPSMITH_PROJECT": project_path,
-            "ESPSMITH_IDF_PATH": idf_path.unwrap_or("")
-        },
-        "url": null,
-        "connect_timeout": null,
-        "execute_timeout": 180,
-        "read_timeout": 300,
-        "disabled": false,
-        "enabled": true,
-        "required": true,
-        "enabled_tools": [],
-        "disabled_tools": []
-    });
-
-    std::fs::write(
-        &mcp_path,
-        serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[allow(dead_code)] // MCP配置预留
-fn default_mcp_config() -> serde_json::Value {
-    serde_json::json!({
-        "timeouts": {
-            "connect_timeout": 10,
-            "execute_timeout": 180,
-            "read_timeout": 300
-        },
-        "servers": {}
-    })
-}
-
-#[allow(dead_code)] // DeepSeek MCP预留
-fn deepseek_mcp_config_path() -> Result<PathBuf, String> {
-    let home = if cfg!(windows) {
-        std::env::var("USERPROFILE").map_err(|_| "USERPROFILE is not set".to_string())?
-    } else {
-        std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?
-    };
-    Ok(Path::new(&home).join(".deepseek").join("mcp.json"))
-}
-
-#[allow(dead_code)] // ESP-IDF Python检测预留
-fn find_python_on_path() -> String {
-    // Try python3 first, then python
-    for cmd_name in &["python3", "python"] {
-        let mut check = if cfg!(windows) {
-            let mut c = std::process::Command::new("where");
-            c.arg(cmd_name);
-            c
-        } else {
-            let mut c = std::process::Command::new("which");
-            c.arg(cmd_name);
-            c
-        };
-        #[cfg(windows)]
-        { check.creation_flags(CREATE_NO_WINDOW); }
-        if let Ok(out) = check.output() {
-            if out.status.success() {
-                let path = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .next()
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|| cmd_name.to_string());
-                if !path.is_empty() {
-                    return path;
-                }
-            }
-        }
-    }
-    // Fallback
-    if cfg!(windows) { "python".to_string() } else { "python3".to_string() }
 }
 
 // ─── Experience 经验库管理 ─────────────────────────────────────────

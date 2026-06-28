@@ -32,8 +32,10 @@ fn find_openocd_binary() -> Result<PathBuf, String> {
         warn!("OPENOCD_BIN is set to '{}' but file does not exist", path);
     }
 
+    let exe_name = if cfg!(windows) { "openocd.exe" } else { "openocd" };
+
     if let Ok(idf_path) = std::env::var("IDF_PATH") {
-        let candidate = PathBuf::from(&idf_path).join("tools").join("openocd").join("openocd.exe");
+        let candidate = PathBuf::from(&idf_path).join("tools").join("openocd").join(exe_name);
         if candidate.exists() {
             info!("Found OpenOCD from IDF_PATH: {}", candidate.display());
             return Ok(candidate);
@@ -41,11 +43,19 @@ fn find_openocd_binary() -> Result<PathBuf, String> {
     }
 
     let home = dirs_next::home_dir().ok_or("Cannot determine home directory")?;
-    let patterns = [
-        home.join(".espressif").join("tools").join("openocd-esp32").join("bin").join("openocd.exe"),
-        home.join(".espressif").join("tools").join("openocd").join("bin").join("openocd.exe"),
-        PathBuf::from("C:\\Espressif\\tools\\openocd-esp32\\bin\\openocd.exe"),
+    let mut patterns = vec![
+        home.join(".espressif").join("tools").join("openocd-esp32").join("bin").join(exe_name),
+        home.join(".espressif").join("tools").join("openocd").join("bin").join(exe_name),
     ];
+    if cfg!(windows) {
+        patterns.push(PathBuf::from("C:\\Espressif\\tools\\openocd-esp32\\bin\\openocd.exe"));
+    } else if cfg!(target_os = "macos") {
+        patterns.push(PathBuf::from("/opt/homebrew/bin/openocd"));
+        patterns.push(PathBuf::from("/usr/local/bin/openocd"));
+    } else {
+        patterns.push(PathBuf::from("/usr/bin/openocd"));
+        patterns.push(PathBuf::from("/usr/local/bin/openocd"));
+    }
 
     for p in &patterns {
         if p.exists() {
@@ -60,7 +70,7 @@ fn find_openocd_binary() -> Result<PathBuf, String> {
             Ok(p)
         },
         Err(_) => Err(
-            "OpenOCD not found. Please set the OPENOCD_BIN environment variable to the full path of openocd.exe (e.g. C:\\Espressif\\tools\\openocd-esp32\\bin\\openocd.exe). See README for JTAG setup instructions.".into()
+            "OpenOCD not found. Please set the OPENOCD_BIN environment variable to the full path of the openocd executable. See README for JTAG setup instructions.".into()
         ),
     }
 }
@@ -128,7 +138,9 @@ fn patch_scripts_dir(scripts_dir: &Path) -> Result<PathBuf, String> {
     let content = std::fs::read_to_string(&common_cfg)
         .map_err(|e| format!("Cannot read {}: {}", common_cfg.display(), e))?;
 
-    let re = regex::Regex::new(r"\s*-expected-id\s+\S+").unwrap();
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\s*-expected-id\s+\S+").unwrap());
     let patched = re.replace_all(&content, "").to_string();
 
     if patched == content {
@@ -324,23 +336,45 @@ pub fn get_openocd_chip_sync() -> Option<String> {
 }
 
 pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), String> {
+    let chip_lower = chip.to_ascii_lowercase();
+
     // 初始检测：只检测 telnet 4444 端口。
     // 不检测 GDB 3333 端口——TCP 连接后立即断开会被 OpenOCD 当作无效 GDB 连接，
     // 导致 "attempted 'gdb' connection rejected" 错误，可能干扰后续真正的 GDB 连接。
     if port_ready(4444) {
-        info!("OpenOCD already available (telnet 4444)");
-        return Ok(());
+        // 验证运行中的 OpenOCD 是否针对正确的 chip（仅当状态可查时）
+        let running_chip = OPENOCD_STATE.lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.chip.clone()));
+
+        match running_chip {
+            Some(ref c) if c == &chip_lower => {
+                info!("OpenOCD already available (telnet 4444, chip={})", c);
+                return Ok(());
+            }
+            Some(ref c) => {
+                // chip 不匹配，需要重启 OpenOCD
+                info!("OpenOCD running with chip={} but requested={}, restarting...", c, chip_lower);
+                kill_openocd_sync();
+            }
+            None => {
+                // 无法确定运行中的 OpenOCD 的 chip（CLI 场景：状态不跨进程共享）
+                // 假设匹配，避免误杀其他项目启动的 OpenOCD
+                info!("OpenOCD already available (telnet 4444, chip unknown — assuming match)");
+                return Ok(());
+            }
+        }
+    } else {
+        // 端口不可用：清理所有残留 openocd 进程。
+        // 注意：不能只依赖 is_openocd_running_sync()——它只检测本进程的 OPENOCD_STATE，
+        // 而 CLI 每次调用都是新进程，状态不共享。系统中可能有残留的 openocd 进程
+        // 占用 USB-JTAG 设备，导致新启动的 OpenOCD 无法访问设备而超时。
+        info!("OpenOCD ports not ready, cleaning up any stale openocd processes...");
+        kill_openocd_sync();
+        // kill_openocd_sync 内部已有 200ms sleep 确保进程退出，不再额外等待
     }
 
-    // 端口不可用：清理所有残留 openocd 进程。
-    // 注意：不能只依赖 is_openocd_running_sync()——它只检测本进程的 OPENOCD_STATE，
-    // 而 CLI 每次调用都是新进程，状态不共享。系统中可能有残留的 openocd 进程
-    // 占用 USB-JTAG 设备，导致新启动的 OpenOCD 无法访问设备而超时。
-    info!("OpenOCD ports not ready, cleaning up any stale openocd processes...");
-    kill_openocd_sync();
-    // kill_openocd_sync 内部已有 200ms sleep 确保进程退出，不再额外等待
-
-    let (target_cfg, interface_cfg) = chip_config(&chip.to_ascii_lowercase())?;
+    let (target_cfg, interface_cfg) = chip_config(&chip_lower)?;
 
     let openocd_bin = find_openocd_binary()?;
     let scripts_dir = find_openocd_scripts_dir()?;
@@ -458,8 +492,9 @@ pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), 
 
 /// 检测端口是否可连接（150ms 超时，够用于本地端口检测）
 fn port_ready(port: u16) -> bool {
+    let addr = format!("127.0.0.1:{}", port);
     TcpStream::connect_timeout(
-        &format!("127.0.0.1:{}", port).parse().unwrap(),
+        &addr.parse().unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap()),
         std::time::Duration::from_millis(150),
     ).is_ok()
 }
@@ -579,31 +614,43 @@ fn diagnose_openocd_log(log_path: &std::path::Path) -> (String, bool) {
 }
 
 pub fn kill_openocd_sync() {
-    if let Ok(mut guard) = OPENOCD_STATE.lock() {
+    // 优先 kill 自己管理的 child 进程
+    let had_managed_session = if let Ok(mut guard) = OPENOCD_STATE.lock() {
         if let Some(mut session) = guard.take() {
-            info!("Killing OpenOCD (PID={})", session.pid);
+            info!("Killing managed OpenOCD (PID={})", session.pid);
             let _ = session.child.kill();
             let _ = session.child.try_wait();
+            true
+        } else {
+            false
         }
-    }
-    #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("taskkill");
-        cmd.args(["/F", "/IM", "openocd.exe"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        let _ = cmd.status();
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = std::process::Command::new("pkill")
-            .arg("openocd")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+    } else {
+        false
+    };
+
+    // 只在没有管理中的 OpenOCD 会话时（CLI 场景），才用 taskkill 清理残留进程。
+    // GUI 场景下 OPENOCD_STATE 有值，只 kill 自己的 child，避免误杀其他项目的 OpenOCD。
+    if !had_managed_session {
+        info!("No managed OpenOCD session, cleaning up stale processes...");
+        #[cfg(windows)]
+        {
+            let mut cmd = std::process::Command::new("taskkill");
+            cmd.args(["/F", "/IM", "openocd.exe"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            let _ = cmd.status();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = std::process::Command::new("pkill")
+                .arg("openocd")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
     }
     std::thread::sleep(std::time::Duration::from_millis(200));
 }
@@ -625,88 +672,4 @@ pub fn find_openocd_scripts_sync() -> String {
 #[allow(dead_code)] // CLI使用
 pub fn chip_config_sync(chip: &str) -> Result<(&'static str, &'static str), String> {
     chip_config(chip)
-}
-
-#[allow(dead_code)] // Pipeline恢复策略预留
-pub fn probe_hard_reset_via_openocd() -> Result<String, String> {
-    use std::io::{Read, Write as IoWrite};
-    use std::net::TcpStream;
-    use std::time::Duration;
-
-    let mut stream = TcpStream::connect_timeout(
-        &"127.0.0.1:4444".parse().unwrap(),
-        Duration::from_secs(2),
-    ).map_err(|e| format!("Cannot connect to OpenOCD telnet for reset: {}. Is OpenOCD running?", e))?;
-    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
-
-    let mut buf = [0u8; 256];
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => break,
-            Err(_) => break,
-        }
-    }
-
-    stream.write_all(b"reset\n").map_err(|e| e.to_string())?;
-
-    let mut output = String::new();
-    let mut total_read = 0;
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                output.push_str(&String::from_utf8_lossy(&buf[..n]));
-                total_read += n;
-                if total_read > 4096 { break; }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => break,
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-
-    Ok(output)
-}
-
-#[allow(dead_code)] // Pipeline恢复策略预留
-pub fn probe_soft_reset_via_openocd() -> Result<String, String> {
-    use std::io::{Read, Write as IoWrite};
-    use std::net::TcpStream;
-    use std::time::Duration;
-
-    let mut stream = TcpStream::connect_timeout(
-        &"127.0.0.1:4444".parse().unwrap(),
-        Duration::from_secs(2),
-    ).map_err(|e| format!("Cannot connect to OpenOCD telnet for reset: {}. Is OpenOCD running?", e))?;
-    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
-
-    let mut buf = [0u8; 256];
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => break,
-            Err(_) => break,
-        }
-    }
-
-    stream.write_all(b"reset halt\n").map_err(|e| e.to_string())?;
-
-    let mut output = String::new();
-    let mut total_read = 0;
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                output.push_str(&String::from_utf8_lossy(&buf[..n]));
-                total_read += n;
-                if total_read > 4096 { break; }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => break,
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-
-    Ok(output)
 }

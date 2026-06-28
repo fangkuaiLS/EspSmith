@@ -8,8 +8,17 @@ use std::time::Duration;
 
 /// Quick TCP reachability check.
 pub fn check_tcp_reachable(host: &str, port: u16, timeout_ms: u64) -> SubsystemCheck {
+    let addr_str = format!("{host}:{port}");
+    let addr: std::net::SocketAddr = match addr_str.parse() {
+        Ok(a) => a,
+        Err(e) => return SubsystemCheck {
+            name: format!("TCP {host}:{port}"),
+            passed: false,
+            message: format!("Invalid address '{}': {}", addr_str, e),
+        },
+    };
     match TcpStream::connect_timeout(
-        &format!("{host}:{port}").parse().unwrap(),
+        &addr,
         Duration::from_millis(timeout_ms),
     ) {
         Ok(_) => SubsystemCheck {

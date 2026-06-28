@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import styles from './SearchBar.module.css';
 
 interface SearchBarProps {
@@ -22,6 +23,7 @@ export function SearchBar({
   onReset,
   textDictionary,
 }: SearchBarProps) {
+  const { t } = useTranslation();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -35,7 +37,7 @@ export function SearchBar({
           ref={inputRef}
           type="search"
           name="search"
-          placeholder="Search parameter"
+          placeholder={t('sdkconfig.searchPlaceholder')}
           autoComplete="off"
           className={styles.searchInput}
           value={searchString}

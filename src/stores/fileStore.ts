@@ -4,8 +4,10 @@
 
 import { create } from 'zustand';
 import { safeInvoke } from '../lib/invoke';
+import { devLog } from '../lib/devLog';
 import { listen } from '@tauri-apps/api/event';
 import type { FileEntry } from '../types';
+import i18n from '../i18n';
 
 interface FileTab {
   id: string;
@@ -151,13 +153,13 @@ export const useFileStore = create<FileState>((set, get) => ({
       }));
       try {
         const { showToast } = await import('../components/ui/Toast');
-        showToast('success', '文件已保存');
+        showToast('success', i18n.t('toast.fileSaved'));
       } catch { /* toast not available */ }
     } catch (error) {
       console.error('Failed to save file:', error);
       try {
         const { showToast } = await import('../components/ui/Toast');
-        showToast('error', `保存失败: ${error instanceof Error ? error.message : String(error)}`);
+        showToast('error', i18n.t('toast.saveFailed', { error: error instanceof Error ? error.message : String(error) }));
       } catch { /* toast not available */ }
     }
   },
@@ -255,6 +257,9 @@ const DEBOUNCE_MS = 1000;
 const _pendingPaths = new Set<string>();
 let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+// HMR 安全标志：防止开发模式下模块重新加载时重复注册事件监听器
+let _listenersRegistered = false;
+
 function _flushPendingChanges() {
   const paths = Array.from(_pendingPaths);
   _pendingPaths.clear();
@@ -292,37 +297,42 @@ function _flushPendingChanges() {
   });
 }
 
-listen<string>('ai-file-changed', (event) => {
-  const changedPath = event.payload;
-  if (!changedPath) return;
+// HMR 安全：仅在首次加载时注册监听器，避免开发模式下重复注册
+if (!_listenersRegistered) {
+  _listenersRegistered = true;
 
-  _pendingPaths.add(changedPath);
+  listen<string>('ai-file-changed', (event) => {
+    const changedPath = event.payload;
+    if (!changedPath) return;
 
-  if (_debounceTimer) {
-    clearTimeout(_debounceTimer);
-  }
-  _debounceTimer = setTimeout(_flushPendingChanges, DEBOUNCE_MS);
-}).catch(() => {});
+    _pendingPaths.add(changedPath);
 
-// ─── AGENTS.md 动态刷新 ──────────────────────────────────────────
-// 切换 AI 引擎后，后端重写 AGENTS.md 并发送此事件，
-// 前端关闭并重新打开该文件以绕过 Windows 文件锁定问题
-listen<string>('agents_updated', (event) => {
-  const filePath = event.payload;
-  if (!filePath) return;
-  console.log('[fileStore] agents_updated:', filePath);
-  useFileStore.getState().reloadFileByPath(filePath);
-}).catch(() => {});
+    if (_debounceTimer) {
+      clearTimeout(_debounceTimer);
+    }
+    _debounceTimer = setTimeout(_flushPendingChanges, DEBOUNCE_MS);
+  }).catch(() => {});
 
-// ─── sdkconfig 动态刷新 ──────────────────────────────────────────
-// 保存 SDK 配置后，后端通过原子写入更新 sdkconfig 并发送此事件，
-// 前端关闭并重新打开该文件以显示最新内容
-listen<string>('sdkconfig_updated', (event) => {
-  const filePath = event.payload;
-  if (!filePath) return;
-  console.log('[fileStore] sdkconfig_updated:', filePath);
-  useFileStore.getState().reloadFileByPath(filePath);
-}).catch(() => {});
+  // ─── AGENTS.md 动态刷新 ──────────────────────────────────────────
+  // 切换 AI 引擎后，后端重写 AGENTS.md 并发送此事件，
+  // 前端关闭并重新打开该文件以绕过 Windows 文件锁定问题
+  listen<string>('agents_updated', (event) => {
+    const filePath = event.payload;
+    if (!filePath) return;
+    devLog('[fileStore] agents_updated:', filePath);
+    useFileStore.getState().reloadFileByPath(filePath);
+  }).catch(() => {});
+
+  // ─── sdkconfig 动态刷新 ──────────────────────────────────────────
+  // 保存 SDK 配置后，后端通过原子写入更新 sdkconfig 并发送此事件，
+  // 前端关闭并重新打开该文件以显示最新内容
+  listen<string>('sdkconfig_updated', (event) => {
+    const filePath = event.payload;
+    if (!filePath) return;
+    devLog('[fileStore] sdkconfig_updated:', filePath);
+    useFileStore.getState().reloadFileByPath(filePath);
+  }).catch(() => {});
+}
 
 // ─── 窗口标题跟随当前文件 ──────────────────────────────────────
 function updateWindowTitle() {

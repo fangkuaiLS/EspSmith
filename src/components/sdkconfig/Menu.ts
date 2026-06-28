@@ -3,6 +3,8 @@
  * Adapted from vscode-esp-idf-extension-master/src/espIdf/menuconfig/Menu.ts
  */
 
+import { devLog } from '../../lib/devLog';
+
 export enum menuType {
   string = 'string',
   bool = 'bool',
@@ -117,7 +119,7 @@ export function rawToMenu(raw: RawMenuItem[], path = ''): Menu[] {
       // Check that children share a common prefix (typical of Kconfig choice symbols)
       const names = children.map((c) => c.name).filter(Boolean);
       const prefix = names.length >= 2 ? getCommonPrefix(names) : '';
-      console.log(`[Menu] SafetyNet: "${menu.title}" (${menu.name}) has ${children.length} bool-like kids, prefix="${prefix}" (len=${prefix.length})`);
+      devLog(`[Menu] SafetyNet: "${menu.title}" (${menu.name}) has ${children.length} bool-like kids, prefix="${prefix}" (len=${prefix.length})`);
       if (names.length >= 2 && prefix.length >= 4) {
         menu.type = menuType.choice;
         // Find selected child (value = 'y' or true)
@@ -125,7 +127,7 @@ export function rawToMenu(raw: RawMenuItem[], path = ''): Menu[] {
           (c) => c.value === 'y' || c.value === true || c.value === '1'
         );
         menu.value = selected ? selected.name : children[0].name;
-        console.log(`[Menu] SafetyNet -> converted to CHOICE, value=${menu.value}`);
+        devLog(`[Menu] SafetyNet -> converted to CHOICE, value=${menu.value}`);
       }
     }
 

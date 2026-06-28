@@ -15,7 +15,7 @@ impl Adapter for SerialVerifyAdapter {
     fn description(&self) -> &str { "Verify firmware via serial output pattern" }
 
     fn execute(&self, params: &serde_json::Value, _work_dir: &str) -> AdapterResult {
-        let port = params.get("port").and_then(|v| v.as_str()).unwrap_or("COM3");
+        let port = params.get("port").and_then(|v| v.as_str()).unwrap_or(super::default_port_hint());
         let baudrate = params.get("baudrate").and_then(|v| v.as_u64()).unwrap_or(115200) as u32;
         let expected = params.get("expected_pattern").and_then(|v| v.as_str()).unwrap_or("");
         let monitor_ms = params.get("monitor_ms").and_then(|v| v.as_u64()).unwrap_or(5000);
@@ -45,7 +45,8 @@ impl Adapter for SerialVerifyAdapter {
             match serial.read(&mut buf) {
                 Ok(n) if n > 0 => {
                     output.extend_from_slice(&buf[..n]);
-                    if output.len() > 4096 {
+                    // 上限 64KB，防止极端情况下的内存膨胀（正常 boot 日志 < 8KB）
+                    if output.len() > 65536 {
                         break;
                     }
                 }
@@ -119,9 +120,10 @@ impl Adapter for GdbVerifyAdapter {
         let start = Instant::now();
 
         let mut cmd = std::process::Command::new(&gdb_binary);
+        let target_remote = format!("target remote {}", super::GDB_ADDR);
         cmd.args([
                 "-batch", "-nx",
-                "-ex", "target remote localhost:3333",
+                "-ex", &target_remote,
                 "-ex", command,
             ]);
         #[cfg(windows)]

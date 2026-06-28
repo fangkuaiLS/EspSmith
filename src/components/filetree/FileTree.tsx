@@ -10,15 +10,16 @@
  * - 删除确认对话框
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Folder, FolderOpen, File, FileCode, FileJson, FileText, FileCog,
+  Folder, FolderOpen, File,
   ChevronRight, RefreshCw, FilePlus, FolderPlus, MoreHorizontal,
   Copy, Clipboard, Scissors, ClipboardPaste, Trash2, Pencil,
   ArrowUpRight, Search, Check, X
 } from 'lucide-react';
 import { safeInvoke } from '../../lib/invoke';
+import { getFileIcon as getSharedFileIcon } from '../../lib/fileIcons';
 import { InputDialog } from '../ui/InputDialog';
 import { showToast } from '../ui/Toast';
 import { useFileStore, useProjectStore } from '../../stores';
@@ -26,14 +27,8 @@ import type { FileEntry } from '../../types';
 
 // ==================== 常量 ====================
 
-const FILE_ICON_MAP: Record<string, React.ComponentType<{ size?: number | string; className?: string }>> = {
-  c: FileCode, h: FileCode, cpp: FileCode, hpp: FileCode,
-  py: FileCode, json: FileJson, md: FileText, txt: FileText, toml: FileCog,
-};
-
 function getFileIcon(name: string) {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  return FILE_ICON_MAP[ext] || File;
+  return getSharedFileIcon(name);
 }
 
 // 剪贴板状态（应用内，不依赖系统剪贴板）
@@ -65,6 +60,9 @@ function TreeNode({ entry, level, onOpenFile, onRefresh, clipboard, setClipboard
 
   // 删除确认
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // 新建文件/文件夹对话框（在当前目录下新建）
+  const [newDialog, setNewDialog] = useState<'newFile' | 'newFolder' | null>(null);
 
   const loadChildren = useCallback(async () => {
     if (entry.is_dir) {
@@ -232,13 +230,52 @@ function TreeNode({ entry, level, onOpenFile, onRefresh, clipboard, setClipboard
 
   const handleCopyRelativePath = () => {
     closeContextMenu();
-    const projectRoot = entry.path.split(/[\\/]/).slice(0, -1)[0] || '';
-    const relative = entry.path.replace(projectRoot, '').replace(/^[\\/]/, '');
+    // 从 projectStore 获取真实的项目根目录，而非从路径推断
+    const projectRoot = useProjectStore.getState().currentProject?.path || '';
+    const relative = projectRoot
+      ? entry.path.replace(projectRoot, '').replace(/^[\\/]/, '')
+      : entry.name;
     navigator.clipboard.writeText(relative || entry.name).then(() => {
       showToast('success', t('toast.relativePathCopied'));
     }).catch(() => {
       showToast('error', t('toast.copyPathFailed'));
     });
+  };
+
+  const handleNewFileInDir = () => {
+    closeContextMenu();
+    setExpanded(true);
+    setNewDialog('newFile');
+  };
+
+  const handleNewFolderInDir = () => {
+    closeContextMenu();
+    setExpanded(true);
+    setNewDialog('newFolder');
+  };
+
+  const handleNewDialogConfirm = async (value: string) => {
+    const type = newDialog;
+    setNewDialog(null);
+    if (!value.trim()) return;
+
+    try {
+      if (type === 'newFile') {
+        await safeInvoke('create_file', { parentPath: entry.path, name: value, content: '' });
+        showToast('success', t('toast.fileCreated', { name: value }));
+      } else if (type === 'newFolder') {
+        await safeInvoke('create_folder', { parentPath: entry.path, name: value });
+        showToast('success', t('toast.folderCreated', { name: value }));
+      }
+      // 刷新子目录
+      if (expanded) {
+        const files = await safeInvoke<FileEntry[]>('list_directory', { path: entry.path });
+        setChildren(files || []);
+      }
+      onRefresh();
+    } catch (err) {
+      showToast('error', type === 'newFile' ? t('toast.fileCreateFailed', { error: String(err) }) : t('toast.folderCreateFailed', { error: String(err) }));
+    }
   };
 
   // ===== 渲染 =====
@@ -385,8 +422,8 @@ function TreeNode({ entry, level, onOpenFile, onRefresh, clipboard, setClipboard
           >
             {entry.is_dir ? (
               <>
-                <MenuItem icon={FilePlus} label={t('leftPanel.newFile')} shortcut="Ctrl+N" />
-                <MenuItem icon={FolderPlus} label={t('leftPanel.newFolder')} shortcut="" />
+                <MenuItem icon={FilePlus} label={t('leftPanel.newFile')} shortcut="Ctrl+N" onClick={handleNewFileInDir} />
+                <MenuItem icon={FolderPlus} label={t('leftPanel.newFolder')} shortcut="" onClick={handleNewFolderInDir} />
                 <Separator />
                 <MenuItem icon={FolderOpen} label={t('leftPanel.expandAll')} onClick={() => setExpanded(true)} />
                 <MenuItem icon={ChevronRight} label={t('leftPanel.collapseAll')} onClick={() => setExpanded(false)} />
@@ -422,6 +459,16 @@ function TreeNode({ entry, level, onOpenFile, onRefresh, clipboard, setClipboard
           </div>
         </>
       )}
+
+      {/* 新建文件/文件夹对话框 */}
+      <InputDialog
+        open={newDialog !== null}
+        title={newDialog === 'newFile' ? t('dialog.newFile') : t('dialog.newFolder')}
+        placeholder={newDialog === 'newFile' ? 'untitled.c' : 'components'}
+        label={newDialog === 'newFile' ? t('dialog.fileName') : t('dialog.folderName')}
+        onConfirm={handleNewDialogConfirm}
+        onCancel={() => setNewDialog(null)}
+      />
     </div>
   );
 }
@@ -469,7 +516,7 @@ function MenuItem({
 
 // ==================== 文件树主组件 ====================
 
-export function FileTree() {
+function FileTree() {
   const { t } = useTranslation();
   const { currentProject } = useProjectStore();
   const { files, loadDirectory, openFile } = useFileStore();
@@ -584,4 +631,6 @@ export function FileTree() {
   );
 }
 
-export default FileTree;
+const FileTreeMemo = memo(FileTree);
+export { FileTreeMemo as FileTree };
+export default FileTreeMemo;

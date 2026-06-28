@@ -16,6 +16,63 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tracing::{info, warn};
 
+/// Shell-escape a single argument for safe interpolation into a `cmd /C`
+/// command line on Windows.
+///
+/// Wraps the argument in double quotes and escapes embedded double quotes by
+/// doubling them (`"` → `""`), per `cmd.exe` quoting rules. Rejects arguments
+/// containing NUL bytes. This is the safest quoting `cmd /C` supports —
+/// characters like `&`, `|`, `<`, `>` are inert inside double quotes.
+fn shell_escape_windows(s: &str) -> String {
+    if s.contains('\0') {
+        // NUL would terminate the argument early; replace rather than fail.
+        return format!("\"{}\"", s.replace('\0', "").replace('"', "\"\""));
+    }
+    format!("\"{}\"", s.replace('"', "\"\""))
+}
+
+/// Shell-escape a single argument for safe interpolation into a `bash -c`
+/// command line on Unix. Uses single-quote wrapping with `'\''` escaping.
+fn shell_escape_unix(s: &str) -> String {
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{}'", escaped)
+}
+
+/// Shell-escape an array of arguments into a single string suitable for the
+/// current platform's shell (`cmd /C` on Windows, `bash -c` on Unix).
+fn shell_join(args: &[&str]) -> String {
+    if cfg!(windows) {
+        args.iter()
+            .map(|a| shell_escape_windows(a))
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        args.iter()
+            .map(|a| shell_escape_unix(a))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Platform-specific PATH list separator (`;` on Windows, `:` on Unix).
+pub const PATH_LIST_SEP: &str = if cfg!(windows) { ";" } else { ":" };
+
+/// Join path components with the platform-native separator.
+/// Uses `\` on Windows and `/` on Unix.
+pub fn join_path_parts(parts: &[&str]) -> String {
+    parts.join(if cfg!(windows) { "\\" } else { "/" })
+}
+
+/// Normalize a path string for the current platform.
+/// On Windows, converts `/` to `\`. On Unix, converts `\` to `/`.
+pub fn normalize_path_sep(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('/', "\\")
+    } else {
+        s.replace('\\', "/")
+    }
+}
+
 /// ESP-IDF 环境信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IDFEnvironment {
@@ -722,11 +779,6 @@ pub fn run_idf_command(project_path: &str, idf_path: &str, args: &[&str]) -> Res
             format!("idf.py not found at {} or {}", root_py.display(), Path::new(idf_path).join("tools").join("idf.py").display())
         })?;
 
-    let args_str = args.iter()
-        .map(|a| format!("\"{}\"", a))
-        .collect::<Vec<_>>()
-        .join(" ");
-
     // 尝试 EIM 方式：用虚拟环境 Python 直接执行
     if let Some(eim_setup) = find_eim_setup(idf_path) {
         let python_path = &eim_setup.python;
@@ -736,8 +788,8 @@ pub fn run_idf_command(project_path: &str, idf_path: &str, args: &[&str]) -> Res
         return run_with_eim_python(project_path, python_path, &idf_py, idf_path, tools_path, args);
     }
 
-    // 回退：export.bat 方式
-    run_with_export_bat(project_path, idf_path, &idf_py, &args_str)
+    // 回退：export.bat 方式（内部会做 shell 转义）
+    run_with_export_bat(project_path, idf_path, &idf_py, args)
 }
 
 /// 使用 EIM 虚拟环境 Python 执行 idf.py
@@ -776,9 +828,9 @@ fn run_with_eim_python(
     let system_path = std::env::var("PATH").unwrap_or_default();
 
     let new_path = if eim_path_entries.is_empty() {
-        format!("{};{}", python_scripts, system_path)
+        format!("{}{}{}", python_scripts, PATH_LIST_SEP, system_path)
     } else {
-        format!("{};{};{}", eim_path_entries.join(";"), python_scripts, system_path)
+        format!("{}{}{}{}{}", eim_path_entries.join(PATH_LIST_SEP), PATH_LIST_SEP, python_scripts, PATH_LIST_SEP, system_path)
     };
 
     // 设置 IDF_PYTHON_ENV_PATH（python 的 venv 根目录）
@@ -789,7 +841,7 @@ fn run_with_eim_python(
         .unwrap_or_default();
 
     // idf.py 需要找到 tools/ 下的模块（如 python_version_checker）
-    let idf_tools_dir = format!("{}\\tools", idf_path);
+    let idf_tools_dir = join_path_parts(&[idf_path, "tools"]);
 
     info!("EIM env: IDF_PATH={}, IDF_TOOLS_PATH={}, IDF_PYTHON_ENV_PATH={}, ESP_IDF_VERSION={}",
         idf_path, tools_path, idf_python_env_path, get_idf_version_for_env(idf_path));
@@ -805,10 +857,10 @@ fn run_with_eim_python(
             .env("ESP_IDF_VERSION", get_idf_version_for_env(idf_path))
             .env("IDF_COMPONENT_MANAGER", "1")
             .env("PATH", &new_path)
-            .env("PYTHONPATH", format!("{};{}", &idf_tools_dir, std::env::var("PYTHONPATH").unwrap_or_default()))
-            .env("OPENOCD_SCRIPTS", format!("{}\\openocd-esp32", tools_path))
-            .env("ESP_ROM_ELF_DIR", format!("{}\\components\\esp_rom\\{}", idf_path,
-                detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())))
+            .env("PYTHONPATH", format!("{}{}{}", &idf_tools_dir, PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
+            .env("OPENOCD_SCRIPTS", join_path_parts(&[tools_path, "openocd-esp32"]))
+            .env("ESP_ROM_ELF_DIR", join_path_parts(&[idf_path, "components", "esp_rom",
+                &detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())]))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         #[cfg(windows)] { cmd.creation_flags(0x08000000); }
@@ -832,18 +884,24 @@ fn run_with_export_bat(
     project_path: &str,
     idf_path: &str,
     idf_py: &Path,
-    args_str: &str,
+    args: &[&str],
 ) -> Result<String, String> {
+    let args_str = shell_join(args);
+    let export_bat_display = Path::new(idf_path).join("export.bat").display().to_string();
+    let idf_version = get_idf_version_for_env(idf_path);
+    let idf_py_display = idf_py.display().to_string();
+
     let output = if cfg!(windows) {
         let export_bat = Path::new(idf_path).join("export.bat");
         if !export_bat.exists() {
             return Err(format!("export.bat not found at {}", export_bat.display()));
         }
+        // Each component is shell-escaped; args_str is already safely quoted.
         let cmd_str = format!(
             "call {} >nul && set ESP_IDF_VERSION={} && python {} {}",
-            export_bat.display(),
-            get_idf_version_for_env(idf_path),
-            idf_py.display(),
+            shell_escape_windows(&export_bat_display),
+            shell_escape_windows(&idf_version),
+            shell_escape_windows(&idf_py_display),
             args_str
         );
         info!("Executing (export.bat): cmd /C {}", cmd_str);
@@ -862,10 +920,10 @@ fn run_with_export_bat(
             return Err(format!("export.sh not found at {}", export_sh.display()));
         }
         let cmd_str = format!(
-            "source \"{}\" >/dev/null 2>&1 && export ESP_IDF_VERSION={} && python \"{}\" {}",
-            export_sh.display(),
-            get_idf_version_for_env(idf_path),
-            idf_py.display(),
+            "source {} >/dev/null 2>&1 && export ESP_IDF_VERSION={} && python {} {}",
+            shell_escape_unix(&export_bat_display),
+            shell_escape_unix(&idf_version),
+            shell_escape_unix(&idf_py_display),
             args_str
         );
         info!("Executing (export.sh): bash -c {}", cmd_str);
@@ -926,7 +984,7 @@ pub fn run_idf_command_streaming(
 
     // 尝试 EIM 方式
     if let Some(eim_setup) = find_eim_setup(idf_path_str) {
-        let python_path = eim_setup.python.replace('/', "\\");
+        let python_path = normalize_path_sep(&eim_setup.python);
         let tools_path = eim_setup.idf_tools_path.clone();
 
         let eim_path_entries = build_eim_path_entries(&tools_path);
@@ -936,9 +994,9 @@ pub fn run_idf_command_streaming(
             .unwrap_or_default();
         let system_path = std::env::var("PATH").unwrap_or_default();
         let new_path = if eim_path_entries.is_empty() {
-            format!("{};{}", python_scripts, system_path)
+            format!("{}{}{}", python_scripts, PATH_LIST_SEP, system_path)
         } else {
-            format!("{};{};{}", eim_path_entries.join(";"), python_scripts, system_path)
+            format!("{}{}{}{}{}", eim_path_entries.join(PATH_LIST_SEP), PATH_LIST_SEP, python_scripts, PATH_LIST_SEP, system_path)
         };
         let idf_python_env_path = Path::new(&python_path)
             .parent().and_then(|p| p.parent())
@@ -947,7 +1005,7 @@ pub fn run_idf_command_streaming(
 
         let idf_path = idf_path_str.to_string();
         let esp_idf_version = get_idf_version_for_env(&idf_path);
-        let idf_tools_dir = format!("{}\\tools", idf_path_str);
+        let idf_tools_dir = join_path_parts(&[idf_path_str, "tools"]);
         info!("Streaming EIM: python={}, idf_path={}, tools={}, version={}", python_path, idf_path, tools_path, esp_idf_version);
 
         std::thread::spawn(move || {
@@ -961,10 +1019,10 @@ pub fn run_idf_command_streaming(
                .env("ESP_IDF_VERSION", &esp_idf_version)
                .env("IDF_COMPONENT_MANAGER", "1")
                .env("PATH", &new_path)
-               .env("PYTHONPATH", format!("{};{}", idf_tools_dir, std::env::var("PYTHONPATH").unwrap_or_default()))
-               .env("OPENOCD_SCRIPTS", format!("{}\\openocd-esp32", tools_path))
-               .env("ESP_ROM_ELF_DIR", format!("{}\\components\\esp_rom\\{}", idf_path,
-                   detect_target_from_project(&project_path).unwrap_or_else(|| "esp32".to_string())))
+               .env("PYTHONPATH", format!("{}{}{}", idf_tools_dir, PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
+               .env("OPENOCD_SCRIPTS", join_path_parts(&[&tools_path, "openocd-esp32"]))
+               .env("ESP_ROM_ELF_DIR", join_path_parts(&[&idf_path, "components", "esp_rom",
+                   &detect_target_from_project(&project_path).unwrap_or_else(|| "esp32".to_string())]))
                .stdout(Stdio::piped())
                .stderr(Stdio::piped());
             #[cfg(windows)] { cmd.creation_flags(0x08000000); }
@@ -1242,14 +1300,14 @@ fn run_idf_command_foreground(project_path: &str, idf_path: &str, args: &[&str])
             format!("idf.py not found at {} or {}", root_py.display(), Path::new(idf_path).join("tools").join("idf.py").display())
         })?;
 
-    let args_str = args.iter()
-        .map(|a| format!("\"{}\"", a))
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Shell-escape args for safe interpolation into cmd /C or bash -c
+    let args_str = shell_join(args);
+    let idf_py_display = idf_py.display().to_string();
+    let idf_version = get_idf_version_for_env(idf_path);
 
-    // EIM 方式：用虚拟环境 Python + 设置环境变量的 cmd 窗口
+    // EIM 方式：用虚拟环境 Python + 设置环境变量的终端窗口
     if let Some(eim_setup) = find_eim_setup(idf_path) {
-        let python_path = eim_setup.python.replace('/', "\\");
+        let python_path = normalize_path_sep(&eim_setup.python);
         let tools_path = &eim_setup.idf_tools_path;
         let eim_path_entries = build_eim_path_entries(tools_path);
         let python_scripts = Path::new(&python_path)
@@ -1260,36 +1318,79 @@ fn run_idf_command_foreground(project_path: &str, idf_path: &str, args: &[&str])
             .parent().and_then(|p| p.parent())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
+        let idf_tools_dir = join_path_parts(&[idf_path, "tools"]);
 
-        let path_str = if eim_path_entries.is_empty() {
-            format!("{};%PATH%", python_scripts)
+        if cfg!(windows) {
+            let path_str = if eim_path_entries.is_empty() {
+                format!("{};%PATH%", python_scripts)
+            } else {
+                format!("{};{};%PATH%", eim_path_entries.join(";"), python_scripts)
+            };
+
+            // 在 cmd 窗口中先设置环境变量，再执行（所有值都经过 shell 转义）
+            let cmd_str = format!(
+                "set IDF_PATH={} && set IDF_TOOLS_PATH={} && set IDF_PYTHON_ENV_PATH={} && set ESP_IDF_VERSION={} && set PATH={} && set PYTHONPATH={} && python {} {} {} && echo. && echo Press any key to close... && pause >nul",
+                shell_escape_windows(idf_path),
+                shell_escape_windows(tools_path),
+                shell_escape_windows(&idf_python_env_path),
+                shell_escape_windows(&idf_version),
+                shell_escape_windows(&path_str),
+                shell_escape_windows(&idf_tools_dir),
+                shell_escape_windows(&python_path),
+                shell_escape_windows(&idf_py_display),
+                args_str
+            );
+            info!("Spawning foreground EIM cmd: {}", cmd_str);
+            Command::new("cmd")
+                .args(["/C", "start", "ESP-IDF Command", "/K", &cmd_str])
+                .current_dir(project_path)
+                .spawn()
+                .map_err(|e| format!("Failed to spawn terminal: {}", e))?;
         } else {
-            format!("{};{};%PATH%", eim_path_entries.join(";"), python_scripts)
-        };
+            // Unix: 使用 bash -c 在终端中执行
+            let path_str = if eim_path_entries.is_empty() {
+                format!("{}:$PATH", python_scripts)
+            } else {
+                format!("{}:{}:$PATH", eim_path_entries.join(":"), python_scripts)
+            };
+            let openocd_scripts = join_path_parts(&[tools_path, "openocd-esp32"]);
+            let esp_rom_elf_dir = join_path_parts(&[idf_path, "components", "esp_rom",
+                &detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())]);
 
-        // 在 cmd 窗口中先设置环境变量，再执行
-        let esp_idf_ver = get_idf_version_for_env(idf_path);
-        let cmd_str = format!(
-            "set IDF_PATH={} && set IDF_TOOLS_PATH={} && set IDF_PYTHON_ENV_PATH={} && set ESP_IDF_VERSION={} && set PATH={} && python {} {} {} && echo. && echo Press any key to close... && pause >nul",
-            idf_path, tools_path, idf_python_env_path, esp_idf_ver,
-            path_str,
-            python_path, idf_py.display(), args_str
-        );
-        info!("Spawning foreground EIM cmd: {}", cmd_str);
-        Command::new("cmd")
-            .args(["/C", "start", "ESP-IDF Command", "/K", &cmd_str])
-            .current_dir(project_path)
-            .spawn()
-            .map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+            let cmd_str = format!(
+                "export IDF_PATH={} && export IDF_TOOLS_PATH={} && export IDF_PYTHON_ENV_PATH={} && export ESP_IDF_VERSION={} && export PATH={} && export PYTHONPATH={} && export OPENOCD_SCRIPTS={} && export ESP_ROM_ELF_DIR={} && python {} {} {}; echo 'Press Enter to close...'; read",
+                shell_escape_unix(idf_path),
+                shell_escape_unix(tools_path),
+                shell_escape_unix(&idf_python_env_path),
+                shell_escape_unix(&idf_version),
+                shell_escape_unix(&path_str),
+                shell_escape_unix(&idf_tools_dir),
+                shell_escape_unix(&openocd_scripts),
+                shell_escape_unix(&esp_rom_elf_dir),
+                shell_escape_unix(&python_path),
+                shell_escape_unix(&idf_py_display),
+                args_str
+            );
+            info!("Spawning foreground EIM terminal: {}", cmd_str);
+            Command::new("x-terminal-emulator")
+                .args(["-e", &format!("bash -c {}", shell_escape_unix(&cmd_str))])
+                .current_dir(project_path)
+                .spawn()
+                .map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+        }
     } else if cfg!(windows) {
         // 回退：export.bat
         let export_bat = Path::new(idf_path).join("export.bat");
         if !export_bat.exists() {
             return Err(format!("export.bat not found at {}", export_bat.display()));
         }
+        let export_bat_display = export_bat.display().to_string();
         let cmd_str = format!(
             "call {} && set ESP_IDF_VERSION={} && python {} {} && echo. && echo Press any key to close... && pause >nul",
-            export_bat.display(), get_idf_version_for_env(idf_path), idf_py.display(), args_str
+            shell_escape_windows(&export_bat_display),
+            shell_escape_windows(&idf_version),
+            shell_escape_windows(&idf_py_display),
+            args_str
         );
         info!("Spawning foreground cmd: {}", cmd_str);
         Command::new("cmd")
@@ -1302,9 +1403,13 @@ fn run_idf_command_foreground(project_path: &str, idf_path: &str, args: &[&str])
         if !export_sh.exists() {
             return Err(format!("export.sh not found at {}", export_sh.display()));
         }
+        let export_sh_display = export_sh.display().to_string();
         let cmd_str = format!(
-            "source \"{}\" && export ESP_IDF_VERSION={} && python \"{}\" {}; echo 'Press Enter to close...'; read",
-            export_sh.display(), get_idf_version_for_env(idf_path), idf_py.display(), args_str
+            "source {} && export ESP_IDF_VERSION={} && python {} {}; echo 'Press Enter to close...'; read",
+            shell_escape_unix(&export_sh_display),
+            shell_escape_unix(&idf_version),
+            shell_escape_unix(&idf_py_display),
+            args_str
         );
         info!("Spawning foreground terminal: {}", cmd_str);
         Command::new("x-terminal-emulator")
@@ -1354,14 +1459,13 @@ pub fn idf_flash(app: tauri::AppHandle, project_path: String, idf_path: String, 
 }
 
 pub fn parse_compile_errors(output: &str) -> Vec<crate::commands::build::CompileError> {
+    use std::sync::OnceLock;
+    static GCC_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static CMAKE_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let gcc_re = GCC_RE.get_or_init(|| regex::Regex::new(r"([^:]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap());
+    let cmake_re = CMAKE_RE.get_or_init(|| regex::Regex::new(r"CMake\s+(Error|Warning)\s+at\s+([^:]+):(\d+)\s*\(([^)]*)\)\s*:").unwrap());
+
     let mut errors = Vec::new();
-
-    // Pattern 1: GCC/Clang format: file:line:col: error|warning: message
-    let gcc_re = regex::Regex::new(r"([^:]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap();
-
-    // Pattern 2: CMake format: CMake Error/Warning at path:line (function):
-    // Followed by indented message on subsequent lines
-    let cmake_re = regex::Regex::new(r"CMake\s+(Error|Warning)\s+at\s+([^:]+):(\d+)\s*\(([^)]*)\)\s*:").unwrap();
 
     let lines: Vec<&str> = output.lines().collect();
     let mut i = 0;
@@ -1960,7 +2064,7 @@ pub fn run_idf_command_live(
 
     // 尝试 EIM 方式
     if let Some(eim_setup) = find_eim_setup(idf_path_str) {
-        let python_path = eim_setup.python.replace('/', "\\");
+        let python_path = normalize_path_sep(&eim_setup.python);
         let tools_path = &eim_setup.idf_tools_path;
 
         let eim_path_entries = build_eim_path_entries(tools_path);
@@ -1970,16 +2074,16 @@ pub fn run_idf_command_live(
             .unwrap_or_default();
         let system_path = std::env::var("PATH").unwrap_or_default();
         let new_path = if eim_path_entries.is_empty() {
-            format!("{};{}", python_scripts, system_path)
+            format!("{}{}{}", python_scripts, PATH_LIST_SEP, system_path)
         } else {
-            format!("{};{};{}", eim_path_entries.join(";"), python_scripts, system_path)
+            format!("{}{}{}{}{}", eim_path_entries.join(PATH_LIST_SEP), PATH_LIST_SEP, python_scripts, PATH_LIST_SEP, system_path)
         };
         let idf_python_env_path = Path::new(&python_path)
             .parent().and_then(|p| p.parent())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         let esp_idf_version = get_idf_version_for_env(idf_path_str);
-        let idf_tools_dir = format!("{}\\tools", idf_path_str);
+        let idf_tools_dir = join_path_parts(&[idf_path_str, "tools"]);
 
         let mut cmd = Command::new(&python_path);
         cmd.arg(&idf_py)
@@ -1991,10 +2095,10 @@ pub fn run_idf_command_live(
             .env("ESP_IDF_VERSION", &esp_idf_version)
             .env("IDF_COMPONENT_MANAGER", "1")
             .env("PATH", &new_path)
-            .env("PYTHONPATH", format!("{};{}", &idf_tools_dir, std::env::var("PYTHONPATH").unwrap_or_default()))
-            .env("OPENOCD_SCRIPTS", format!("{}\\openocd-esp32", tools_path))
-            .env("ESP_ROM_ELF_DIR", format!("{}\\components\\esp_rom\\{}", idf_path_str,
-                detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())))
+            .env("PYTHONPATH", format!("{}{}{}", &idf_tools_dir, PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
+            .env("OPENOCD_SCRIPTS", join_path_parts(&[tools_path, "openocd-esp32"]))
+            .env("ESP_ROM_ELF_DIR", join_path_parts(&[idf_path_str, "components", "esp_rom",
+                &detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())]))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         #[cfg(windows)] { cmd.creation_flags(0x08000000); }
@@ -2002,24 +2106,41 @@ pub fn run_idf_command_live(
         return spawn_and_stream_live(cmd);
     }
 
-    // 回退：export.bat 方式
-    let args_str = args.iter()
-        .map(|a| format!("\"{}\"", a))
-        .collect::<Vec<_>>()
-        .join(" ");
+    // 回退：export.bat 方式（shell 转义所有参数）
+    let args_str = shell_join(args);
+    let idf_py_display = idf_py.display().to_string();
+    let idf_version = get_idf_version_for_env(idf_path_str);
 
     let export_bat = Path::new(idf_path_str).join("export.bat");
     if export_bat.exists() {
-        let cmd_str = format!(
-            "call {} >nul && set ESP_IDF_VERSION={} && set IDF_COMPONENT_MANAGER=1 && python \"{}\" {}",
-            export_bat.display(),
-            get_idf_version_for_env(idf_path_str),
-            idf_py.display(),
-            args_str
-        );
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", &cmd_str])
-            .current_dir(project_path)
+        let export_bat_display = export_bat.display().to_string();
+        let cmd_str = if cfg!(windows) {
+            format!(
+                "call {} >nul && set ESP_IDF_VERSION={} && set IDF_COMPONENT_MANAGER=1 && python {} {}",
+                shell_escape_windows(&export_bat_display),
+                shell_escape_windows(&idf_version),
+                shell_escape_windows(&idf_py_display),
+                args_str
+            )
+        } else {
+            format!(
+                "source {} >/dev/null 2>&1 && export ESP_IDF_VERSION={} && export IDF_COMPONENT_MANAGER=1 && python {} {}",
+                shell_escape_unix(&export_bat_display),
+                shell_escape_unix(&idf_version),
+                shell_escape_unix(&idf_py_display),
+                args_str
+            )
+        };
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", &cmd_str]);
+            c
+        } else {
+            let mut c = Command::new("bash");
+            c.args(["-c", &cmd_str]);
+            c
+        };
+        cmd.current_dir(project_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         #[cfg(windows)] { cmd.creation_flags(0x08000000); }
@@ -2028,11 +2149,12 @@ pub fn run_idf_command_live(
 
     let export_sh = Path::new(idf_path_str).join("export.sh");
     if export_sh.exists() {
+        let export_sh_display = export_sh.display().to_string();
         let cmd_str = format!(
-            "source \"{}\" >/dev/null 2>&1 && export ESP_IDF_VERSION={} && export IDF_COMPONENT_MANAGER=1 && python \"{}\" {}",
-            export_sh.display(),
-            get_idf_version_for_env(idf_path_str),
-            idf_py.display(),
+            "source {} >/dev/null 2>&1 && export ESP_IDF_VERSION={} && export IDF_COMPONENT_MANAGER=1 && python {} {}",
+            shell_escape_unix(&export_sh_display),
+            shell_escape_unix(&idf_version),
+            shell_escape_unix(&idf_py_display),
             args_str
         );
         let mut cmd = Command::new("bash");
@@ -2066,7 +2188,7 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
         std::thread::spawn(move || {
             for line in reader.lines().map_while(Result::ok) {
                     println!("{}", line);
-                    lines.lock().unwrap().push(line);
+                    lines.lock().unwrap_or_else(|e| e.into_inner()).push(line);
             }
         });
     }
@@ -2077,7 +2199,7 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
         std::thread::spawn(move || {
             for line in reader.lines().map_while(Result::ok) {
                     eprintln!("{}", line);
-                    lines.lock().unwrap().push(line);
+                    lines.lock().unwrap_or_else(|e| e.into_inner()).push(line);
             }
         });
     }
@@ -2088,8 +2210,8 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
     // Give reader threads a moment to finish
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    let stdout_text = stdout_lines.lock().unwrap().join("\n");
-    let stderr_text = stderr_lines.lock().unwrap().join("\n");
+    let stdout_text = stdout_lines.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
+    let stderr_text = stderr_lines.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
     let combined = if stderr_text.is_empty() {
         stdout_text.clone()
     } else if stdout_text.is_empty() {

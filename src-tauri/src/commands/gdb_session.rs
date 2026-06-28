@@ -259,10 +259,18 @@ pub(crate) fn find_gdb_binary(target_chip: Option<&str>) -> Result<String, Strin
         return Ok(found);
     }
 
-    let alt_tools = [
-        std::path::PathBuf::from("C:\\Espressif\\tools"),
+    let mut alt_tools = vec![
         home.join(".espressif").join("dist"),
     ];
+    if cfg!(windows) {
+        alt_tools.push(std::path::PathBuf::from("C:\\Espressif\\tools"));
+    } else if cfg!(target_os = "macos") {
+        alt_tools.push(std::path::PathBuf::from("/opt/homebrew/opt"));
+        alt_tools.push(std::path::PathBuf::from("/usr/local/opt"));
+    } else {
+        alt_tools.push(std::path::PathBuf::from("/usr"));
+        alt_tools.push(std::path::PathBuf::from("/usr/local"));
+    }
     for tools_dir in &alt_tools {
         if tools_dir.exists() {
             if let Ok(found) = search_gdb_in_dir(tools_dir, &gdb_name) {
@@ -311,10 +319,15 @@ pub(crate) fn find_gdb_binary(target_chip: Option<&str>) -> Result<String, Strin
         return Ok(path.to_string_lossy().to_string());
     }
 
+    let env_hint = if cfg!(windows) {
+        format!("$env:ESP_GDB_BIN='C:\\path\\to\\{gdb_name}.exe'")
+    } else {
+        format!("export ESP_GDB_BIN=/path/to/{gdb_name}")
+    };
     Err(format!(
         "GDB binary '{}' not found.\n\
          Install options:\n\
-         1. Set ESP_GDB_BIN environment variable: $env:ESP_GDB_BIN='C:\\path\\to\\{gdb_name}.exe'\n\
+         1. Set ESP_GDB_BIN environment variable: {env_hint}\n\
          2. Install via ESP-IDF tools installer\n\
          3. Download from https://github.com/espressif/binutils-gdb/releases\n\
          4. Add to PATH",
@@ -382,7 +395,7 @@ pub async fn debug_start(
     }
 
     let gdb_binary = find_gdb_binary(target_chip.as_deref())?;
-    let target_addr = target.unwrap_or_else(|| "localhost:3333".into());
+    let target_addr = target.unwrap_or_else(|| crate::adapters::GDB_ADDR.to_string());
 
     info!("Starting GDB session: {} -> {}", gdb_binary, target_addr);
 
@@ -975,8 +988,11 @@ pub fn disconnect_session_sync() {
 
 pub fn connect_session_sync(elf_path: &str, target: &str, target_chip: &str) -> Result<(), String> {
     let mut guard = GDB_SESSION.lock().map_err(|e| e.to_string())?;
-    if guard.is_some() {
-        let _ = guard.take();
+    // 丢弃旧会话时必须 kill GDB 子进程，否则进程泄漏（Child drop 不会自动 kill）
+    if let Some(mut old_session) = guard.take() {
+        info!("Killing previous GDB session before reconnect");
+        let _ = old_session.child.kill();
+        let _ = old_session.child.wait();
     }
 
     let gdb_binary = find_gdb_binary(Some(target_chip))?;
@@ -1111,6 +1127,18 @@ pub fn read_async_stopped_event(timeout_ms: u64) -> Result<Option<String>, Strin
                 return Err("GDB process terminated unexpectedly (EOF).".into());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // 超时返回前，drain 通道中可能残留的行（如迟到的 *stopped 或 (gdb) prompt），
+                // 避免下一次 send_command 读到 stale 数据导致空响应。
+                while let Ok(GdbLine::Line(l)) = session.rx.try_recv() {
+                    let trimmed = l.trim();
+                    if trimmed.starts_with("*stopped") {
+                        found_stopped = true;
+                    }
+                    if trimmed != "(gdb)" && !trimmed.is_empty() {
+                        output.push_str(&l);
+                        output.push('\n');
+                    }
+                }
                 return Ok(if found_stopped { Some(output) } else { None });
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {

@@ -423,3 +423,55 @@ fn write_sdkconfig_defaults(project_dir: &Path, target: &str, flash_size: Option
     info!("sdkconfig.defaults written to {}", defaults_path.display());
     Ok(())
 }
+
+// ==================== 多窗口支持 ====================
+
+/// 启动项目路径（通过 --project 参数传入），存储在全局静态变量中
+static STARTUP_PROJECT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// 设置启动项目路径（由 main.rs 在启动时调用）
+pub fn set_startup_project(path: Option<String>) {
+    let _ = STARTUP_PROJECT.set(path);
+}
+
+/// 获取启动项目路径（前端启动时调用）
+#[tauri::command]
+pub async fn get_startup_project() -> Result<Option<String>, String> {
+    Ok(STARTUP_PROJECT.get().cloned().flatten())
+}
+
+/// 在新进程中打开项目（启动新的 GUI 实例）
+#[tauri::command]
+pub async fn open_project_new_instance(project_path: String) -> Result<(), String> {
+    info!("Opening project in new instance: {}", project_path);
+
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: 新进程独立运行，不随父进程退出
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+
+        std::process::Command::new(&exe)
+            .arg("--project")
+            .arg(&project_path)
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .spawn()
+            .map_err(|e| format!("无法启动新实例: {}", e))?;
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new(&exe)
+            .arg("--project")
+            .arg(&project_path)
+            .spawn()
+            .map_err(|e| format!("无法启动新实例: {}", e))?;
+    }
+
+    info!("New instance spawned for: {}", project_path);
+    Ok(())
+}

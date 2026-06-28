@@ -10,7 +10,8 @@ import { useProjectStore } from './projectStore';
 import { useFileStore } from './fileStore';
 import { useHardwareStore } from './hardwareStore';
 import { safeInvoke } from '../lib/invoke';
-import { translateBackendString } from '../i18n';
+import { devLog } from '../lib/devLog';
+import i18n, { translateBackendString } from '../i18n';
 import type { AICumulativeUsage } from '../types/chat';
 
 // ==================== 会话持久化 ====================
@@ -139,13 +140,13 @@ function getToolLabel(name: string, input: unknown): string {
     const inp = input as Record<string, unknown> | undefined;
     switch (name) {
         case 'list_dir':
-            return `列出目录: \`${inp?.path || '.'}\``;
+            return i18n.t('chat.tools.listDir', { path: inp?.path || '.' });
         case 'read_file':
-            return `读取文件: \`${inp?.path || inp?.file_path || '...'}\``;
+            return i18n.t('chat.tools.readFile', { path: inp?.path || inp?.file_path || '...' });
         case 'write_file':
-            return `写入文件: \`${inp?.path || inp?.file_path || '...'}\``;
+            return i18n.t('chat.tools.writeFile', { path: inp?.path || inp?.file_path || '...' });
         case 'exec_shell':
-            return `执行命令: \`${String(inp?.command || '').slice(0, 80)}\``;
+            return i18n.t('chat.tools.execShell', { command: String(inp?.command || '').slice(0, 80) });
         case 'build_project':
             return 'Build ESP-IDF project';
         case 'flash_project':
@@ -153,23 +154,23 @@ function getToolLabel(name: string, input: unknown): string {
         case 'build_flash_monitor':
             return `Build + flash + monitor: \`${inp?.port || 'port'}\``;
         case 'closed_loop':
-            return `一键闭环: 编译→烧录→验证 (\`${inp?.port || 'port'}\`)`;
+            return i18n.t('chat.tools.closedLoop');
         case 'list_serial_ports':
             return 'List serial ports';
         case 'read_serial':
             return `Read serial: \`${inp?.port || 'port'}\``;
         case 'serial_tail':
-            return `串口最近日志 (tail)${inp?.since_ms ? ` @>${inp.since_ms}` : ` ×${inp?.lines ?? 200}`}`;
+            return i18n.t('chat.tools.serialTail');
         case 'serial_search':
-            return `搜索串口日志: \`${String(inp?.pattern || '...').slice(0, 60)}\``;
+            return i18n.t('chat.tools.serialSearch', { pattern: String(inp?.pattern || '...').slice(0, 60) });
         case 'serial_status':
-            return '串口监视器状态';
+            return i18n.t('chat.tools.serialStatus');
         case 'serial_get_crash':
-            return '取走崩溃现场';
+            return i18n.t('chat.tools.serialGetCrash');
         case 'serial_send':
-            return `向设备发送: \`${String(inp?.data || '').slice(0, 60)}\``;
+            return i18n.t('chat.tools.serialSend', { data: String(inp?.data || '').slice(0, 60) });
         case 'reset_device':
-            return '复位设备 (DTR/RTS)';
+            return i18n.t('chat.tools.resetDevice');
         case 'run_gdb_command':
             return `Run GDB: \`${String(inp?.command || '').slice(0, 80)}\``;
         case 'get_hardware_config':
@@ -177,9 +178,9 @@ function getToolLabel(name: string, input: unknown): string {
         case 'export_hardware_header':
             return 'Generate hardware_config.h';
         case 'search':
-            return `搜索: \`${inp?.query || inp?.pattern || '...'}\``;
+            return i18n.t('chat.tools.search', { query: inp?.query || inp?.pattern || '...' });
         default:
-            return `调用工具: ${name}`;
+            return i18n.t('chat.tools.invokeTool', { name });
     }
 }
 
@@ -431,7 +432,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 const toolMsgId = toolMsgMap.get(String(event.payload.id));
                 if (toolMsgId && event.payload.output) {
                     const truncated = event.payload.output.length > 3000
-                        ? event.payload.output.slice(0, 3000) + '\n... (结果已截断)'
+                        ? event.payload.output.slice(0, 3000) + '\n' + i18n.t('chat.tools.resultTruncated')
                         : event.payload.output;
                     updateToolMessage(toolMsgId, truncated);
                 }
@@ -497,7 +498,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             });
             unlistenReasoning = await listen<string>('ai-reasoning', (event) => {
                 if (signal.aborted) return;
-                console.log('[Thinking] reasoning event received:', event.payload?.slice(0, 100));
+                devLog('[Thinking] reasoning event received:', event.payload?.slice(0, 100));
                 appendToLastThinking(event.payload);
             });
         }
@@ -524,14 +525,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             playCompleteSound();
             // 生成操作总结
             const summaryParts: string[] = [];
-            if (toolCounts.read > 0) summaryParts.push(`读取了 ${toolCounts.read} 个文件`);
-            if (toolCounts.write > 0) summaryParts.push(`修改了 ${toolCounts.write} 个文件`);
-            if (toolCounts.delete > 0) summaryParts.push(`删除了 ${toolCounts.delete} 个文件`);
-            if (toolCounts.exec > 0) summaryParts.push(`执行了 ${toolCounts.exec} 个命令`);
-            if (toolCounts.list > 0) summaryParts.push(`浏览了 ${toolCounts.list} 个目录`);
+            if (toolCounts.read > 0) summaryParts.push(i18n.t('chat.summary.readFiles', { count: toolCounts.read }));
+            if (toolCounts.write > 0) summaryParts.push(i18n.t('chat.summary.writeFiles', { count: toolCounts.write }));
+            if (toolCounts.delete > 0) summaryParts.push(i18n.t('chat.summary.deleteFiles', { count: toolCounts.delete }));
+            if (toolCounts.exec > 0) summaryParts.push(i18n.t('chat.summary.execCommands', { count: toolCounts.exec }));
+            if (toolCounts.list > 0) summaryParts.push(i18n.t('chat.summary.listDirs', { count: toolCounts.list }));
             const summaryContent = summaryParts.length > 0
-                ? `✅ 任务完成：${summaryParts.join('，')}`
-                : '✅ 任务完成';
+                ? i18n.t('chat.summary.taskComplete', { summary: summaryParts.join('，') })
+                : i18n.t('chat.summary.taskCompleteNoOps');
             addMessage({
                 id: `complete-${Date.now()}`,
                 role: 'system',
@@ -541,7 +542,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         } catch (error) {
             if (signal.aborted) return;
             console.error('Chat error:', error);
-            appendToLastAssistant(`\n\n❌ 请求失败: ${translateBackendString(String(error))}`);
+            const errStr = String(error);
+            // 检测后端 inactivity timeout 错误，显示国际化超时消息
+            const timeoutMatch = errStr.match(/AI_INACTIVITY_TIMEOUT:(\d+)/);
+            if (timeoutMatch) {
+                const seconds = parseInt(timeoutMatch[1], 10);
+                appendToLastAssistant(i18n.t('chat.error.inactivityTimeout', { seconds }));
+            } else {
+                appendToLastAssistant(i18n.t('chat.error.requestFailed', { error: translateBackendString(errStr) }));
+            }
             updateStatus('error');
         } finally {
             cancelOpDoneTimer();
@@ -607,7 +616,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 messages: [...state.messages, {
                     id: `sys-error-${Date.now()}`,
                     role: 'system' as const,
-                    content: `AI 启动失败: ${translateBackendString(err instanceof Error ? err.message : String(err))}`,
+                    content: i18n.t('chat.error.aiStartFailed', { error: translateBackendString(err instanceof Error ? err.message : String(err)) }),
                     timestamp: Date.now(),
                 }],
             }));
@@ -653,6 +662,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
         }
         clearConversation();
+        // 清理所有 checkpoints 和 touchedFiles，防止内存泄漏
+        checkpoints.clear();
+        touchedFilesByMessage.clear();
         set({ messages: [], usage: null, activeSessionId: `session-${Date.now()}`, messageQueue: [] });
     },
 
@@ -808,6 +820,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             const idx = state.messages.findIndex((m) => m.id === targetId);
             if (idx === -1) return { pendingRollback: null };
             // 保留该用户消息之前的所有消息，移除该消息及之后的一切
+            const removedIds = new Set(state.messages.slice(idx).map(m => m.id));
+            // 清理被移除消息的 checkpoints 和 touchedFiles，防止内存泄漏
+            for (const id of removedIds) {
+                checkpoints.delete(id);
+                touchedFilesByMessage.delete(id);
+            }
             return {
                 pendingRollback: null,
                 messages: state.messages.slice(0, idx),
@@ -827,6 +845,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     // 重置为默认欢迎消息（切换项目时调用）
     resetMessages: () => {
+        checkpoints.clear();
+        touchedFilesByMessage.clear();
         set({ messages: [] });
     },
 

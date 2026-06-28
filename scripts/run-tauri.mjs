@@ -130,7 +130,10 @@ detectAndSetupToolchain();
 
 const mingwBin = join(projectRoot, 'tools', 'mingw64', 'bin');
 if (existsSync(mingwBin)) {
-  process.env.PATH = `${mingwBin};${process.env.PATH}`;
+  // 加到 PATH 末尾，避免 mingw 的 ld.exe 干扰 Rust MSVC target 的 link.exe 查找。
+  // Rust MSVC target 通过 vswhere 定位 Visual Studio 的 link.exe，不依赖 PATH，
+  // 但 mingw 的 ld.exe 若在 PATH 开头会导致链接器符号解析异常（如 core::fmt::Arguments::from_str）。
+  process.env.PATH = `${process.env.PATH};${mingwBin}`;
 }
 
 const warnings = setupEnv();

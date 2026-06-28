@@ -59,6 +59,56 @@ pub async fn get_status(project_path: String) -> Result<Vec<FileStatus>, String>
     Ok(files)
 }
 
+/// 获取当前分支名
+#[tauri::command]
+pub async fn get_current_branch(project_path: String) -> Result<String, String> {
+    info!("Getting current branch for: {}", project_path);
+
+    let mut cmd = Command::new("git");
+    cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let output = cmd.output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(branch)
+}
+
+/// 创建并切换到新分支
+#[tauri::command]
+pub async fn create_branch(project_path: String, name: String) -> Result<String, String> {
+    info!("Creating branch '{}' for: {}", name, project_path);
+
+    // 校验分支名：禁止空白与 shell 特殊字符
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Branch name cannot be empty".to_string());
+    }
+    if trimmed.chars().any(|c| matches!(c, '\0' | '\n' | '\r' | '"' | '\'' | '`' | '$' | ';' | '|' | '&' | '<' | '>' | '(' | ')' | '{' | '}' | '*' | '?' | '[' | ']' | '~' | '#' | '!' | ' ')) {
+        return Err("Branch name contains invalid characters".to_string());
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.args(["checkout", "-b", trimmed])
+        .current_dir(&project_path);
+    #[cfg(windows)]
+    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    let output = cmd.output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    Ok(trimmed.to_string())
+}
+
 /// 开始 AI 审核会话（创建分支）
 #[tauri::command]
 pub async fn start_ai_session(project_path: String) -> Result<String, String> {
@@ -118,7 +168,7 @@ pub async fn commit_ai_changes(
     let _ = cmd.output();
 
     let mut cmd = Command::new("git");
-    cmd.args(["merge", &format!("--no-ff -m \"{}\"", message)]).current_dir(&project_path);
+    cmd.args(["merge", "--no-ff", "-m", &message]).current_dir(&project_path);
     #[cfg(windows)]
     { cmd.creation_flags(CREATE_NO_WINDOW); }
     let output = cmd.output()

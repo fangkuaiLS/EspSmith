@@ -385,7 +385,7 @@ openocd --version
 ## Project Directory Structure
 
 ```
-esp-ai-studio/
+espsmith/
 ├── src/                          # Frontend source
 │   ├── App.tsx                   # Main app component (four-region layout)
 │   ├── main.tsx                  # Frontend entry point
@@ -469,7 +469,7 @@ This project draws inspiration from the following excellent tools:
 
 - **[AEL (AI Embedded Lab)](https://github.com/nicekwell/AI-Instrument-Closed-Loop)** — Multi-instrument closed-loop debugging system, inspired the Self-Healing engine and Experience engine design
 - **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — Official ESP-IDF extension, inspired IDF workflow and serial management
-- **[CodeWhale](https://github.com/anthropics/codewhale)** — AI Agent CLI tool, provides DeepSeek AI capability support
+- **[CodeWhale](https://www.npmjs.com/package/codewhale)** — AI Agent CLI tool, provides DeepSeek AI capability support
 - **[MiMo-Code](https://github.com/mimocode/mimo-code)** — AI Agent CLI tool, provides multi-model AI capability and built-in tool calling support
 - **[ESP-IDF](https://github.com/espressif/esp-idf)** — Espressif official ESP32 development framework, provides complete development toolchain
 

@@ -8,11 +8,12 @@
  * - 快捷命令
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { translateBackendString } from '../../i18n';
 import { Send, StopCircle, Plus, User, Code, Terminal, ChevronDown, ChevronRight, ExternalLink, Undo2, Coins, Copy, Check, Pencil, Clock, Trash2, Shield, ShieldAlert, Cpu, Loader, CheckCircle2, Circle, XCircle, Brain } from 'lucide-react';
 import { useChatStore, useSettingsStore } from '../../stores';
+import { showToast } from '../ui/Toast';
 import { useProjectStore } from '../../stores/projectStore';
 import type { ChatSession } from '../../stores/chatStore';
 import { useFileStore } from '../../stores/fileStore';
@@ -67,6 +68,7 @@ const TOOLCHAIN_OPTIONS: ToolchainOption[] = [
 interface ModelOption {
   id: string;
   label: string;
+  labelKey?: string;
   model: string;
 }
 
@@ -77,7 +79,7 @@ const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
     { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash' },
   ],
   mimo: [
-    { id: 'mimo/mimo-auto', label: 'MiMo Auto（MiMo-V2.5 限免中）', model: 'mimo/mimo-auto' },
+    { id: 'mimo/mimo-auto', label: '', labelKey: 'chat.model.mimoAuto', model: 'mimo/mimo-auto' },
   ],
   ollama: [
     { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
@@ -98,13 +100,13 @@ function getCurrentModelId(): string {
   return s.deepseekModel || 'deepseek-v4-pro';
 }
 
-function formatTime(ts: number): string {
+function formatTime(ts: number, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const date = new Date(ts);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
-  if (diff < 60000) return '刚刚';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
+  if (diff < 60000) return t('chat.time.justNow');
+  if (diff < 3600000) return t('chat.time.minutesAgo', { n: Math.floor(diff / 60000) });
+  if (diff < 86400000) return t('chat.time.hoursAgo', { n: Math.floor(diff / 3600000) });
   if (date.getFullYear() === now.getFullYear()) {
     return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   }
@@ -132,7 +134,7 @@ function UsageBar({ usage }: { usage: AICumulativeUsage }) {
             ↑{formatTokens(usage.lastMessage.inputTokens)} ↓{formatTokens(usage.lastMessage.outputTokens)}
           </span>
           {usage.lastMessage.cachedTokens > 0 && (
-            <span className="text-green-400" title="缓存命中 tokens">
+            <span className="text-green-400" title={t('chat.tokens.cacheHit')}>
               ⊞{formatTokens(usage.lastMessage.cachedTokens)}
             </span>
           )}
@@ -142,7 +144,7 @@ function UsageBar({ usage }: { usage: AICumulativeUsage }) {
   );
 }
 
-export function ChatPanel() {
+function ChatPanel() {
   const { t } = useTranslation();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -184,10 +186,10 @@ export function ChatPanel() {
         await invoke('write_file', { path: filePath, content: code, safeMode: false });
         useFileStore.getState().openFile(filePath);
       } else {
-        alert('请在 Tauri 桌面应用中体验完整功能');
+        showToast('warning', t('chat.error.desktopOnly'));
       }
     } catch (err) {
-      alert(`写入失败: ${err}`);
+      showToast('error', t('chat.error.writeFailed', { error: String(err) }));
     } finally {
       setApplyWriting(false);
     }
@@ -454,7 +456,7 @@ export function ChatPanel() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-[13px] font-medium text-text-primary mb-3">
-              请输入文件路径（相对于项目根目录）
+              {t('chat.apply.filePathPrompt')}
             </div>
             <input
               autoFocus
@@ -465,21 +467,21 @@ export function ChatPanel() {
                 if (e.key === 'Escape') setApplyDialog(null);
               }}
               className="w-full px-3 py-2 bg-surface-overlay border border-border-default rounded-lg text-[13px] text-text-primary focus:outline-none focus:border-accent"
-              placeholder="例如: main/components/led/main.c"
+              placeholder={t('chat.apply.filePathPlaceholder')}
             />
             <div className="flex justify-end gap-2 mt-4">
               <button
                 onClick={() => setApplyDialog(null)}
                 className="px-3 py-1.5 text-[12px] text-text-secondary hover:text-text-primary transition-colors rounded-lg hover:bg-surface-hover"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={confirmApply}
                 disabled={!applyFilePath.trim() || applyWriting}
                 className="px-3 py-1.5 text-[12px] bg-accent text-white rounded-lg hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {applyWriting ? '写入中...' : '确定'}
+                {applyWriting ? t('chat.apply.writing') : t('common.ok')}
               </button>
             </div>
           </div>
@@ -503,7 +505,7 @@ export function ChatPanel() {
             <button
               onClick={() => setToolchainOpen(!toolchainOpen)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-overlay border border-border-subtle text-[11px] text-text-secondary hover:text-text-primary hover:border-border-default transition-all"
-              title="切换工具链"
+              title={t('chat.toolchain.switch')}
             >
               <span className="max-w-[100px] truncate">
                 {TOOLCHAIN_OPTIONS.find(o => o.id === getCurrentToolchainId())?.label || 'CodeWhale'}
@@ -538,7 +540,7 @@ export function ChatPanel() {
                   ? 'bg-accent-muted text-accent'
                   : 'text-text-tertiary hover:text-text-primary hover:bg-surface-hover'
               }`}
-              title="历史会话"
+              title={t('chat.history.title')}
             >
               <Clock size={16} />
             </button>
@@ -546,7 +548,7 @@ export function ChatPanel() {
               <div className="absolute right-0 top-full mt-1 w-[280px] bg-surface-elevated border border-border-default rounded-lg shadow-lg z-50 py-1 animate-scale-in origin-top-right max-h-[400px] overflow-y-auto">
                 {sessions.length === 0 ? (
                   <div className="px-4 py-6 text-center text-[12px] text-text-tertiary">
-                    暂无历史会话
+                    {t('chat.history.empty')}
                   </div>
                 ) : (
                   sessions.map((session) => (
@@ -561,13 +563,13 @@ export function ChatPanel() {
                       <div className="flex-1 min-w-0">
                         <div className="text-[12px] text-text-primary truncate">{session.title}</div>
                         <div className="text-[10px] text-text-tertiary mt-0.5">
-                          {session.messages.filter(m => m.role === 'user').length} 条消息 · {formatTime(session.createdAt)}
+                          {t('chat.history.messageCount', { n: session.messages.filter(m => m.role === 'user').length })} {formatTime(session.createdAt, t)}
                         </div>
                       </div>
                       <button
                         onClick={(e) => handleDeleteSession(e, session.id)}
                         className="p-1 rounded text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-danger-muted transition-all shrink-0"
-                        title="删除会话"
+                        title={t('chat.history.delete')}
                       >
                         <Trash2 size={13} />
                       </button>
@@ -652,7 +654,7 @@ export function ChatPanel() {
                 </span>
                 {idx === 0 && (
                   <span className="text-[9px] text-warning bg-warning/10 px-1.5 py-0.5 rounded shrink-0">
-                    下一个
+                    {t('chat.queuedNext')}
                   </span>
                 )}
               </div>
@@ -673,7 +675,7 @@ export function ChatPanel() {
           {isDragOver && (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-accent-muted/40 pointer-events-none">
               <span className="text-[12px] font-medium text-accent px-3 py-1.5 rounded-full bg-surface-elevated border border-accent/40 shadow">
-                释放以插入文件/文件夹路径
+                {t('chat.input.dropHint')}
               </span>
             </div>
           )}
@@ -694,11 +696,14 @@ export function ChatPanel() {
                 <button
                   onClick={() => setModelOpen(!modelOpen)}
                   className="flex items-center gap-1 px-2 py-1 text-[11px] rounded-md text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all"
-                  title="切换模型"
+                  title={t('chat.model.switch')}
                 >
                   <Cpu size={12} />
                   <span className="max-w-[80px] truncate">
-                    {MODELS_BY_TOOLCHAIN[getCurrentToolchainId()]?.find(o => o.id === getCurrentModelId())?.label || getCurrentModelId()}
+                    {(() => {
+                      const opt = MODELS_BY_TOOLCHAIN[getCurrentToolchainId()]?.find(o => o.id === getCurrentModelId());
+                      return opt ? (opt.labelKey ? t(opt.labelKey) : opt.label) : getCurrentModelId();
+                    })()}
                   </span>
                   <ChevronDown size={10} className={`transition-transform ${modelOpen ? 'rotate-180' : ''}`} />
                 </button>
@@ -715,7 +720,7 @@ export function ChatPanel() {
                         }`}
                       >
                         <div className={`w-2 h-2 rounded-full ${option.id === getCurrentModelId() ? 'bg-accent' : 'bg-text-disabled'}`} />
-                        <span>{option.label}</span>
+                        <span>{option.labelKey ? t(option.labelKey) : option.label}</span>
                         {option.id === getCurrentModelId() && <Check size={12} className="ml-auto text-accent" />}
                       </button>
                     ))}
@@ -731,10 +736,10 @@ export function ChatPanel() {
                     ? 'text-amber-700 bg-amber-100 hover:bg-amber-200'
                     : 'text-text-tertiary hover:text-text-secondary hover:bg-surface-hover'
                 }`}
-                title={permissionMode === 'ask' ? '询问模式：敏感操作需确认' : '完全模式：不限制任何操作'}
+                title={permissionMode === 'ask' ? t('chat.permission.askModeDesc') : t('chat.permission.fullModeDesc')}
               >
                 {permissionMode === 'ask' ? <ShieldAlert size={12} /> : <Shield size={12} />}
-                <span>{permissionMode === 'ask' ? '询问模式' : '完全模式'}</span>
+                <span>{permissionMode === 'ask' ? t('chat.permission.askMode') : t('chat.permission.fullMode')}</span>
                 <ChevronDown size={10} className={`transition-transform ${permOpen ? 'rotate-180' : ''}`} />
               </button>
               {permOpen && (
@@ -749,8 +754,8 @@ export function ChatPanel() {
                   >
                     <Shield size={13} />
                     <div className="text-left">
-                      <div className="text-[12px]">完全模式</div>
-                      <div className="text-[10px] text-text-tertiary">不限制任何操作</div>
+                      <div className="text-[12px]">{t('chat.permission.fullMode')}</div>
+                      <div className="text-[10px] text-text-tertiary">{t('chat.permission.fullModeDesc')}</div>
                     </div>
                     {permissionMode === 'full' && <Check size={12} className="ml-auto text-accent" />}
                   </button>
@@ -764,8 +769,8 @@ export function ChatPanel() {
                   >
                     <ShieldAlert size={13} />
                     <div className="text-left">
-                      <div className="text-[12px]">询问模式</div>
-                      <div className="text-[10px] text-text-tertiary">敏感操作需确认</div>
+                      <div className="text-[12px]">{t('chat.permission.askMode')}</div>
+                      <div className="text-[10px] text-text-tertiary">{t('chat.permission.askModeDesc')}</div>
                     </div>
                     {permissionMode === 'ask' && <Check size={12} className="ml-auto text-amber-600" />}
                   </button>
@@ -805,13 +810,13 @@ export function ChatPanel() {
             <div className="flex items-center gap-2 mb-3">
               <Undo2 size={14} className="text-warning" />
               <span className="text-[13px] font-medium text-text-primary">
-                确定退回到本次对话发起前吗？
+                {t('chat.rollback.confirmTitle')}
               </span>
             </div>
 
             {pendingRollback.restoreFiles.length > 0 && (
               <div className="mb-2">
-                <div className="text-[11px] text-text-secondary mb-1">以下文件将被恢复：</div>
+                <div className="text-[11px] text-text-secondary mb-1">{t('chat.rollback.restoreFiles')}</div>
                 <div className="max-h-[100px] overflow-y-auto space-y-0.5">
                   {pendingRollback.restoreFiles.map((f) => (
                     <div key={f.path} className="flex items-center gap-1.5 pl-2 text-[11px]">
@@ -827,7 +832,7 @@ export function ChatPanel() {
 
             {pendingRollback.deleteFiles.length > 0 && (
               <div className="mb-2">
-                <div className="text-[11px] text-text-secondary mb-1">以下文件将被删除：</div>
+                <div className="text-[11px] text-text-secondary mb-1">{t('chat.rollback.deleteFiles')}</div>
                 <div className="max-h-[100px] overflow-y-auto space-y-0.5">
                   {pendingRollback.deleteFiles.map((f) => (
                     <div key={f.path} className="flex items-center gap-1.5 pl-2 text-[11px]">
@@ -846,13 +851,13 @@ export function ChatPanel() {
                 onClick={cancelRollback}
                 className="px-3 py-1 text-[12px] text-text-secondary hover:text-text-primary hover:bg-surface-hover rounded-md transition-all"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={confirmRollback}
                 className="px-3 py-1 text-[12px] bg-warning text-white hover:bg-red-600 rounded-md transition-all font-medium"
               >
-                确认回退
+                {t('chat.rollback.confirm')}
               </button>
             </div>
           </div>
@@ -931,6 +936,7 @@ function OperationTimeline({ operation }: { operation: OperationProgress }) {
 }
 
 function ToolCallsGroup({ messages }: { messages: ChatMessage[] }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -941,7 +947,7 @@ function ToolCallsGroup({ messages }: { messages: ChatMessage[] }) {
       >
         {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <Terminal size={12} />
-        <span>AI 执行过程 · {messages.length} steps</span>
+        <span>{t('chat.toolCalls.groupLabel', { n: messages.length })}</span>
       </button>
       {expanded && (
         <div className="mt-2 px-3 py-2 bg-surface-root border border-border-subtle rounded-lg max-w-[92%] max-h-[320px] overflow-y-auto w-full animate-slide-up">
@@ -955,6 +961,7 @@ function ToolCallsGroup({ messages }: { messages: ChatMessage[] }) {
 }
 
 function ToolCallDetail({ message, isLast }: { message: ChatMessage; isLast: boolean }) {
+  const { t } = useTranslation();
   const toolInput = message.toolData?.input as Record<string, unknown> | undefined;
   const toolResult = message.toolData?.result;
   const hasDetails = toolInput && Object.keys(toolInput).length > 0;
@@ -976,8 +983,8 @@ function ToolCallDetail({ message, isLast }: { message: ChatMessage; isLast: boo
 
   const toolFullText = [
     label,
-    hasDetails ? `输入: ${JSON.stringify(toolInput)}` : '',
-    toolResult ? `输出: ${toolResult}` : '',
+    hasDetails ? t('chat.toolCalls.input', { input: JSON.stringify(toolInput) }) : '',
+    toolResult ? t('chat.toolCalls.output', { output: toolResult }) : '',
   ].filter(Boolean).join('\n');
 
   return (
@@ -988,7 +995,7 @@ function ToolCallDetail({ message, isLast }: { message: ChatMessage; isLast: boo
           <button
             onClick={handleOpenFile}
             className="px-1 py-0.5 text-[10px] text-accent hover:text-accent-hover hover:bg-accent-muted rounded transition-all flex items-center gap-0.5"
-            title={`打开 ${filePath}`}
+            title={t('chat.toolCalls.openFile', { filePath })}
           >
             <ExternalLink size={10} />
           </button>
@@ -996,7 +1003,7 @@ function ToolCallDetail({ message, isLast }: { message: ChatMessage; isLast: boo
         <button
           onClick={() => doCopy(toolFullText, setToolCopied)}
           className="opacity-0 hover:opacity-100 px-1 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary rounded transition-all"
-          title="复制工具调用详情"
+          title={t('chat.toolCalls.copyDetails')}
         >
           {toolCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
         </button>
@@ -1019,6 +1026,7 @@ function ToolCallDetail({ message, isLast }: { message: ChatMessage; isLast: boo
 }
 
 function TerminalPanel({ command, output }: { command: string; output: string }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const lines = output.split('\n');
   const preview = lines.slice(0, 3).join('\n');
@@ -1035,7 +1043,7 @@ function TerminalPanel({ command, output }: { command: string; output: string })
           <button
             onClick={() => doCopy(output, () => {})}
             className="px-1.5 py-0.5 text-[10px] text-[#858585] hover:text-[#cccccc] rounded transition-colors"
-            title="复制输出"
+            title={t('chat.toolCalls.copyOutput')}
           >
             <Copy size={10} />
           </button>
@@ -1044,7 +1052,7 @@ function TerminalPanel({ command, output }: { command: string; output: string })
               onClick={() => setExpanded(!expanded)}
               className="px-1.5 py-0.5 text-[10px] text-[#858585] hover:text-[#cccccc] rounded transition-colors"
             >
-              {expanded ? '收起' : `展开全部 ${lines.length} 行`}
+              {expanded ? t('chat.toolCalls.collapse') : t('chat.toolCalls.expandAll', { n: lines.length })}
             </button>
           )}
         </div>
@@ -1121,9 +1129,9 @@ function ThinkingBlock({ status, messages }: { status: AIStatus; messages: ChatM
             {/* 标题文字 */}
             <span className="text-text-secondary font-medium">
               {hasThinking ? (
-                <>Thought{title && <>: </>}<span className="text-accent/90">{title || (body.slice(0, 40) + (body.length > 40 ? '...' : ''))}</span></>
+                <>{t('chat.thinking.thought')}{title && <>: </>}<span className="text-accent/90">{title || (body.slice(0, 40) + (body.length > 40 ? '...' : ''))}</span></>
               ) : (
-                <span>{t('chat.thinking')}</span>
+                <span>{t('chat.thinking.process')}</span>
               )}
             </span>
 
@@ -1165,6 +1173,7 @@ function doCopy(text: string, setter: (v: boolean) => void) {
 }
 
 function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (code: string, suggested: string) => void }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [localCopied, setLocalCopied] = useState(false);
   const [userCopied, setUserCopied] = useState(false);
@@ -1198,8 +1207,8 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
 
     const toolMsgFullText = [
       label,
-      hasDetails ? `输入: ${JSON.stringify(toolInput)}` : '',
-      toolResult ? `输出: ${toolResult}` : '',
+      hasDetails ? t('chat.toolCalls.input', { input: JSON.stringify(toolInput) }) : '',
+      toolResult ? t('chat.toolCalls.output', { output: toolResult }) : '',
     ].filter(Boolean).join('\n');
 
     if (isEspCli && toolResult) {
@@ -1210,7 +1219,7 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
             <button
               onClick={() => doCopy(toolMsgFullText, setToolMsgCopied)}
               className="px-1 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary rounded transition-all"
-              title="复制"
+              title={t('common.copy')}
             >
               {toolMsgCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
             </button>
@@ -1237,7 +1246,7 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
             <button
               onClick={handleOpenFile}
               className="px-1.5 py-0.5 text-[10px] text-accent hover:text-accent-hover hover:bg-accent-muted rounded transition-all flex items-center gap-0.5"
-              title={`打开 ${filePath}`}
+              title={t('chat.toolCalls.openFile', { filePath })}
             >
               <ExternalLink size={10} />
             </button>
@@ -1245,18 +1254,18 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
           <button
             onClick={() => doCopy(toolMsgFullText, setToolMsgCopied)}
             className="px-1 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary rounded transition-all"
-            title="复制工具调用详情"
+            title={t('chat.toolCalls.copyDetails')}
           >
             {toolMsgCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
           </button>
         </div>
         {expanded && (
           <div className="mt-1 px-3 py-2 bg-surface-root border border-border-subtle rounded-lg text-[11px] text-text-tertiary font-mono whitespace-pre-wrap max-h-[150px] overflow-y-auto max-w-[90%]">
-            {hasDetails && <div className="text-text-secondary mb-1">输入:</div>}
+            {hasDetails && <div className="text-text-secondary mb-1">{t('chat.toolCalls.inputLabel')}</div>}
             {hasDetails && <div>{JSON.stringify(toolInput, null, 2)}</div>}
             {toolResult && (
               <>
-                <div className="text-text-secondary mt-2 mb-1">输出:</div>
+                <div className="text-text-secondary mt-2 mb-1">{t('chat.toolCalls.outputLabel')}</div>
                 <div>{toolResult}</div>
               </>
             )}
@@ -1275,7 +1284,7 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
           <button
             onClick={() => doCopy(message.content, setUserCopied)}
             className="opacity-0 group-hover:opacity-100 transition-opacity text-text-tertiary hover:text-text-primary"
-            title="复制消息"
+            title={t('chat.copyMessage')}
           >
             {userCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
           </button>
@@ -1303,10 +1312,10 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
             <button
               onClick={() => useChatStore.getState().prepareRollback(message.id)}
               className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-warning hover:bg-warning-muted rounded transition-all"
-              title="回退到本次对话前"
+              title={t('chat.message.rollback')}
             >
               <Undo2 size={10} />
-              回退
+              {t('chat.message.rollbackBtn')}
             </button>
           )}
           {message.id.startsWith('user-') && (
@@ -1320,7 +1329,7 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
                 }
               }}
               className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-accent hover:bg-accent-muted rounded transition-all"
-              title="重新编辑"
+              title={t('chat.message.reedit')}
             >
               <Pencil size={10} />
             </button>
@@ -1328,7 +1337,7 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
           <button
             onClick={() => doCopy(message.content, setUserCopied)}
             className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded transition-all"
-            title="复制消息"
+            title={t('chat.copyMessage')}
           >
             {userCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
           </button>
@@ -1345,8 +1354,8 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all group/think w-full"
             >
               <Brain size={12} className="text-accent/70 shrink-0" />
-              <span className="font-medium">思考过程</span>
-              <span className="text-text-disabled ml-1">({message.thinkingContent!.length > 0 ? Math.round(message.thinkingContent!.length / 2) : '...'} 字)</span>
+              <span className="font-medium">{t('chat.thinking.process')}</span>
+              <span className="text-text-disabled ml-1">{t('chat.thinking.charCount', { n: message.thinkingContent!.length > 0 ? Math.round(message.thinkingContent!.length / 2) : '...' })}</span>
               {thinkingExpanded
                 ? <ChevronDown size={12} className="ml-auto shrink-0" />
                 : <ChevronRight size={12} className="ml-auto shrink-0" />
@@ -1354,7 +1363,7 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
               <button
                 onClick={(e) => { e.stopPropagation(); doCopy(message.thinkingContent!, setThinkingCopied); }}
                 className="opacity-0 group-hover/think:opacity-100 transition-opacity shrink-0"
-                title="复制思考内容"
+                title={t('chat.thinking.copy')}
               >
                 {thinkingCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
               </button>
@@ -1380,10 +1389,10 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
             <button
               onClick={() => doCopy(message.content, setLocalCopied)}
               className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded transition-all"
-              title="复制消息"
+              title={t('chat.copyMessage')}
             >
               {localCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
-              复制
+              {t('common.copy')}
             </button>
           </div>
         )}
@@ -1451,7 +1460,7 @@ function CodeBlock({ language, code, content, onApply }: { language: string; cod
             className="flex items-center gap-1 px-2 py-0.5 text-[10px] bg-accent text-white rounded hover:bg-accent-hover transition-colors"
             onClick={handleApply}
           >
-            Apply
+            {t('chat.codeBlock.apply')}
           </button>
         </div>
       </div>
@@ -1504,4 +1513,6 @@ function MessageContent({ content, onApply }: { content: string; onApply: (code:
   );
 }
 
-export default ChatPanel;
+const ChatPanelMemo = memo(ChatPanel);
+export { ChatPanelMemo as ChatPanel };
+export default ChatPanelMemo;

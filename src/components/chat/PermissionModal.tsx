@@ -1,7 +1,9 @@
+import { useTranslation } from 'react-i18next';
 import { useChatStore } from '../../stores/chatStore';
 import { translateBackendString } from '../../i18n';
 
 export function PermissionModal() {
+  const { t } = useTranslation();
   const pendingPermission = useChatStore((s) => s.pendingPermission);
   const respondPermission = useChatStore((s) => s.respondPermission);
 
@@ -13,7 +15,7 @@ export function PermissionModal() {
         <div className="flex items-start gap-3 mb-4">
           <span className="text-2xl">⚠️</span>
           <div className="flex-1 min-w-0">
-            <h3 className="text-yellow-400 font-semibold text-sm mb-1">AI 正在尝试执行敏感操作</h3>
+            <h3 className="text-yellow-400 font-semibold text-sm mb-1">{t('chat.permission.title')}</h3>
             <p className="text-gray-300 text-xs break-all">
               {pendingPermission.toolName}: {translateBackendString(pendingPermission.reason)}
             </p>
@@ -24,13 +26,13 @@ export function PermissionModal() {
             onClick={() => respondPermission(false)}
             className="px-4 py-2 text-sm rounded bg-red-600/20 text-red-400 border border-red-600/30 hover:bg-red-600/30 transition-colors"
           >
-            拒绝
+            {t('chat.permission.deny')}
           </button>
           <button
             onClick={() => respondPermission(true)}
             className="px-4 py-2 text-sm rounded bg-green-600/20 text-green-400 border border-green-600/30 hover:bg-green-600/30 transition-colors"
           >
-            允许
+            {t('chat.permission.allow')}
           </button>
         </div>
       </div>
