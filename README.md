@@ -9,482 +9,357 @@
 </p>
 
 <p align="center">
-  <strong>AI 驱动的 ESP32 集成开发环境</strong>
+  <strong>面向 ESP32 的 AI 原生集成开发环境</strong>
+</p>
+
+<p align="center">
+  让代码生成、编译、烧录、串口验证、JTAG 调试进入同一个工作流。
 </p>
 
 <p align="center">
   <a href="https://github.com/fangkuaiLS/EspSmith/releases"><img src="https://img.shields.io/badge/release-GitHub_Releases-3b82f6?style=flat-square" alt="release" /></a>
-  <img src="https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey?style=flat-square" alt="platform" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="platform" />
+  <img src="https://img.shields.io/badge/Tauri-v2-24c8db?style=flat-square" alt="tauri" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square" alt="license" />
 </p>
 
-<p align="center">
-  <em>将 AI 大模型嵌入嵌入式开发工作流，实现代码编写、编译构建、固件烧录、硬件调试的全闭环自动化</em>
-</p>
-
-***
+---
 
 ## 项目简介
 
-EspSmith 是一个面向 ESP32 系列芯片的现代化集成开发环境（IDE），将 AI 大模型深度融入嵌入式开发工作流。通过集成 **CodeWhale (DeepSeek)** / **MiMo-Code** 等 AI 服务，开发者可以用自然语言描述需求，AI 自动完成代码编写、IDF 编译、固件烧录、串口验证的完整闭环。对于支持 USB-JTAG 的开发板，还提供硬件断点、变量监视、寄存器分析等高级调试能力。
+EspSmith 是一个围绕 **ESP32 / ESP-IDF** 构建的桌面 IDE，前端基于 **React + Monaco Editor**，后端基于 **Tauri + Rust**。  
+它不是单纯把聊天窗口塞进编辑器里，而是把 AI 放进真实的嵌入式开发链路中：
 
-### 核心特性
+- 读项目结构
+- 修改或生成代码
+- 调用 ESP-IDF 构建
+- 烧录到开发板
+- 读取串口结果
+- 在支持的板卡上进入 JTAG 调试
 
-| 类别                  | 功能                                                  |
-| ------------------- | --------------------------------------------------- |
-| **AI 智能编程**         | 集成 CodeWhale (DeepSeek) / MiMo-Code 双引擎，自然语言驱动全闭环开发 |
-| **代码编辑器**           | 基于 Monaco Editor，支持 C/C++ 语法高亮、ESP-IDF 代码片段、多标签页管理  |
-| **ESP-IDF 集成**      | 自动检测 IDF 环境，一键编译/烧录/监控/配置，支持所有 ESP32 系列芯片           |
-| **JTAG 硬件调试**       | USB-JTAG 自动识别，支持断点/单步/变量监视/寄存器/调用栈/CoreDump 分析      |
-| **串口监视器**           | 实时串口数据收发，支持多种波特率，带时间戳和日志过滤                          |
-| **硬件配置**            | 可视化引脚分配，自动冲突检测，一键导出 C 头文件                           |
-| **Git 集成**          | 内置 Git 面板，支持 AI 提交、变更追踪、分支管理 （待完成）                  |
-| **热插拔检测**           | 自动检测设备插拔，智能识别 JTAG/UART 模式，无需手动配置                   |
-| **国际化**             | 支持中文 / English 双语界面切换                               |
-| **Self-Healing 引擎** | plan → preflight → build → flash → verify 闭环流水线     |
-| **Experience 引擎**   | 跨运行经验积累，记录历史修复技能供 AI 参考                             |
+目标很直接：把“写代码”和“让代码在板子上跑起来”之间的距离缩短。
 
-***
+## 为什么值得看
 
-## 软件下载
+- **AI 不只会写代码**：它可以接入构建、烧录、验证和调试流程。
+- **双工作模式**：既支持偏 AI 协作的 `AUTO` 模式，也支持偏 IDE 操作的 `CODE` 模式。
+- **JTAG / UART 自动识别**：尽量减少手工切换和工具链拼接。
+- **面向嵌入式闭环**：不仅关注“生成了什么代码”，也关注“代码是否真的运行正确”。
+- **有持续演进空间**：内置 `Self-Healing` 与 `Experience` 两个引擎，目标是让工具越用越聪明。
 
-[![GitHub Release](https://img.shields.io/badge/release-GitHub_Releases-3b82f6?style=flat-square)](https://github.com/fangkuaiLS/EspSmith/releases)
+---
 
-- 🔗 **发行版页面**: [GitHub Releases](https://github.com/fangkuaiLS/EspSmith/releases)
+## 核心能力
 
-## 软件截图
+| 模块 | 能力 |
+| --- | --- |
+| AI 助手 | 集成 CodeWhale / MiMo-Code，支持自然语言驱动开发 |
+| 编辑器 | 基于 Monaco Editor，支持 C/C++ 多标签编辑 |
+| ESP-IDF 集成 | 一键构建、烧录、串口监视、环境检测 |
+| JTAG 调试 | 断点、单步、变量、寄存器、调用栈、CoreDump 分析 |
+| 串口监视器 | 实时日志、输入回传、波特率切换 |
+| 硬件配置 | 图形化引脚分配、冲突检测、自动生成头文件 |
+| Git 面板 | 查看状态、分支操作、面向 AI 变更的工作流入口 |
+| 国际化 | 中文 / English 双语界面 |
+
+---
+
+## 截图
 
 <p align="center">
-  <em>支持双模式切换 AUTO模式 和 CODE模式 通过左上角LOGO切换按钮</em>
-</p>
-<p align="center">
-  <img src="docs/1.png" alt="EspSmith 主界面" width="600" />
-</p>
-<p align="center">
-  <em>AUTO模式 - AI 聊天面板</em>
-</p>
-
-<p align="center">
-  <img src="docs/2.png" alt="ESP-IDF 编译与烧录" width="600" />
-</p>
-<p align="center">
-  <em>AUTO模式 - AI闭环烧录程序</em>
+  <em>左上角 Logo 可在 AUTO 与 CODE 两种工作模式之间切换</em>
 </p>
 
 <p align="center">
-  <img src="docs/3.png" alt="JTAG 硬件调试" width="600" />
+  <img src="docs/1.png" alt="EspSmith AUTO 模式" width="760" />
 </p>
+
 <p align="center">
-  <em>CODE模式 - 提供专业的代码编辑和调试功能</em>
+  <em>AUTO 模式：更适合通过 AI 推动需求实现</em>
 </p>
 
-***
+<p align="center">
+  <img src="docs/2.png" alt="EspSmith 闭环烧录" width="760" />
+</p>
 
-## 系统架构
+<p align="center">
+  <em>构建、烧录、验证尽量留在同一条链路里完成</em>
+</p>
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Frontend (React)                     │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ │
-│  │ FileTree │ │  Editor  │ │ Chat(AI) │ │  Settings  │ │
-│  │ 文件树   │ │ Monaco   │ │  AI聊天  │ │  系统设置  │ │
-│  └──────────┘ └──────────┘ └──────────┘ └────────────┘ │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ │
-│  │ Hardware │ │  Build   │ │  Serial  │ │   Debug    │ │
-│  │ 硬件配置 │ │ 构建输出 │ │ 串口监控 │ │  GDB调试   │ │
-│  └──────────┘ └──────────┘ └──────────┘ └────────────┘ │
-├─────────────────────────────────────────────────────────┤
-│                  Tauri Bridge (IPC)                      │
-├─────────────────────────────────────────────────────────┤
-│                    Backend (Rust)                        │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐ │
-│  │ Commands │ │   IDF    │ │   MCP    │ │    AI      │ │
-│  │ 命令模块 │ │ IDF封装  │ │ MCP服务  │ │  助手模块  │ │
-│  └──────────┘ └──────────┘ └──────────┘ └────────────┘ │
-│  ┌──────────┐ ┌────────────┐ ┌──────────┐ ┌──────────┐ │
-│  │ Adapters │ │Self-Healing│ │Connection│ │Experience│ │
-│  │ 适配器层 │ │   自修复   │ │ 连接检测 │ │ 经验引擎 │ │
-│  └──────────┘ └────────────┘ └──────────┘ └──────────┘ │
-└─────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/3.png" alt="EspSmith CODE 模式" width="760" />
+</p>
 
-后端 Rust 模块结构：
+<p align="center">
+  <em>CODE 模式：更接近传统 IDE，但保留 AI 与调试能力</em>
+</p>
 
-| 模块                | 路径                              | 职责                                                              |
-| ----------------- | ------------------------------- | --------------------------------------------------------------- |
-| `commands/`       | `src-tauri/src/commands/`       | 项目、文件、硬件、构建、烧录、串口、GDB 调试、Git 命令                                 |
-| `idf.rs`          | `src-tauri/src/idf.rs`          | ESP-IDF 工具链封装，自动检测、命令执行、错误解析                                    |
-| `ai_assistant.rs` | `src-tauri/src/ai_assistant.rs` | CodeWhale (DeepSeek) / MiMo-Code AI 集成，多 Provider 抽象，Token 用量统计 |
-| `ai_provider.rs`  | `src-tauri/src/ai_provider.rs`  | AI Provider 抽象层（CodeWhale / MiMo-Code），事件流统一转换                  |
-| `mcp.rs`          | `src-tauri/src/mcp.rs`          | MCP (Model Context Protocol) 服务器，为 AI Agent 提供工具调用能力            |
-| `connection.rs`   | `src-tauri/src/connection.rs`   | USB-JTAG/UART 自动检测，芯片识别，连接模式管理                                  |
-| `self_healing/`   | `src-tauri/src/self_healing/`   | 闭环自修复引擎（plan → preflight → build → flash → verify）              |
-| `adapters/`       | `src-tauri/src/adapters/`       | 适配器模式抽象层，支持 IDF/esptool/OpenOCD/GDB 等多种工具                       |
-| `instruments/`    | `src-tauri/src/instruments/`    | 仪器抽象（JTAG/ST-Link/DAP-Link），健康检查注册表                             |
-| `experience/`     | `src-tauri/src/experience/`     | 跨运行经验积累引擎，记录修复技能和已知陷阱                                           |
+---
 
-***
+## 适用场景
 
-## 核心引擎
+- 想用 AI 辅助做 ESP-IDF 项目开发，但不想频繁跳出 IDE
+- 需要把“生成代码”快速推进到“板上验证”
+- 使用支持 USB-JTAG 的 ESP32 板卡，希望直接进入硬件调试
+- 想统一管理项目文件、硬件配置、串口、构建输出和 AI 记录
 
-EspSmith 内置了两个具有前瞻性的核心引擎，分别解决嵌入式开发的**可靠性**和**可进化性**问题。
+---
 
-### Self-Healing 引擎 — 闭环可靠性引擎
+## 架构概览
 
-嵌入式开发中，一次完整的验证闭环需要经历**编译 → 烧录 → 串口验证**多个步骤，任何一个环节失败都可能导致整个流程中断。Self-Healing 引擎将这一过程形式化为一个**带自动恢复的状态机**。
+```text
+Frontend
+  React + Monaco + Zustand
+    ├─ FileTree / Editor / Chat / Hardware / Debug Panels
+    └─ AUTO / CODE 双模式 UI
 
-```
-plan → preflight → build → flash → verify → report
-  ↑                    ↑        ↑        ↑
-  └── 任意步骤失败 ──── 重试 ── 恢复 ── 回退锚点
+Bridge
+  Tauri IPC
+
+Backend
+  Rust
+    ├─ commands/        项目、文件、构建、烧录、串口、调试、Git
+    ├─ idf.rs           ESP-IDF 工具链封装
+    ├─ connection.rs    JTAG / UART 识别
+    ├─ ai_assistant.rs  AI Provider 集成
+    ├─ mcp.rs           MCP 工具调用
+    ├─ self_healing/    闭环恢复引擎
+    └─ experience/      经验积累引擎
 ```
 
-**核心能力：**
+### 后端模块职责
 
-| 能力           | 说明                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------- |
-| **步骤编排**     | 将 build / flash / verify 定义为有序步骤（Step），每个步骤绑定适配器（Adapter），支持 IDF、esptool、OpenOCD、GDB 等多种工具链 |
-| **分级重试**     | 按步骤类型分配独立的重试预算（Build: 1次, Load: 2次, Check: 2次），避免无效重试浪费资源                                   |
-| **智能恢复**     | 失败时自动分析错误类型（编译错误 / 烧录失败 / 串口超时 / OpenOCD 异常），匹配最合适的恢复动作                                     |
-| **锚点回退**     | 恢复后自动回退到正确的锚点（Build / Load / Check），而非从头开始，节省时间                                             |
-| **安全护栏**     | 双重保护：总执行次数上限（guard\_limit）+ 全局超时（timeout\_s），防止无限循环                                         |
-| **硬件恢复**     | 4 种恢复动作：DTR/RTS 串口复位 → OpenOCD 软复位 → OpenOCD 硬复位 → 手动断电重连，自动递增强度                            |
-| **GDB 会话保持** | 探针复位后自动重连 GDB 会话，断点和监视状态不丢失                                                                 |
+| 模块 | 路径 | 说明 |
+| --- | --- | --- |
+| `commands/` | `src-tauri/src/commands/` | 项目、文件、构建、烧录、串口、调试、Git 命令 |
+| `idf.rs` | `src-tauri/src/idf.rs` | ESP-IDF 环境检测、命令执行、错误解析 |
+| `connection.rs` | `src-tauri/src/connection.rs` | 识别设备连接方式与目标信息 |
+| `ai_assistant.rs` | `src-tauri/src/ai_assistant.rs` | AI 会话、事件流、工具调用联动 |
+| `mcp.rs` | `src-tauri/src/mcp.rs` | 为 AI 提供项目内工具能力 |
+| `self_healing/` | `src-tauri/src/self_healing/` | plan -> preflight -> build -> flash -> verify |
+| `experience/` | `src-tauri/src/experience/` | 记录运行经验与失败模式 |
 
-**恢复策略示例：**
+---
 
-```
-flash 步骤失败 "OpenOCD connection refused"
-  → 分类：OpenOCD/探针错误 → 锚点：Load
-  → 动作：ProbeHardReset（通过 OpenOCD telnet 发送 reset）
-  → 回退到 flash 步骤重试
-  → 自动重连 GDB 会话
-```
+## 两个关键引擎
 
-### Experience 引擎 — 跨运行经验积累引擎
+### Self-Healing
 
-传统的 IDE 每次运行都是"从零开始"，不会从历史中学习。Experience 引擎让 EspSmith 成为一个**会进化的开发环境**——它记录每次构建/烧录/验证的结果，提炼可复用的工程经验，并注入到 AI 的上下文中。
+`Self-Healing` 关注的是“失败后怎么办”。
 
-```
-┌─────────────────────────────────────────────────┐
-│               Experience Engine                   │
-│                                                   │
-│  ┌──────────┐  ┌──────────┐  ┌────────────────┐  │
-│  │ RunStats │  │  Skills  │  │   Pitfalls     │  │
-│  │ 运行统计 │  │ 修复技能 │  │   已知陷阱     │  │
-│  │          │  │          │  │                │  │
-│  │ 成功/失败│  │ 触发→修复│  │ 历史失败模式   │  │
-│  │ 置信度   │  │ 经验教训 │  │ 危险操作路径   │  │
-│  └──────────┘  └──────────┘  └────────────────┘  │
-│                                                   │
-│  ┌──────────────────────────────────────────────┐ │
-│  │        AI Context Prompt Injection           │ │
-│  │  "根据历史经验，这个芯片的 JTAG 在 40MHz 下   │ │
-│  │   不稳定，建议使用 20MHz 模式..."              │ │
-│  └──────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────┘
+它把嵌入式常见流程拆成一组可恢复的步骤：
+
+```text
+plan -> preflight -> build -> flash -> verify -> report
 ```
 
-**核心能力：**
+当构建失败、OpenOCD 异常、串口验证超时或调试链路中断时，它的目标不是简单报错退出，而是：
 
-| 能力           | 说明                                                                             |
-| ------------ | ------------------------------------------------------------------------------ |
-| **运行统计**     | 自动追踪每个 `board:test` 对的总运行次数、成功/失败数、置信度（0-100%），可视化项目的稳定程度                      |
-| **技能记录**     | 结构化存储工程经验：`trigger`（触发条件）→ `fix`（解决方案）→ `lesson`（经验教训），支持 scope 过滤（全局/按芯片/按项目） |
-| **陷阱识别**     | 从历史失败中自动提取"已知陷阱"和"观察焦点"，在下次运行前主动提醒                                             |
-| **AI 上下文注入** | 将累计经验自动生成为 AI 系统提示词，让 LLM 在生成代码时就避开已知的坑                                        |
-| **持久化存储**    | 基于 JSON 的文件存储（`<project>/.espsmith/experience/`），人类可读，便于版本控制和分享                |
-| **跨项目复用**    | scope 机制支持全局经验（`all`）、芯片级经验（`esp32s3`）、项目级经验，灵活控制共享范围                          |
+- 判断错误类型
+- 选择恢复动作
+- 回到正确锚点继续
+- 尽量避免从头再来
 
-### 双引擎协同
+### Experience
 
-Self-Healing 和 Experience 并非独立运行，而是形成**正反馈循环**：
+`Experience` 关注的是“下一次能不能更顺”。
 
-```
-Self-Healing 执行 → 失败 → 自动恢复 → 记录结果
-                                    ↓
-                            Experience 积累经验
-                                    ↓
-                            下次 AI 生成代码时 → 主动规避已知陷阱
-                                    ↓
-                            Self-Healing 成功率提升 → 置信度上升
-```
+它会积累项目运行中的一些经验信息，例如：
 
-这种设计使得 EspSmith 不仅是一个 IDE，更是一个**会随着使用变得更聪明的嵌入式开发伙伴**。
+- 哪种板卡 / 链路组合更稳定
+- 某类错误通常对应什么修复方式
+- 哪些参数、步骤或模式容易出问题
 
-***
+这些经验未来可以反哺给 AI，让生成和执行策略更贴近真实硬件环境。
 
-### AI 闭环开发流程
+---
 
-```
-用户输入自然语言需求
-        │
-        ▼
-┌──────────────────┐
-│  1. AI 理解需求   │  分析项目代码结构，理解硬件配置
-└──────┬───────────┘
-       │
-       ▼
-┌──────────────────┐
-│  2. 生成/修改代码  │  write_file 写入源文件
-└──────┬───────────┘
-       │
-       ▼
-┌──────────────────┐
-│  3. 编译构建       │  espsmith.exe build → 返回编译错误（如有）
-└──────┬───────────┘
-       │ 编译失败则返回步骤 2 修复
-       ▼
-┌──────────────────┐
-│  4. 固件烧录       │  JTAG: closed_loop 一键烧录
-│                  │  UART: esptool flash
-└──────┬───────────┘
-       │
-       ▼
-┌──────────────────┐
-│  5. 串口验证       │  读取串口输出，验证功能正确性
-└──────┬───────────┘
-       │ 异常则触发 GDB 调试
-       ▼
-┌──────────────────┐
-│  6. JTAG 深度调试  │  硬件断点、变量监视、寄存器分析、调用栈追踪
-└──────┬───────────┘
-       │
-       ▼
-┌──────────────────┐
-│  7. 结果汇报       │  中文汇报所有操作结果，记录经验到 Experience 引擎
-└──────────────────┘
-```
+## JTAG 与 UART
 
-### JTAG vs UART 模式
+| 对比项 | JTAG 模式 | UART 模式 |
+| --- | --- | --- |
+| 支持芯片 | 主要面向带 USB-JTAG 的 ESP32 芯片 | 全部 ESP32 系列 |
+| 烧录方式 | OpenOCD | esptool |
+| 硬件断点 | 支持 | 不支持 |
+| 变量/寄存器观察 | 支持 | 不支持 |
+| 调用栈分析 | 支持 | 不支持 |
+| 自动识别 | 支持 | 支持 |
 
-| 特性          | JTAG 模式              | UART 模式     |
-| ----------- | -------------------- | ----------- |
-| 支持芯片        | ESP32-S3/C3/C6/H2/P4 | 所有 ESP32 系列 |
-| 硬件断点        | ✅ 支持                 | ❌ 不支持       |
-| 变量监视        | ✅ 支持                 | ❌ 不支持       |
-| 寄存器查看       | ✅ 支持                 | ❌ 不支持       |
-| 调用栈分析       | ✅ 支持                 | ❌ 不支持       |
-| CoreDump 分析 | ✅ 支持                 | ❌ 不支持       |
-| 固件烧录        | ✅ OpenOCD            | ✅ esptool   |
-| 自动检测        | ✅ 自动切换               | ✅ 自动切换      |
+> 对于支持 USB-JTAG 的板卡，EspSmith 会尽量优先走更适合调试的路径。
 
-***
+---
 
-## 部署指南
+## 快速开始
 
 ### 环境要求
 
-| 依赖            | 版本要求   | 说明                                               |
-| ------------- | ------ | ------------------------------------------------ |
-| **Node.js**   | ≥ 18   | 前端构建工具链                                          |
-| **Rust**      | ≥ 1.77 | Tauri 后端编译（1.77+ 含 UTF-8 进程修复，避免中文 Windows 编译异常） |
-| **ESP-IDF**   | v5.0+  | ESP32 开发框架（可选但推荐）                                |
-| **CodeWhale** | latest | AI Agent CLI（DeepSeek 模型，AI 功能必需）                |
-| **MiMo-Code** | latest | AI Agent CLI（多模型支持，可选）                           |
+| 依赖 | 建议版本 | 说明 |
+| --- | --- | --- |
+| Node.js | 18+ | 前端构建 |
+| Rust | 1.77+ | Tauri 后端编译 |
+| ESP-IDF | 5.0+ | 推荐安装 |
+| CodeWhale | 最新版 | AI 功能可选依赖 |
+| MiMo-Code | 最新版 | AI 功能可选依赖 |
 
-### 安装步骤
-
-#### 1. 克隆项目
+### 1. 克隆项目
 
 ```bash
-git clone https://github.com/fangkuaiLS/EspSmith.git    
+git clone https://github.com/fangkuaiLS/EspSmith.git
 cd espsmith
 ```
 
-#### 2. 安装前端依赖
+### 2. 安装依赖
 
 ```bash
 npm install
 ```
 
-#### 3. 启动开发模式
+### 3. 启动开发模式
 
 ```bash
-# 前端开发服务器 + Tauri 桌面窗口
 npm run tauri -- dev
+```
 
-# 或者仅启动前端（浏览器模式调试）
+如果只想启动前端页面：
+
+```bash
 npm run dev
 ```
 
-#### 4. 构建生产包
+### 4. 构建发行版本
 
 ```bash
 npm run tauri -- build
 ```
 
-构建产物位于 `src-tauri/target/release/bundle/`。
+构建产物位于：
 
-> **💡 中文 Windows 用户**：启动脚本会自动检测环境，将中文路径（如用户目录名）重定向到项目内的 ASCII 路径，避免 Rust build script 编译异常。无需额外配置。
+```text
+src-tauri/target/release/bundle/
+```
 
-### AI 功能配置
+> Windows 中文路径场景下，项目脚本会尽量规避 Rust / Tauri 在非 ASCII 路径上的常见构建问题。
 
-EspSmith 支持双 AI 引擎，通过统一的 Provider 抽象层管理：
+---
 
-| 引擎            | 模型                                  | 特点                            | 费用  |
-| ------------- | ----------------------------------- | ----------------------------- | --- |
-| **CodeWhale** | deepseek-v4-pro / deepseek-v4-flash | DeepSeek 官方 API，响应快，支持思考过程展示  | 较低  |
-| **MiMo-Code** | mimo/mimo-auto 等多模型                 | 多模型支持，内置工具调用（文件读写、编译烧录），闭环能力强 | 限免中 |
+## AI 配置
 
-#### 配置 CodeWhale (DeepSeek)
+EspSmith 当前支持两类 AI 接入方式：
 
-在 EspSmith 的设置面板中，填入以下信息：
+| Provider | 模型示例 | 特点 |
+| --- | --- | --- |
+| CodeWhale | `deepseek-v4-pro` / `deepseek-v4-flash` | 响应快，适合日常协作 |
+| MiMo-Code | `mimo-auto` 等 | 支持多模型与工具调用 |
 
-- **AI Provider**: CodeWhale
-- **Model**: deepseek-v4-pro（推荐）或 deepseek-v4-flash（快速）
-- **API Key**: DeepSeek API Key（从 [platform.deepseek.com](https://platform.deepseek.com) 获取）
-- **ESP-IDF Path**: ESP-IDF 安装目录
+### 配置项
 
-#### 配置 MiMo-Code
+在设置面板中一般需要配置：
 
-在 EspSmith 的设置面板中，填入以下信息：
+- `AI Provider`
+- `Model`
+- `ESP-IDF Path`
+- 如果使用 DeepSeek 相关接口，还需要 `API Key`
 
-- **AI Provider**: MiMo-Code
-- **Model**: mimo-auto（推荐）或其他支持的模型
-- **ESP-IDF Path**: ESP-IDF 安装目录
+---
 
-> MiMo-Code 内置了文件读写、编译烧录等工具调用能力，无需额外配置 API Key。
+## ESP-IDF 与 OpenOCD
 
-### ESP-IDF 部署
+### ESP-IDF 发现方式
 
-EspSmith 兼容多种 ESP-IDF 安装方式：
+EspSmith 会尝试从以下来源寻找 IDF：
 
-1. **EIM (ESP-IDF Install Manager)** — 自动检测 `%USERPROFILE%\.espressif\eim_idf.json`
-2. **VSCode 扩展安装** — 自动检测 VSCode ESP-IDF 扩展安装路径
-3. **手动安装** — 在设置中手动指定 IDF 路径
-4. **环境变量** — 自动识别 `IDF_PATH` 环境变量
+1. EIM 安装信息
+2. VS Code ESP-IDF 扩展安装路径
+3. 手动配置路径
+4. `IDF_PATH` 环境变量
 
-### JTAG 调试配置（OpenOCD）
+### OpenOCD 查找优先级
 
-使用 JTAG 调试功能前，需要配置 OpenOCD 环境变量。EspSmith 会按以下**优先级**查找 OpenOCD：
+1. `OPENOCD_BIN`
+2. `IDF_PATH/tools/openocd/`
+3. `~/.espressif/tools/openocd-esp32/`
+4. 系统 `PATH`
 
-1. `OPENOCD_BIN` 环境变量（推荐，最可靠）
-2. `IDF_PATH` 下的 `tools/openocd/openocd.exe`
-3. `~/.espressif/tools/openocd-esp32/bin/openocd.exe`
-4. 系统 PATH 中的 `openocd`
-
-#### 验证 OpenOCD 配置
+验证方式：
 
 ```bash
-# 检查 OpenOCD 是否可用
 openocd --version
 ```
 
-#### 支持 JTAG 的芯片
+---
 
-| 芯片        | USB-JTAG 支持 | 调试接口                    |
-| --------- | ----------- | ----------------------- |
-| ESP32-S3  | ✅           | esp\_usb\_jtag          |
-| ESP32-C3  | ✅           | esp\_usb\_jtag          |
-| ESP32-C5  | ✅           | esp\_usb\_jtag          |
-| ESP32-C6  | ✅           | esp\_usb\_jtag          |
-| ESP32-C61 | ✅           | esp\_usb\_jtag          |
-| ESP32-H2  | ✅           | esp\_usb\_jtag          |
-| ESP32-P4  | ✅           | esp\_usb\_jtag          |
-| ESP32     | ⚠️ 需外部 JTAG | ftdi/esp32\_devkitj\_v1 |
-| ESP32-S2  | ⚠️ 需外部 JTAG | ftdi/esp32\_devkitj\_v1 |
+## 项目结构
 
-***
-
-## 项目目录结构
-
-```
+```text
 espsmith/
-├── src/                          # 前端源码
-│   ├── App.tsx                   # 主应用组件（四区域布局）
-│   ├── main.tsx                  # 前端入口
-│   ├── components/
-│   │   ├── editor/               # Monaco 代码编辑器 + 标签页
-│   │   ├── filetree/             # 文件树浏览器
-│   │   ├── chat/                 # AI 聊天面板
-│   │   ├── hardware/             # 硬件配置商店
-│   │   ├── debug/                # 构建输出 / 串口 / 调试面板
-│   │   ├── git/                  # Git 面板
-│   │   ├── settings/             # 设置对话框
-│   │   ├── search/               # 全局搜索
-│   │   └── ui/                   # 通用 UI 组件（Toast、InputDialog 等）
-│   ├── stores/                   # Zustand 状态管理
-│   │   ├── projectStore.ts       # 项目状态
-│   │   ├── fileStore.ts          # 文件 / 编辑器状态
-│   │   ├── chatStore.ts          # AI 聊天状态
-│   │   ├── hardwareStore.ts      # 硬件配置状态
-│   │   └── settingsStore.ts      # 设置状态
-│   ├── hooks/                    # 自定义 Hooks
-│   │   ├── useBuildOutput.ts     # 构建输出管理
-│   │   └── useSerialMonitor.ts   # 串口监视器
-│   ├── types/                    # TypeScript 类型定义
-│   ├── i18n/                     # 国际化语言包
-│   └── lib/                      # 工具库
-│       ├── invoke.ts             # Tauri IPC 安全封装
-│       └── api.ts                # API 调用工具
-├── src-tauri/                    # Rust 后端源码
-│   ├── src/
-│   │   ├── main.rs               # 应用入口（GUI / CLI / MCP 模式）
-│   │   ├── lib.rs                # Tauri 命令注册
-│   │   ├── connection.rs         # JTAG/UART 连接检测
-│   │   ├── idf.rs                # ESP-IDF 工具封装
-│   │   ├── ai_assistant.rs       # AI 助手集成
-│   │   ├── ai_provider.rs        # AI Provider 抽象层（CodeWhale / MiMo-Code）
-│   │   ├── mcp.rs                # MCP 协议服务器
-│   │   ├── commands/             # Tauri 命令模块
-│   │   ├── self_healing/         # 闭环自修复引擎
-│   │   ├── adapters/             # 适配器抽象层
-│   │   ├── instruments/          # 仪器抽象层
-│   │   └── experience/           # 经验积累引擎
-│   ├── Cargo.toml                # Rust 依赖配置
-│   └── tauri.conf.json           # Tauri 应用配置
-├── package.json                  # 前端依赖配置
-├── vite.config.ts                # Vite 构建配置
-└── tsconfig.json                 # TypeScript 配置
+├─ src/                     前端源码
+│  ├─ components/           UI 组件
+│  ├─ stores/               Zustand 状态管理
+│  ├─ hooks/                自定义 Hook
+│  ├─ lib/                  IPC / API / 工具方法
+│  ├─ i18n/                 国际化资源
+│  └─ App.tsx               主界面
+├─ src-tauri/               Rust + Tauri 后端
+│  ├─ src/
+│  │  ├─ commands/          Tauri 命令
+│  │  ├─ self_healing/      自恢复引擎
+│  │  ├─ experience/        经验引擎
+│  │  ├─ adapters/          工具适配层
+│  │  ├─ mcp.rs             MCP 能力
+│  │  ├─ ai_assistant.rs    AI 集成
+│  │  └─ main.rs            入口
+│  └─ tauri.conf.json
+├─ docs/                    README 截图
+├─ public/                  静态资源
+└─ scripts/                 辅助脚本
 ```
 
-***
+---
 
-## 开发脚本
+## 开发命令
 
-| 命令                       | 说明                                    |
-| ------------------------ | ------------------------------------- |
-| `npm run dev`            | 启动 Vite 开发服务器（浏览器模式）                  |
-| `npm run build`          | TypeScript 检查 + Vite 生产构建             |
-| `npm run preview`        | 预览生产构建                                |
-| `npm run tauri -- dev`   | 启动 Tauri 桌面应用（开发模式），智能检测 MSVC/GNU 工具链 |
-| `npm run tauri -- build` | 构建生产发布包                               |
+| 命令 | 说明 |
+| --- | --- |
+| `npm run dev` | 启动前端开发服务器 |
+| `npm run build` | 执行 TypeScript 检查并构建前端 |
+| `npm run preview` | 预览构建结果 |
+| `npm run tauri -- dev` | 启动 Tauri 桌面开发模式 |
+| `npm run tauri -- build` | 构建桌面发行包 |
 
-***
+---
 
-<br />
+## 依赖工具链
 
-## 核心工具链
+| 项目 | 用途 | 许可证 |
+| --- | --- | --- |
+| [ESP-IDF](https://github.com/espressif/esp-idf) | ESP32 官方开发框架 | Apache-2.0 |
+| [OpenOCD](https://openocd.org/) | JTAG 调试链路 | GPL-2.0 |
+| [CodeWhale](https://www.npmjs.com/package/codewhale) | AI Agent CLI | - |
+| [MiMo-Code](https://github.com/mimocode/mimo-code) | AI Agent CLI | - |
+| [DeepSeek](https://www.deepseek.com/) | 大模型能力来源之一 | - |
 
-| 项目                                                       | 用途                        | 许可证        |
-| -------------------------------------------------------- | ------------------------- | ---------- |
-| **[ESP-IDF](https://github.com/espressif/esp-idf)**      | ESP32 官方开发框架              | Apache-2.0 |
-| **[OpenOCD](https://openocd.org/)**                      | 片上调试器（JTAG 调试核心）          | GPL-2.0    |
-| **[DeepSeek](https://www.deepseek.com/)**                | 大语言模型 API                 | -          |
-| **[CodeWhale](https://www.npmjs.com/package/codewhale)** | AI Agent CLI（DeepSeek 引擎） | -          |
-| **[MiMo-Code](https://github.com/mimocode/mimo-code)**   | AI Agent CLI（多模型引擎）       | -          |
-
-***
+---
 
 ## 灵感来源
 
-本项目深受以下优秀工具的启发：
+- [AEL (AI Embedded Lab)](https://github.com/EZ32Inc/ai-embedded-lab)
+- [VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)
+- [CodeWhale](https://www.npmjs.com/package/codewhale)
+- [MiMo-Code](https://github.com/mimocode/mimo-code)
+- [ESP-IDF](https://github.com/espressif/esp-idf)
 
-- **[AEL (AI Embedded Lab)](https://github.com/EZ32Inc/ai-embedded-lab)** — 多仪器闭环调试系统，启发了 Self-Healing 引擎和 Experience 引擎的设计
-- **[VS Code ESP-IDF Extension](https://github.com/espressif/vscode-esp-idf-extension)** — 官方 ESP-IDF 扩展，启发了 IDF 工作流和串口管理
-- **[CodeWhale](https://www.npmjs.com/package/codewhale)** — AI Agent CLI 工具，提供 DeepSeek AI 能力支持
-- **[MiMo-Code](https://github.com/mimocode/mimo-code)** — AI Agent CLI 工具，提供多模型 AI 能力与内置工具调用支持
-- **[ESP-IDF](https://github.com/espressif/esp-idf)** — 乐鑫官方 ESP32 开发框架，提供完整的开发工具链
+---
 
-***
+## 下载与发布
 
-## 许可证
+- 发布页：[GitHub Releases](https://github.com/fangkuaiLS/EspSmith/releases)
 
-本项目基于 [Apache-2.0](LICENSE) 许可证开源。
+---
 
-***
+## License
+
+本项目基于 [Apache-2.0](LICENSE) 开源。
 
 <p align="center">
-  <sub>Built with ❤️ by the EspSmith Team</sub>
+  <sub>Built by the EspSmith Team</sub>
 </p>

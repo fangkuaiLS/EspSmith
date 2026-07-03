@@ -59,7 +59,7 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
     set({ isLoading: true });
     try {
       const config = await safeInvoke<HardwareConfig>('get_hw_config', { projectPath });
-      set({ config, isLoading: false });
+      set({ config, peripherals: config ? Object.values(config.peripherals) : [], isLoading: false });
     } catch (err) {
       console.warn('[HardwareStore] Failed to load config:', err);
       set({ isLoading: false });
@@ -246,7 +246,7 @@ if (!_hwListenersRegistered) {
 
   listen<HardwareConfig>('hw-config-changed', (event) => {
     devLog('[HardwareStore] Hardware config changed by AI:', Object.keys(event.payload.peripherals).length, 'peripherals');
-    useHardwareStore.setState({ config: event.payload });
+    useHardwareStore.setState({ config: event.payload, peripherals: Object.values(event.payload.peripherals) });
   }).catch((err) => {
     console.warn('[HardwareStore] Failed to register hw-config-changed listener:', err);
   });

@@ -27,6 +27,47 @@ pub fn is_binary_ext(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn active_project_root() -> Result<PathBuf, String> {
+    crate::commands::project::get_active_project_root()
+        .ok_or_else(|| "No active project is open".to_string())
+}
+
+fn ensure_in_active_project(path: &Path) -> Result<PathBuf, String> {
+    let root = active_project_root()?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("Invalid path '{}': {}", path.display(), e))?;
+    if canonical.starts_with(&root) {
+        Ok(canonical)
+    } else {
+        Err(format!("Path outside project directory: {}", path.display()))
+    }
+}
+
+fn resolve_existing_path(path: &str) -> Result<PathBuf, String> {
+    ensure_in_active_project(Path::new(path))
+}
+
+fn nearest_existing_parent(mut path: &Path) -> Option<&Path> {
+    loop {
+        if path.exists() {
+            return Some(path);
+        }
+        path = path.parent()?;
+    }
+}
+
+fn resolve_write_path(path: &str) -> Result<PathBuf, String> {
+    let raw = PathBuf::from(path);
+    let parent = raw
+        .parent()
+        .ok_or_else(|| format!("Invalid path '{}'", path))?;
+    let existing_parent = nearest_existing_parent(parent)
+        .ok_or_else(|| format!("No existing parent for '{}'", path))?;
+    ensure_in_active_project(existing_parent)?;
+    Ok(raw)
+}
+
 /// 文件条目
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -40,11 +81,12 @@ pub struct FileEntry {
 #[tauri::command]
 pub async fn read_file(path: String) -> Result<String, String> {
     debug!("Reading file: {}", path);
-    let file_path = Path::new(&path);
+    let resolved = resolve_existing_path(&path)?;
+    let file_path = resolved.as_path();
     if is_binary_ext(file_path) {
         return Err(format!("Skipped binary file: {}", path));
     }
-    let bytes = fs::read(&path).map_err(|e| {
+    let bytes = fs::read(&resolved).map_err(|e| {
         warn!("Failed to read file {}: {}", path, e);
         e.to_string()
     })?;
@@ -65,7 +107,7 @@ pub async fn write_file(
 ) -> Result<(), String> {
     info!("Writing file: {} (safe_mode: {})", path, safe_mode);
 
-    let file_path = PathBuf::from(&path);
+    let file_path = resolve_write_path(&path)?;
     let file_name = file_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -139,7 +181,8 @@ pub async fn write_file(
 pub async fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
     debug!("Listing directory: {}", path);
 
-    let entries = fs::read_dir(&path).map_err(|e| e.to_string())?;
+    let dir_path = resolve_existing_path(&path)?;
+    let entries = fs::read_dir(&dir_path).map_err(|e| e.to_string())?;
     let mut files: Vec<FileEntry> = Vec::new();
 
     for entry in entries.flatten() {
@@ -183,7 +226,8 @@ pub async fn create_file(
     name: String,
     content: String,
 ) -> Result<FileEntry, String> {
-    let file_path = PathBuf::from(&parent_path).join(&name);
+    let parent_dir = resolve_existing_path(&parent_path)?;
+    let file_path = parent_dir.join(&name);
     info!("Creating file: {}", file_path.display());
 
     if file_path.exists() {
@@ -237,7 +281,8 @@ pub async fn create_folder(
     parent_path: String,
     name: String,
 ) -> Result<FileEntry, String> {
-    let dir_path = PathBuf::from(&parent_path).join(&name);
+    let parent_dir = resolve_existing_path(&parent_path)?;
+    let dir_path = parent_dir.join(&name);
     info!("Creating folder: {}", dir_path.display());
 
     if dir_path.exists() {
@@ -263,7 +308,7 @@ pub async fn rename_file(
     old_path: String,
     new_name: String,
 ) -> Result<FileEntry, String> {
-    let old = PathBuf::from(&old_path);
+    let old = resolve_existing_path(&old_path)?;
     info!("Renaming: {} -> {}", old.display(), new_name);
 
     if !old.exists() {
@@ -296,7 +341,7 @@ pub async fn rename_file(
 /// 删除文件或文件夹（递归删除目录）
 #[tauri::command]
 pub async fn delete_file(path: String) -> Result<(), String> {
-    let target = PathBuf::from(&path);
+    let target = resolve_existing_path(&path)?;
     info!("Deleting: {}", target.display());
 
     if !target.exists() {
@@ -321,7 +366,7 @@ pub async fn delete_file(path: String) -> Result<(), String> {
 /// 复制文件
 #[tauri::command]
 pub async fn duplicate_file(path: String) -> Result<FileEntry, String> {
-    let original = PathBuf::from(&path);
+    let original = resolve_existing_path(&path)?;
     info!("Duplicating: {}", original.display());
 
     if !original.exists() {

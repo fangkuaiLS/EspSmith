@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tracing::info;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,6 +38,12 @@ pub struct ProjectPersistedConfig {
     pub target: Option<String>,
     #[serde(default)]
     pub flash_port: Option<String>,
+}
+
+static ACTIVE_PROJECT_ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+fn active_project_root_cell() -> &'static Mutex<Option<PathBuf>> {
+    ACTIVE_PROJECT_ROOT.get_or_init(|| Mutex::new(None))
 }
 
 // ==================== Tauri Commands ====================
@@ -156,6 +163,9 @@ pub async fn open_project(path: String) -> Result<ProjectInfo, String> {
     }
 
     let result = ProjectInfo { name, path, chip, idf_version: idf_ver, has_hardware_config };
+    if let Ok(mut root) = active_project_root_cell().lock() {
+        *root = project_dir.canonicalize().ok().or(Some(project_dir));
+    }
     info!("Project opened successfully: {:?}", result.path);
     Ok(result)
 }
@@ -438,6 +448,10 @@ pub fn set_startup_project(path: Option<String>) {
 #[tauri::command]
 pub async fn get_startup_project() -> Result<Option<String>, String> {
     Ok(STARTUP_PROJECT.get().cloned().flatten())
+}
+
+pub fn get_active_project_root() -> Option<PathBuf> {
+    active_project_root_cell().lock().ok().and_then(|root| root.clone())
 }
 
 /// 在新进程中打开项目（启动新的 GUI 实例）

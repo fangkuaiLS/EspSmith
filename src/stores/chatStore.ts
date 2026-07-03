@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import { sendChatMessage, startAI, stopAI, clearConversation } from '../lib/api';
+import { sendChatMessage, startAI, stopAI, clearConversation, setSessionId } from '../lib/api';
 import { useProjectStore } from './projectStore';
 import { useFileStore } from './fileStore';
 import { useHardwareStore } from './hardwareStore';
@@ -195,58 +195,28 @@ const checkpoints = new Map<string, FileSnapshot[]>();
 // 追踪每条用户消息中 AI 实际修改的文件（用于回退确认显示）
 const touchedFilesByMessage = new Map<string, Set<string>>();
 
-async function captureCheckpoint(userMessageId: string): Promise<void> {
-    const project = useProjectStore.getState().currentProject;
-    if (!project?.path) return;
-
-    const filePaths = await collectProjectFilePaths(project.path);
-
-    const snapshots: FileSnapshot[] = [];
-
-    for (const filePath of filePaths) {
-        try {
-            const content = await safeInvoke<string>('read_file', { path: filePath });
-            if (content !== null) {
-                snapshots.push({ filePath, content });
-            }
-        } catch {
-            // 跳过二进制文件或无法读取的文件
-        }
-    }
-
-    checkpoints.set(userMessageId, snapshots);
+function getCheckpointMap(userMessageId: string): Map<string, FileSnapshot> {
+    const snapshots = checkpoints.get(userMessageId) || [];
+    return new Map(snapshots.map((snapshot) => [snapshot.filePath, snapshot]));
 }
 
-async function collectProjectFilePaths(rootPath: string): Promise<Set<string>> {
-    const out = new Set<string>();
-    const SKIP_DIRS = new Set(['.git', 'build', 'node_modules', 'target', 'dist', '.vscode', '.idea']);
-    const SKIP_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'svgz', 'ttf', 'otf', 'woff', 'woff2', 'bdf', 'fon',
-        'exe', 'dll', 'so', 'dylib', 'bin', 'obj', 'o', 'a', 'lib',
-        'zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar',
-        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
-        'pyc', 'pyo', 'class', 'elf', 'wasm',
-        'mp3', 'wav', 'ogg', 'flac', 'mp4', 'avi', 'mkv', 'webm',
-        'dat', 'dmg', 'iso', 'odg', 'xcf', 'psd', 'ai', 'eps']);
-    const visit = async (dir: string) => {
-        const entries = await safeInvoke<Array<{ path: string; is_dir: boolean }>>('list_directory', { path: dir });
-        for (const entry of entries || []) {
-            if (entry.is_dir) {
-                const name = entry.path.split(/[\\/]/).pop()?.toLowerCase();
-                if (!name || SKIP_DIRS.has(name) || name.startsWith('%') || name.startsWith('$')) {
-                    continue;
-                }
-                await visit(entry.path);
-            } else {
-                const ext = entry.path.split('.').pop()?.toLowerCase();
-                if (ext && SKIP_EXTS.has(ext)) {
-                    continue;
-                }
-                out.add(entry.path);
-            }
-        }
-    };
-    await visit(rootPath);
-    return out;
+function saveCheckpointMap(userMessageId: string, snapshots: Map<string, FileSnapshot>): void {
+    checkpoints.set(userMessageId, Array.from(snapshots.values()));
+}
+
+async function snapshotFileIfNeeded(userMessageId: string, filePath: string): Promise<void> {
+    const snapshots = getCheckpointMap(userMessageId);
+    if (snapshots.has(filePath)) return;
+
+    let content: string | null = null;
+    try {
+        content = await safeInvoke<string>('read_file', { path: filePath });
+    } catch {
+        content = null;
+    }
+
+    snapshots.set(filePath, { filePath, content });
+    saveCheckpointMap(userMessageId, snapshots);
 }
 
 // ==================== Store ====================
@@ -283,7 +253,7 @@ interface ChatStore {
     resetMessages: () => void;
     loadSessions: () => void;
     saveCurrentSession: () => void;
-    loadSession: (id: string) => void;
+    loadSession: (id: string) => Promise<void>;
     deleteSession: (id: string) => void;
     setPermissionMode: (mode: 'full' | 'ask') => Promise<void>;
     loadPermissionMode: () => Promise<void>;
@@ -330,8 +300,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         });
 
         updateStatus('thinking');
-
-        await captureCheckpoint(userMessageId);
 
         let unlistenToolUse: (() => void) | undefined;
         let unlistenToolResult: (() => void) | undefined;
@@ -402,7 +370,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                         break;
                 }
                 // codewhale 可能用 delete_file 或 exec_shell rm/del 来删除文件
-                if (toolName === 'delete_file' || toolName === 'remove_file') {
+                const isDeleteTool = toolName === 'delete_file' || toolName === 'remove_file';
+                if (isDeleteTool) {
                     toolCounts.delete++;
                 }
                 if (toolName === 'exec_shell') {
@@ -415,8 +384,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 if (toolName === 'write_file') {
                     const absPath = resolveToolPath(getToolInputPath(event.payload.input));
                     if (absPath) {
+                        snapshotFileIfNeeded(userMessageId, absPath).catch(() => {});
                         touchedFiles.add(absPath);
                         // 记录到 message 级别的追踪表
+                        let msgFiles = touchedFilesByMessage.get(userMessageId);
+                        if (!msgFiles) {
+                            msgFiles = new Set();
+                            touchedFilesByMessage.set(userMessageId, msgFiles);
+                        }
+                        msgFiles.add(absPath);
+                    }
+                }
+                if (isDeleteTool) {
+                    const absPath = resolveToolPath(getToolInputPath(event.payload.input));
+                    if (absPath) {
+                        snapshotFileIfNeeded(userMessageId, absPath).catch(() => {});
+                        touchedFiles.add(absPath);
                         let msgFiles = touchedFilesByMessage.get(userMessageId);
                         if (!msgFiles) {
                             msgFiles = new Set();
@@ -569,19 +552,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             if (project?.path) {
                 await useFileStore.getState().loadDirectory(project.path);
                 await useFileStore.getState().refreshOpenTabs();
-
-                const before = new Set((checkpoints.get(userMessageId) || []).map((s) => s.filePath));
-                const after = await collectProjectFilePaths(project.path);
-                const LIBRARY_DIRS = ['managed_components', '.espressif', 'dependencies.lock', 'sdkconfig', 'sdkconfig.old'];
-                for (const filePath of after) {
-                    if (!before.has(filePath)) {
-                        const rel = filePath.replace(project.path, '').replace(/^[\\/]/, '');
-                        const isLibrary = LIBRARY_DIRS.some(d => rel.startsWith(d) || rel.includes(`\\${d}\\`) || rel.includes(`/${d}/`));
-                        if (!isLibrary) {
-                            touchedFiles.add(filePath);
-                        }
-                    }
-                }
                 const hasHardwarePinChange = [...touchedFiles].some(f => f.endsWith('hardware_pins.h'));
                 if (hasHardwarePinChange) {
                     await useHardwareStore.getState().loadConfig(project.path);
@@ -643,14 +613,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             const userMessages = state.messages.filter(m => m.role === 'user' && m.content.trim());
             if (userMessages.length > 0) {
                 const title = userMessages[0].content.slice(0, 60);
+                const sessions = loadSessionsFromStorage();
+                const existing = sessions.find(s => s.id === state.activeSessionId);
                 const session: ChatSession = {
                     id: state.activeSessionId || `session-${Date.now()}`,
                     title,
                     messages: state.messages.filter(m => m.role !== 'system'),
-                    createdAt: Date.now(),
+                    createdAt: existing?.createdAt || Date.now(),
                     updatedAt: Date.now(),
                 };
-                const sessions = loadSessionsFromStorage();
                 const idx = sessions.findIndex(s => s.id === session.id);
                 if (idx >= 0) {
                     sessions[idx] = session;
@@ -735,42 +706,30 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const snaps = checkpoints.get(userMessageId);
         if (!snaps) return;
 
-        const snapshotPaths = new Set(snaps.map(s => s.filePath));
-        const project = useProjectStore.getState().currentProject;
-        if (!project?.path) return;
-        const currentPaths = await collectProjectFilePaths(project.path);
-        // 优先使用实际追踪到的修改文件，没追踪才回退到快照内容比对
         const trackedFiles = touchedFilesByMessage.get(userMessageId);
+        // 优先使用实际追踪到的修改文件，没追踪就不再做全项目扫描
+        if (!trackedFiles || trackedFiles.size === 0) return;
 
         const restoreFiles: RollbackInfo['restoreFiles'] = [];
         const deleteFiles: RollbackInfo['deleteFiles'] = [];
 
-        if (trackedFiles && trackedFiles.size > 0) {
-            // 有追踪数据：直接用追踪到的文件列表
-            for (const filePath of trackedFiles) {
-                if (currentPaths.has(filePath)) {
-                    restoreFiles.push({ path: filePath, action: 'restore' });
-                }
-            }
-        } else {
-            // 无追踪数据（老消息）：对比快照内容与当前磁盘内容
-            const { invoke } = await import('@tauri-apps/api/core');
-            for (const snap of snaps) {
-                if (snap.content !== null && currentPaths.has(snap.filePath)) {
-                    try {
-                        const currentContent = await invoke<string>('read_file', { path: snap.filePath });
-                        if (currentContent !== snap.content) {
-                            restoreFiles.push({ path: snap.filePath, action: 'restore' });
-                        }
-                    } catch { /* skip */ }
-                }
-            }
-        }
+        for (const filePath of trackedFiles) {
+            const snap = snaps.find(s => s.filePath === filePath);
+            if (!snap) continue;
 
-        // 当前文件树中存在但快照中没有的文件 = AI 新建的
-        for (const currentPath of currentPaths) {
-            if (!snapshotPaths.has(currentPath)) {
-                deleteFiles.push({ path: currentPath, action: 'delete' });
+            let currentContent: string | null = null;
+            try {
+                currentContent = await safeInvoke<string>('read_file', { path: filePath });
+            } catch {
+                currentContent = null;
+            }
+
+            if (snap.content === null) {
+                if (currentContent !== null) {
+                    deleteFiles.push({ path: filePath, action: 'delete' });
+                }
+            } else if (currentContent !== snap.content) {
+                restoreFiles.push({ path: filePath, action: 'restore' });
             }
         }
 
@@ -791,12 +750,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
         // 恢复被修改的文件
         if (snaps) {
-            for (const snap of snaps) {
-                if (snap.content !== null) {
-                    try {
-                        await invoke('write_file', { path: snap.filePath, content: snap.content, safeMode: false });
-                    } catch { /* 忽略 */ }
-                }
+            for (const file of pendingRollback.restoreFiles) {
+                const snap = snaps.find(s => s.filePath === file.path);
+                if (!snap || snap.content === null) continue;
+                try {
+                    await invoke('write_file', { path: snap.filePath, content: snap.content, safeMode: false });
+                } catch { /* 忽略 */ }
             }
         }
 
@@ -860,14 +819,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const userMessages = state.messages.filter(m => m.role === 'user' && m.content.trim());
         if (userMessages.length === 0) return;
         const title = userMessages[0].content.slice(0, 60);
+        const sessions = loadSessionsFromStorage();
+        const existing = sessions.find(s => s.id === state.activeSessionId);
         const session: ChatSession = {
             id: state.activeSessionId || `session-${Date.now()}`,
             title,
             messages: state.messages.filter(m => m.role !== 'system'),
-            createdAt: Date.now(),
+            createdAt: existing?.createdAt || Date.now(),
             updatedAt: Date.now(),
         };
-        const sessions = loadSessionsFromStorage();
         const idx = sessions.findIndex(s => s.id === session.id);
         if (idx >= 0) {
             sessions[idx] = session;
@@ -878,19 +838,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         set({ sessions });
     },
 
-    loadSession: (id: string) => {
+    loadSession: async (id: string) => {
         const state = get();
         const currentUserMessages = state.messages.filter(m => m.role === 'user' && m.content.trim());
         if (currentUserMessages.length > 0 && state.activeSessionId && state.activeSessionId !== id) {
             const title = currentUserMessages[0].content.slice(0, 60);
+            const sessions = loadSessionsFromStorage();
+            const existing = sessions.find(s => s.id === state.activeSessionId);
             const session: ChatSession = {
                 id: state.activeSessionId,
                 title,
                 messages: state.messages.filter(m => m.role !== 'system'),
-                createdAt: Date.now(),
+                createdAt: existing?.createdAt || Date.now(),
                 updatedAt: Date.now(),
             };
-            const sessions = loadSessionsFromStorage();
             const idx = sessions.findIndex(s => s.id === session.id);
             if (idx >= 0) {
                 sessions[idx] = session;
@@ -906,7 +867,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (currentAbortController) {
             currentAbortController.abort();
         }
-        stopAI().catch(() => {});
+        await stopAI().catch(() => {});
         set({
             messages: session.messages,
             activeSessionId: session.id,
@@ -916,7 +877,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             sessions,
             messageQueue: [],
         });
-        startAI().catch(() => {});
+        await setSessionId(session.id).catch(() => {});
+        await startAI().catch(() => {});
     },
 
     deleteSession: (id: string) => {
