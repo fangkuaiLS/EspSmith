@@ -3,7 +3,7 @@ fn main() {
     // （Windows RC 编译器在处理非主 bin target 时出错）。
     // 捕获 panic，让 espsmith-cli 仍然能编译通过。
     // 对于主 bin target (espsmith.exe)，tauri_build::build() 正常执行。
-    let result = std::panic::catch_unwind(|| tauri_build::build());
+    let result = std::panic::catch_unwind(tauri_build::build);
     if let Err(payload) = result {
         // 如果是编译 espsmith-cli，panic 是预期的，输出警告即可
         eprintln!(
