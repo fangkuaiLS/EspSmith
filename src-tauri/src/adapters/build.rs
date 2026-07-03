@@ -11,25 +11,27 @@ use std::os::windows::process::CommandExt;
 pub struct IdfBuildAdapter;
 
 impl Adapter for IdfBuildAdapter {
-    fn name(&self) -> &str { "build.idf" }
-    fn description(&self) -> &str { "ESP-IDF 6.x idf.py build" }
+    fn name(&self) -> &str {
+        "build.idf"
+    }
+    fn description(&self) -> &str {
+        "ESP-IDF 6.x idf.py build"
+    }
 
     fn execute(&self, params: &serde_json::Value, work_dir: &str) -> AdapterResult {
-        let idf_path = params.get("idf_path")
-            .and_then(|v| v.as_str()).unwrap_or("");
-        let _extra_args: Vec<&str> = params.get("extra_args")
+        let idf_path = params
+            .get("idf_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let _extra_args: Vec<&str> = params
+            .get("extra_args")
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
 
         let start = Instant::now();
         match crate::idf::build_sync(work_dir, idf_path) {
-            Ok(output) => {
-                AdapterResult::ok(
-                    Some(output),
-                    start.elapsed().as_millis() as u64,
-                )
-            }
+            Ok(output) => AdapterResult::ok(Some(output), start.elapsed().as_millis() as u64),
             Err(output) => {
                 let real_errors: Vec<_> = crate::idf::parse_compile_errors(&output)
                     .into_iter()
@@ -69,9 +71,13 @@ impl Adapter for IdfBuildAdapter {
                     let err_msg = format!(
                         "Build failed with {} errors:\n{}",
                         real_errors.len(),
-                        real_errors.iter().map(|e| {
-                            format!("{}:{}:{} - {}", e.file, e.line, e.column, e.message)
-                        }).collect::<Vec<_>>().join("\n")
+                        real_errors
+                            .iter()
+                            .map(|e| {
+                                format!("{}:{}:{} - {}", e.file, e.line, e.column, e.message)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
                     );
                     AdapterResult::fail(err_msg, Some(output), start.elapsed().as_millis() as u64)
                 }
@@ -90,22 +96,30 @@ pub struct GenericBuildAdapter {
 impl GenericBuildAdapter {
     #[allow(dead_code)] // 通用构建适配器预留
     pub fn new(cmd: impl Into<String>, args: Vec<String>) -> Self {
-        Self { cmd: cmd.into(), args }
+        Self {
+            cmd: cmd.into(),
+            args,
+        }
     }
 }
 
 impl Adapter for GenericBuildAdapter {
-    fn name(&self) -> &str { "build.generic" }
-    fn description(&self) -> &str { "Run a custom build command" }
+    fn name(&self) -> &str {
+        "build.generic"
+    }
+    fn description(&self) -> &str {
+        "Run a custom build command"
+    }
 
     fn execute(&self, _params: &serde_json::Value, work_dir: &str) -> AdapterResult {
         let start = Instant::now();
         let mut cmd = Command::new(&self.cmd);
         cmd.args(&self.args).current_dir(work_dir);
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
-        match cmd.output()
         {
+            cmd.creation_flags(0x08000000);
+        }
+        match cmd.output() {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&out.stderr).to_string();
@@ -114,7 +128,10 @@ impl Adapter for GenericBuildAdapter {
                     AdapterResult::ok(Some(stdout), duration)
                 } else {
                     AdapterResult::fail(
-                        format!("Build failed: {}", stderr.lines().last().unwrap_or("unknown error")),
+                        format!(
+                            "Build failed: {}",
+                            stderr.lines().last().unwrap_or("unknown error")
+                        ),
                         Some(stderr),
                         duration,
                     )

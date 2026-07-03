@@ -14,7 +14,9 @@ pub struct GdbDebugAdapter {
 
 impl GdbDebugAdapter {
     pub fn new(gdb_binary: impl Into<String>) -> Self {
-        Self { gdb_binary: gdb_binary.into() }
+        Self {
+            gdb_binary: gdb_binary.into(),
+        }
     }
 
     pub fn xtensa() -> Self {
@@ -33,24 +35,38 @@ impl GdbDebugAdapter {
 }
 
 impl Adapter for GdbDebugAdapter {
-    fn name(&self) -> &str { "gdb.debug" }
-    fn description(&self) -> &str { "Run GDB batch command" }
+    fn name(&self) -> &str {
+        "gdb.debug"
+    }
+    fn description(&self) -> &str {
+        "Run GDB batch command"
+    }
 
     fn execute(&self, params: &serde_json::Value, _work_dir: &str) -> AdapterResult {
-        let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("info registers");
-        let target = params.get("target").and_then(|v| v.as_str()).unwrap_or(super::GDB_ADDR);
+        let command = params
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("info registers");
+        let target = params
+            .get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or(super::GDB_ADDR);
 
         let start = Instant::now();
         let mut cmd = Command::new(&self.gdb_binary);
         cmd.args([
-                "-batch", "-nx",
-                "-ex", &format!("target remote {}", target),
-                "-ex", command,
-            ]);
+            "-batch",
+            "-nx",
+            "-ex",
+            &format!("target remote {}", target),
+            "-ex",
+            command,
+        ]);
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
-        match cmd.output()
         {
+            cmd.creation_flags(0x08000000);
+        }
+        match cmd.output() {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&out.stderr).to_string();

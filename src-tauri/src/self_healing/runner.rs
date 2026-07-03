@@ -8,8 +8,8 @@
 //!  5. Rewind to anchor point and retry
 //!  6. Safety: timeout + guard_limit
 
-use super::types::*;
 use super::recovery;
+use super::types::*;
 use std::time::{Duration, Instant};
 
 /// Lightweight `Fn` alias for runner events. Implementations typically forward
@@ -20,7 +20,10 @@ pub type RunnerEventSink = dyn Fn(&RunnerEvent) + Send + Sync;
 #[allow(dead_code, clippy::type_complexity)] // Self-Healing直接执行预留
 pub fn run_plan(
     plan: &Plan,
-    execute_fn: &dyn Fn(&Step, &mut std::collections::HashMap<String, String>) -> Result<StepResult, String>,
+    execute_fn: &dyn Fn(
+        &Step,
+        &mut std::collections::HashMap<String, String>,
+    ) -> Result<StepResult, String>,
 ) -> RunResult {
     run_plan_with_progress(plan, execute_fn, &|_| {})
 }
@@ -32,7 +35,10 @@ pub fn run_plan(
 #[allow(clippy::type_complexity)]
 pub fn run_plan_with_progress(
     plan: &Plan,
-    execute_fn: &dyn Fn(&Step, &mut std::collections::HashMap<String, String>) -> Result<StepResult, String>,
+    execute_fn: &dyn Fn(
+        &Step,
+        &mut std::collections::HashMap<String, String>,
+    ) -> Result<StepResult, String>,
     on_event: &RunnerEventSink,
 ) -> RunResult {
     let mut result = RunResult::new(plan);
@@ -60,13 +66,13 @@ pub fn run_plan_with_progress(
         }
 
         let step = &plan.steps[step_index];
-        let budget = budget_map.entry(step_index).or_insert_with(|| {
-            match step.category {
+        let budget = budget_map
+            .entry(step_index)
+            .or_insert_with(|| match step.category {
                 StepCategory::Build => plan.recovery_policy.retries.build,
                 StepCategory::Load => plan.recovery_policy.retries.run,
                 StepCategory::Check => plan.recovery_policy.retries.check,
-            }
-        });
+            });
 
         let mut step_fatal = false;
 
@@ -241,17 +247,23 @@ pub fn run_plan_with_progress(
                     let exec_outcome = recovery::execute_recovery(&hint.action);
                     let _outcome_msg = match &exec_outcome {
                         Ok(msg) => {
-                            result.recovery_applied.push(format!("{}: {}", hint.reason, msg));
+                            result
+                                .recovery_applied
+                                .push(format!("{}: {}", hint.reason, msg));
                             msg.clone()
                         }
                         Err(e) => {
-                            result.recovery_applied.push(format!("{}: Recovery failed — {e}", hint.reason));
+                            result
+                                .recovery_applied
+                                .push(format!("{}: Recovery failed — {e}", hint.reason));
                             format!("Recovery failed — {e}")
                         }
                     };
                     tracing::info!(
                         "recovery: action={} reason={} step={}",
-                        action_label, hint.reason, step.name
+                        action_label,
+                        hint.reason,
+                        step.name
                     );
                     on_event(&RunnerEvent::RecoveryApplied {
                         step_index,

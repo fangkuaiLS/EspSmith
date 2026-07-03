@@ -1,13 +1,13 @@
+use crate::ai_provider::AIProvider;
+use crate::connection::ConnectionMode;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tauri::Emitter;
+use tokio::sync::Mutex;
 use tracing::info;
-use crate::connection::ConnectionMode;
-use crate::ai_provider::AIProvider;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -146,7 +146,13 @@ impl CodeWhaleClient {
         }
     }
 
-    fn add_usage(&mut self, input_tokens: u64, output_tokens: u64, cached_tokens: u64, model: &str) {
+    fn add_usage(
+        &mut self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cached_tokens: u64,
+        model: &str,
+    ) {
         let cost = calculate_cost_rmb(input_tokens, output_tokens, cached_tokens, model);
         self.cumulative_input_tokens += input_tokens;
         self.cumulative_output_tokens += output_tokens;
@@ -164,7 +170,12 @@ impl CodeWhaleClient {
     }
 }
 
-fn calculate_cost_rmb(input_tokens: u64, output_tokens: u64, cached_tokens: u64, model: &str) -> f64 {
+fn calculate_cost_rmb(
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_tokens: u64,
+    model: &str,
+) -> f64 {
     let (input_price, output_price, cache_price) = match model {
         m if m.contains("deepseek-v4-pro") => (3.0, 6.0, 0.5),
         m if m.contains("deepseek-v4-flash") => (1.0, 2.0, 0.5),
@@ -208,7 +219,9 @@ async fn kill_running_child() {
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null());
                 #[cfg(windows)]
-                { cmd.creation_flags(CREATE_NO_WINDOW); }
+                {
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
                 let _ = cmd.status();
             }
         }
@@ -245,15 +258,18 @@ pub fn handle_runner_event_for_progress(event: &crate::self_healing::types::Runn
     };
 
     let Some(ref mut active) = *op else {
-        tracing::warn!("[Progress] Dropping event — no active operation. Event: {:?}", event_summary(event));
+        tracing::warn!(
+            "[Progress] Dropping event — no active operation. Event: {:?}",
+            event_summary(event)
+        );
         return;
     };
 
     let step_idx = match event {
-        RunnerEvent::StepStarted { step_index, .. } |
-        RunnerEvent::StepFailed { step_index, .. } |
-        RunnerEvent::StepPassed { step_index, .. } |
-        RunnerEvent::RecoveryApplied { step_index, .. } => *step_index,
+        RunnerEvent::StepStarted { step_index, .. }
+        | RunnerEvent::StepFailed { step_index, .. }
+        | RunnerEvent::StepPassed { step_index, .. }
+        | RunnerEvent::RecoveryApplied { step_index, .. } => *step_index,
     };
 
     if step_idx >= active.steps.len() {
@@ -270,36 +286,52 @@ pub fn handle_runner_event_for_progress(event: &crate::self_healing::types::Runn
     match event {
         RunnerEvent::StepStarted { .. } => {
             for (i, s) in active.steps.iter_mut().enumerate() {
-                if i < step_idx { s.status = "done".into(); }
-                else if i == step_idx { s.status = "running".into(); }
-                else { s.status = "pending".into(); }
+                if i < step_idx {
+                    s.status = "done".into();
+                } else if i == step_idx {
+                    s.status = "running".into();
+                } else {
+                    s.status = "pending".into();
+                }
             }
         }
         RunnerEvent::StepPassed { .. } => {
             active.steps[step_idx].status = "done".into();
         }
-        RunnerEvent::StepFailed { will_retry, error, .. } => {
+        RunnerEvent::StepFailed {
+            will_retry, error, ..
+        } => {
             if !*will_retry {
                 active.steps[step_idx].status = "error".into();
             }
-            let _ = ah.emit("ai-operation-step-error", serde_json::json!({
-                "stepIndex": step_idx,
-                "error": error,
-                "willRetry": will_retry,
-            }));
+            let _ = ah.emit(
+                "ai-operation-step-error",
+                serde_json::json!({
+                    "stepIndex": step_idx,
+                    "error": error,
+                    "willRetry": will_retry,
+                }),
+            );
         }
         RunnerEvent::RecoveryApplied { action, reason, .. } => {
-            let _ = ah.emit("ai-operation-recovery", serde_json::json!({
-                "action": action,
-                "reason": reason,
-            }));
+            let _ = ah.emit(
+                "ai-operation-recovery",
+                serde_json::json!({
+                    "action": action,
+                    "reason": reason,
+                }),
+            );
         }
     }
 
     tracing::info!(
         "[Progress] Emitting ai-operation-progress: step_idx={}, steps={:?}",
         step_idx,
-        active.steps.iter().map(|s| (&s.label, &s.status)).collect::<Vec<_>>()
+        active
+            .steps
+            .iter()
+            .map(|s| (&s.label, &s.status))
+            .collect::<Vec<_>>()
     );
     let _ = ah.emit("ai-operation-progress", &*active);
 }
@@ -308,14 +340,36 @@ pub fn handle_runner_event_for_progress(event: &crate::self_healing::types::Runn
 fn event_summary(event: &crate::self_healing::types::RunnerEvent) -> String {
     use crate::self_healing::types::RunnerEvent;
     match event {
-        RunnerEvent::StepStarted { step_index, step_name, attempt, .. } =>
-            format!("StepStarted(idx={}, name={}, attempt={})", step_index, step_name, attempt),
-        RunnerEvent::StepPassed { step_index, step_name, duration_ms, .. } =>
-            format!("StepPassed(idx={}, name={}, dur={}ms)", step_index, step_name, duration_ms),
-        RunnerEvent::StepFailed { step_index, step_name, will_retry, .. } =>
-            format!("StepFailed(idx={}, name={}, retry={})", step_index, step_name, will_retry),
-        RunnerEvent::RecoveryApplied { step_index, action, .. } =>
-            format!("RecoveryApplied(idx={}, action={})", step_index, action),
+        RunnerEvent::StepStarted {
+            step_index,
+            step_name,
+            attempt,
+            ..
+        } => format!(
+            "StepStarted(idx={}, name={}, attempt={})",
+            step_index, step_name, attempt
+        ),
+        RunnerEvent::StepPassed {
+            step_index,
+            step_name,
+            duration_ms,
+            ..
+        } => format!(
+            "StepPassed(idx={}, name={}, dur={}ms)",
+            step_index, step_name, duration_ms
+        ),
+        RunnerEvent::StepFailed {
+            step_index,
+            step_name,
+            will_retry,
+            ..
+        } => format!(
+            "StepFailed(idx={}, name={}, retry={})",
+            step_index, step_name, will_retry
+        ),
+        RunnerEvent::RecoveryApplied {
+            step_index, action, ..
+        } => format!("RecoveryApplied(idx={}, action={})", step_index, action),
     }
 }
 
@@ -334,7 +388,8 @@ pub async fn ai_start(app_handle: tauri::AppHandle, config: AIConfig) -> Result<
     client.session_id = None;
 
     // Ollama 和 MiMo 不需要 API Key
-    let needs_api_key = client.config.ai_provider != "ollama" && client.config.ai_provider != "mimo";
+    let needs_api_key =
+        client.config.ai_provider != "ollama" && client.config.ai_provider != "mimo";
     if needs_api_key {
         let _key = client
             .config
@@ -350,10 +405,13 @@ pub async fn ai_start(app_handle: tauri::AppHandle, config: AIConfig) -> Result<
     // 根据 ai_provider 选择对应的 Provider 并检查就绪状态
     let provider = crate::ai_provider::select_provider(&client.config);
     let provider_kind = provider.kind();
-    info!("[ai_start] config.ai_provider='{}', resolved ProviderKind={:?}", client.config.ai_provider, provider_kind);
-    provider.ensure_ready().map_err(|e| {
-        format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
-    })?;
+    info!(
+        "[ai_start] config.ai_provider='{}', resolved ProviderKind={:?}",
+        client.config.ai_provider, provider_kind
+    );
+    provider
+        .ensure_ready()
+        .map_err(|e| format!("i18n:aiBackend.codewhaleNotFound|error={}", e))?;
 
     // 切换 AI Provider 时立即重新生成适配的 AGENTS.md（工具名随 Provider 变化）
     let project = client.config.project_path.clone();
@@ -365,7 +423,10 @@ pub async fn ai_start(app_handle: tauri::AppHandle, config: AIConfig) -> Result<
 
     if let Some(ref pp) = project {
         if !pp.trim().is_empty() {
-            info!("[ai_start] regenerating AGENTS.md for project={}, provider={:?}", pp, provider_kind);
+            info!(
+                "[ai_start] regenerating AGENTS.md for project={}, provider={:?}",
+                pp, provider_kind
+            );
             match ensure_project_agent_instructions(
                 Some(pp.as_str()),
                 idf.as_deref(),
@@ -435,7 +496,8 @@ async fn emit_file_sync_events(
         let path = std::path::Path::new(write_path);
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let is_hw_config = file_name == "hardware_config.json"
-            && path.parent()
+            && path
+                .parent()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
                 == Some(".espsmith");
@@ -449,7 +511,9 @@ async fn emit_file_sync_events(
                     serde_json::from_str::<crate::commands::hardware::HardwareConfig>(&config_str)
                 {
                     // 重新生成 hardware_pins.h（exec_shell 模式下 AI write_file 不会走 MCP/ filesystem 路径）
-                    let _handle = tokio::spawn(crate::commands::hardware::generate_hardware_header(pp.to_string()));
+                    let _handle = tokio::spawn(
+                        crate::commands::hardware::generate_hardware_header(pp.to_string()),
+                    );
                     let _ = app_handle.emit("hw-config-changed", &config);
                     info!("Emitted hw-config-changed + regenerated hardware_pins.h after write_file: {}", write_path);
                 }
@@ -463,7 +527,18 @@ pub async fn ai_send_message(
     message: String,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    let (model, project_path, idf_path, enable_tool_use, target_chip, flash_port, session_id, _ai_provider, permission_mode, chip_changed) = {
+    let (
+        model,
+        project_path,
+        idf_path,
+        enable_tool_use,
+        target_chip,
+        flash_port,
+        session_id,
+        _ai_provider,
+        permission_mode,
+        chip_changed,
+    ) = {
         let client = AI_CLIENT.lock().await;
         // MiMo-Code 免费通道不需要 API Key
         let needs_api_key = client.config.ai_provider != "mimo";
@@ -494,7 +569,6 @@ pub async fn ai_send_message(
         *status = AIStatus::Thinking;
     }
 
-
     if enable_tool_use {
         info!("MCP server check skipped — using exec_shell-only mode");
     }
@@ -508,7 +582,11 @@ pub async fn ai_send_message(
     let provider_name = provider.display_name();
 
     if enable_tool_use {
-        ensure_project_agent_instructions(project_path.as_deref(), idf_path.as_deref(), &provider_kind)?;
+        ensure_project_agent_instructions(
+            project_path.as_deref(),
+            idf_path.as_deref(),
+            &provider_kind,
+        )?;
     }
 
     // 初始化经验库
@@ -520,11 +598,19 @@ pub async fn ai_send_message(
         crate::experience::init(exp_dir);
     }
 
-    let binary = provider.ensure_ready().map_err(|e| {
-        format!("i18n:aiBackend.codewhaleNotFound|error={}", e)
-    })?;
+    let binary = provider
+        .ensure_ready()
+        .map_err(|e| format!("i18n:aiBackend.codewhaleNotFound|error={}", e))?;
 
-    let prompt = build_short_agent_prompt(&message, project_path.as_deref(), idf_path.as_deref(), target_chip.as_deref(), flash_port.as_deref(), chip_changed, &provider_kind);
+    let prompt = build_short_agent_prompt(
+        &message,
+        project_path.as_deref(),
+        idf_path.as_deref(),
+        target_chip.as_deref(),
+        flash_port.as_deref(),
+        chip_changed,
+        &provider_kind,
+    );
 
     // Clear chip_changed flag after it's been consumed by the prompt
     if chip_changed {
@@ -537,12 +623,8 @@ pub async fn ai_send_message(
         client.config.clone()
     };
 
-    let mut provider_cmd = provider.build_command(
-        &binary,
-        &config_snapshot,
-        &prompt,
-        session_id.as_deref(),
-    );
+    let mut provider_cmd =
+        provider.build_command(&binary, &config_snapshot, &prompt, session_id.as_deref());
 
     // 设置 API Key 环境变量
     if let Some((env_key, env_val)) = provider.api_key_env(&config_snapshot) {
@@ -552,8 +634,13 @@ pub async fn ai_send_message(
 
     // 显式传递 IPC 管道地址给 AI Provider，确保其 exec_shell 启动的子进程能委托主进程执行闭环
     if let Ok(pipe_addr) = std::env::var(crate::self_healing::ipc::ENV_PIPE_NAME) {
-        provider_cmd.cmd.env(crate::self_healing::ipc::ENV_PIPE_NAME, &pipe_addr);
-        info!("Passing IPC pipe address to {}: {}", provider_name, pipe_addr);
+        provider_cmd
+            .cmd
+            .env(crate::self_healing::ipc::ENV_PIPE_NAME, &pipe_addr);
+        info!(
+            "Passing IPC pipe address to {}: {}",
+            provider_name, pipe_addr
+        );
     }
 
     if let Some(ref path) = project_path {
@@ -563,9 +650,13 @@ pub async fn ai_send_message(
 
     info!("Starting {} run (session: {:?})", provider_name, session_id);
 
-    let mut child = provider_cmd.cmd
-        .spawn()
-        .map_err(|e| format!("i18n:aiBackend.codewhaleStartFailed|path={}|error={}", binary.display(), e))?;
+    let mut child = provider_cmd.cmd.spawn().map_err(|e| {
+        format!(
+            "i18n:aiBackend.codewhaleStartFailed|path={}|error={}",
+            binary.display(),
+            e
+        )
+    })?;
 
     let stdout = child
         .stdout
@@ -665,7 +756,7 @@ pub async fn ai_send_message(
                                     "tool_use" => {
                                         let name = event["name"].as_str().unwrap_or("unknown");
                                         let is_sensitive = is_sensitive_tool(name, event.get("input"));
-                                        
+
                                         if is_sensitive && permission_mode == PermissionMode::Ask {
                                             let description = describe_sensitive_operation(name, event.get("input"));
                                             let pending = PendingPermissionRequest {
@@ -674,16 +765,16 @@ pub async fn ai_send_message(
                                                 reason: description.clone(),
                                             };
                                             let _ = app_handle.emit("ai-permission-request", serde_json::to_value(&pending).unwrap_or_default());
-                                            
+
                                             let (tx, rx) = tokio::sync::oneshot::channel();
                                             {
                                                 let mut client = AI_CLIENT.lock().await;
                                                 client.pending_permission_request = Some(pending);
                                                 client.permission_response_tx = Some(tx);
                                             }
-                                            
+
                                             let _ = app_handle.emit("ai-chunk", format!("i18n:aiBackend.waitingConfirmation|description={}", description));
-                                            
+
                                             match rx.await {
                                                 Ok(true) => {
                                                     let _ = app_handle.emit("ai-chunk", "i18n:aiBackend.permissionAllowed");
@@ -1144,7 +1235,9 @@ pub async fn ai_send_message(
     }
     // 清理操作状态（会话结束）
     {
-        let mut op = ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|e| e.into_inner());
+        let mut op = ACTIVE_JTAG_OPERATION
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *op = None;
     }
 
@@ -1157,9 +1250,16 @@ pub async fn ai_send_message(
         let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
         *status = AIStatus::Error;
         if !stderr_lines.is_empty() {
-            return Err(format!("{} error:\n{}", provider_name, stderr_lines.join("\n")));
+            return Err(format!(
+                "{} error:\n{}",
+                provider_name,
+                stderr_lines.join("\n")
+            ));
         }
-        return Err(format!("{} returned no response. Check the API key and network access.", provider_name));
+        return Err(format!(
+            "{} returned no response. Check the API key and network access.",
+            provider_name
+        ));
     }
 
     {
@@ -1174,9 +1274,7 @@ pub async fn ai_send_message(
         if config_path.exists() {
             if let Ok(config_str) = std::fs::read_to_string(&config_path) {
                 if let Ok(config) =
-                    serde_json::from_str::<crate::commands::hardware::HardwareConfig>(
-                        &config_str,
-                    )
+                    serde_json::from_str::<crate::commands::hardware::HardwareConfig>(&config_str)
                 {
                     let _ = app_handle.emit("hw-config-changed", &config);
                     info!("Emitted hw-config-changed after AI message completed");
@@ -1275,7 +1373,7 @@ pub async fn ai_set_flash_port(port: Option<String>) -> Result<(), String> {
     let mut client = AI_CLIENT.lock().await;
     client.config.flash_port = port.clone();
     drop(client); // 释放锁后再检测连接模式
-    // 立即基于新端口更新全局连接模式缓存，确保多设备场景下模式与选中端口一致
+                  // 立即基于新端口更新全局连接模式缓存，确保多设备场景下模式与选中端口一致
     crate::connection::detect_connection_mode(port.as_deref());
     Ok(())
 }
@@ -1292,7 +1390,12 @@ pub async fn ai_set_permission_mode(mode: String) -> Result<(), String> {
     client.config.permission_mode = match mode.as_str() {
         "full" => PermissionMode::Full,
         "ask" => PermissionMode::Ask,
-        _ => return Err(format!("i18n:aiBackend.invalidPermissionMode|mode={}", mode)),
+        _ => {
+            return Err(format!(
+                "i18n:aiBackend.invalidPermissionMode|mode={}",
+                mode
+            ))
+        }
     };
     Ok(())
 }
@@ -1349,22 +1452,20 @@ pub fn get_cached_idf_path() -> Option<String> {
     AI_CLIENT
         .try_lock()
         .ok()
-        .and_then(|client| {
-            client.config.idf_path.clone().filter(|p| !p.is_empty())
-        })
+        .and_then(|client| client.config.idf_path.clone().filter(|p| !p.is_empty()))
 }
 
 /// Get the cached flash port from AI config (used by connection.rs for targeted detection).
 /// This uses try_lock() to avoid blocking; if the lock is held, returns None.
 pub fn get_cached_flash_port() -> Option<String> {
-    AI_CLIENT
-        .try_lock()
-        .ok()
-        .and_then(|client| {
-            client.config.flash_port.clone().filter(|p| !p.trim().is_empty())
-        })
+    AI_CLIENT.try_lock().ok().and_then(|client| {
+        client
+            .config
+            .flash_port
+            .clone()
+            .filter(|p| !p.trim().is_empty())
+    })
 }
-
 
 /// 剥离终端转义序列（OSC 标题、ANSI 控制码等），
 /// CodeWhale 输出中可能混入 `\x1b]0;...\x07` 等序列，导致 JSON 解析失败。
@@ -1419,10 +1520,19 @@ fn strip_ansi_escapes(input: &str) -> String {
 /// always uses strings. JavaScript Map treats `123` and `"123"` as different keys,
 /// so we normalize to string here to ensure consistent frontend matching.
 fn extract_id_as_string(event: &serde_json::Value, key: &str) -> String {
-    event.get(key)
+    event
+        .get(key)
         .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .or_else(|| event.get(key).and_then(|v| v.as_u64().map(|n| n.to_string())))
-        .or_else(|| event.get(key).and_then(|v| v.as_i64().map(|n| n.to_string())))
+        .or_else(|| {
+            event
+                .get(key)
+                .and_then(|v| v.as_u64().map(|n| n.to_string()))
+        })
+        .or_else(|| {
+            event
+                .get(key)
+                .and_then(|v| v.as_i64().map(|n| n.to_string()))
+        })
         .unwrap_or_default()
 }
 
@@ -1434,11 +1544,27 @@ fn sanitize_prompt_for_cmd(prompt: String) -> String {
         .replace('%', "%%")
 }
 
-fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_path: Option<&str>, target_chip: Option<&str>, flash_port: Option<&str>, chip_changed: bool, provider_kind: &crate::ai_provider::ProviderKind) -> String {
+fn build_short_agent_prompt(
+    user_message: &str,
+    project_path: Option<&str>,
+    idf_path: Option<&str>,
+    target_chip: Option<&str>,
+    flash_port: Option<&str>,
+    chip_changed: bool,
+    provider_kind: &crate::ai_provider::ProviderKind,
+) -> String {
     let project = project_path.unwrap_or("(项目路径)");
     let idf = idf_path.unwrap_or("(IDF路径)");
     let port = flash_port.unwrap_or("(先用list-ports查询)");
-    let target_arg = if chip_changed { if let Some(chip) = target_chip { format!(" --target {}", chip) } else { String::new() } } else { String::new() };
+    let target_arg = if chip_changed {
+        if let Some(chip) = target_chip {
+            format!(" --target {}", chip)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
 
     // 根据 AI Provider 选择 shell 工具名
     let shell_cmd = if *provider_kind == crate::ai_provider::ProviderKind::MiMoCode {
@@ -1450,7 +1576,11 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
     // Resolve espsmith-cli path: same directory as current exe, or in binaries/ subdirectory.
     // In dev mode, espsmith-cli is compiled by beforeDevCommand and placed in target/debug/.
     // Falls back to espsmith itself if espsmith-cli is not found (legacy dev mode).
-    let cli_binary_name = if cfg!(windows) { "espsmith-cli.exe" } else { "espsmith-cli" };
+    let cli_binary_name = if cfg!(windows) {
+        "espsmith-cli.exe"
+    } else {
+        "espsmith-cli"
+    };
     let cli_exe = std::env::current_exe()
         .ok()
         .and_then(|exe| {
@@ -1487,9 +1617,25 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         })
         .unwrap_or_else(|| cli_binary_name.to_string());
 
-    let build_cmd = format!("{cli} build --project \"{project}\" --idf \"{idf}\"{target_arg}", cli=cli_exe, project=project, idf=idf, target_arg=target_arg);
-    let flash_cmd = format!("{cli} flash --project \"{project}\" --idf \"{idf}\" --port \"{port}\"", cli=cli_exe, project=project, idf=idf, port=port);
-    let monitor_cmd = format!("{cli} monitor --port \"{port}\" --duration 5000", cli=cli_exe, port=port);
+    let build_cmd = format!(
+        "{cli} build --project \"{project}\" --idf \"{idf}\"{target_arg}",
+        cli = cli_exe,
+        project = project,
+        idf = idf,
+        target_arg = target_arg
+    );
+    let flash_cmd = format!(
+        "{cli} flash --project \"{project}\" --idf \"{idf}\" --port \"{port}\"",
+        cli = cli_exe,
+        project = project,
+        idf = idf,
+        port = port
+    );
+    let monitor_cmd = format!(
+        "{cli} monitor --port \"{port}\" --duration 5000",
+        cli = cli_exe,
+        port = port
+    );
 
     // 获取 IPC 地址，嵌入到 closed-loop / jtag-runtime-check 命令中
     // 这样即使 CodeWhale 的 exec_shell 不传递环境变量，CLI 也能委托主进程执行
@@ -1523,15 +1669,30 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
         .or_else(|| {
             conn_info.chip_hint.as_ref().and_then(|h| {
                 let lower = h.to_ascii_lowercase().replace('-', "");
-                if lower == "esp32" { None } else { Some(lower) }
+                if lower == "esp32" {
+                    None
+                } else {
+                    Some(lower)
+                }
             })
         })
         .unwrap_or_else(|| "esp32".to_string());
 
     if is_jtag {
-        let closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
+        let closed_loop_cmd = format!(
+            "{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}",
+            cli = cli_exe,
+            project = project,
+            idf = idf,
+            port = detected_port,
+            ipc = ipc_addr_arg
+        );
         let jtag_check_cmd = format!("{cli} jtag-runtime-check --project \"{project}\" --idf \"{idf}\" --port \"{port}\" --chip {chip}{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, chip=resolved_chip, ipc=ipc_addr_arg);
-        let openocd_start_cmd = format!("{cli} openocd-start --chip {chip}", cli=cli_exe, chip=resolved_chip);
+        let openocd_start_cmd = format!(
+            "{cli} openocd-start --chip {chip}",
+            cli = cli_exe,
+            chip = resolved_chip
+        );
         sanitize_prompt_for_cmd(format!(
             "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
             shell=shell_cmd, cli=cli_exe, msg=user_message,
@@ -1539,7 +1700,14 @@ fn build_short_agent_prompt(user_message: &str, project_path: Option<&str>, idf_
             openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd,
         ))
     } else {
-        let uart_closed_loop_cmd = format!("{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}", cli=cli_exe, project=project, idf=idf, port=detected_port, ipc=ipc_addr_arg);
+        let uart_closed_loop_cmd = format!(
+            "{cli} closed-loop --project \"{project}\" --idf \"{idf}\" --port \"{port}\"{ipc}",
+            cli = cli_exe,
+            project = project,
+            idf = idf,
+            port = detected_port,
+            ipc = ipc_addr_arg
+        );
         sanitize_prompt_for_cmd(format!(
             "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
             shell=shell_cmd, cli=cli_exe, msg=user_message,
@@ -1573,7 +1741,10 @@ pub struct OperationStep {
 
 /// 供委托处理器调用：根据命令类型和连接模式创建 OperationProgress
 /// 在 IPC 委托执行前预设置 ACTIVE_JTAG_OPERATION，解决时序竞争
-pub fn detect_jtag_operation_for_delegate(command: &str, is_jtag_mode: bool) -> Option<OperationProgress> {
+pub fn detect_jtag_operation_for_delegate(
+    command: &str,
+    is_jtag_mode: bool,
+) -> Option<OperationProgress> {
     let fake_cmd = match command {
         "closed_loop" => "closed-loop",
         "jtag_runtime_check" => "jtag-runtime-check",
@@ -1585,7 +1756,9 @@ pub fn detect_jtag_operation_for_delegate(command: &str, is_jtag_mode: bool) -> 
 /// 供 lib.rs 调用：尝试设置 ACTIVE_JTAG_OPERATION（仅在当前为 None 时设置）
 /// 返回 true 表示成功设置（之前为 None）
 pub fn try_set_active_operation(op: OperationProgress) -> bool {
-    let mut active = ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|e| e.into_inner());
+    let mut active = ACTIVE_JTAG_OPERATION
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if active.is_none() {
         *active = Some(op);
         true
@@ -1597,10 +1770,16 @@ pub fn try_set_active_operation(op: OperationProgress) -> bool {
 /// 供 lib.rs 调用：获取 ACTIVE_JTAG_OPERATION 的锁
 /// 返回 MutexGuard，调用者可以在持有锁期间读取/修改操作状态
 pub fn lock_active_operation() -> std::sync::MutexGuard<'static, Option<OperationProgress>> {
-    ACTIVE_JTAG_OPERATION.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    ACTIVE_JTAG_OPERATION
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn detect_jtag_operation(command: &str, tool_use_id: &str, is_jtag_mode: bool) -> Option<OperationProgress> {
+fn detect_jtag_operation(
+    command: &str,
+    tool_use_id: &str,
+    is_jtag_mode: bool,
+) -> Option<OperationProgress> {
     let lower = command.to_ascii_lowercase();
     let op_id = format!("op-{}", chrono::Utc::now().timestamp_millis());
 
@@ -1621,24 +1800,59 @@ fn detect_jtag_operation(command: &str, tool_use_id: &str, is_jtag_mode: bool) -
         command: command.to_string(),
     };
 
-    if normalised.contains("closed-loop") || normalised.contains("closed_loop")
-        || lower.contains("closed-loop") || lower.contains("closed_loop")
+    if normalised.contains("closed-loop")
+        || normalised.contains("closed_loop")
+        || lower.contains("closed-loop")
+        || lower.contains("closed_loop")
     {
         let (label, steps) = if is_jtag_mode {
-            ("i18n:aiOp.jtagClosedLoop".into(), vec![
-                OperationStep { label: "i18n:aiOp.step.checkProjectConfig".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.compileFirmware".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.openocdFlash".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.serialVerify".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.gdbPcStackCheck".into(), status: "pending".into() },
-            ])
+            (
+                "i18n:aiOp.jtagClosedLoop".into(),
+                vec![
+                    OperationStep {
+                        label: "i18n:aiOp.step.checkProjectConfig".into(),
+                        status: "pending".into(),
+                    },
+                    OperationStep {
+                        label: "i18n:aiOp.step.compileFirmware".into(),
+                        status: "pending".into(),
+                    },
+                    OperationStep {
+                        label: "i18n:aiOp.step.openocdFlash".into(),
+                        status: "pending".into(),
+                    },
+                    OperationStep {
+                        label: "i18n:aiOp.step.serialVerify".into(),
+                        status: "pending".into(),
+                    },
+                    OperationStep {
+                        label: "i18n:aiOp.step.gdbPcStackCheck".into(),
+                        status: "pending".into(),
+                    },
+                ],
+            )
         } else {
-            ("i18n:aiOp.uartClosedLoop".into(), vec![
-                OperationStep { label: "i18n:aiOp.step.checkProjectConfig".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.compileFirmware".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.uartFlash".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.serialVerify".into(), status: "pending".into() },
-            ])
+            (
+                "i18n:aiOp.uartClosedLoop".into(),
+                vec![
+                    OperationStep {
+                        label: "i18n:aiOp.step.checkProjectConfig".into(),
+                        status: "pending".into(),
+                    },
+                    OperationStep {
+                        label: "i18n:aiOp.step.compileFirmware".into(),
+                        status: "pending".into(),
+                    },
+                    OperationStep {
+                        label: "i18n:aiOp.step.uartFlash".into(),
+                        status: "pending".into(),
+                    },
+                    OperationStep {
+                        label: "i18n:aiOp.step.serialVerify".into(),
+                        status: "pending".into(),
+                    },
+                ],
+            )
         };
         Some(OperationProgress {
             operation_type: "closed-loop".into(),
@@ -1646,45 +1860,86 @@ fn detect_jtag_operation(command: &str, tool_use_id: &str, is_jtag_mode: bool) -
             steps,
             ..base
         })
-    } else if normalised.contains("jtag-runtime-check") || normalised.contains("jtag_runtime_check")
-        || lower.contains("jtag-runtime-check") || lower.contains("jtag_runtime_check")
+    } else if normalised.contains("jtag-runtime-check")
+        || normalised.contains("jtag_runtime_check")
+        || lower.contains("jtag-runtime-check")
+        || lower.contains("jtag_runtime_check")
     {
         Some(OperationProgress {
             operation_type: "jtag-runtime-check".into(),
             label: "i18n:aiOp.jtagRuntimeCheck".into(),
             steps: vec![
-                OperationStep { label: "i18n:aiOp.step.startOpenOCD".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.connectGDB".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.setBreakpoint".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.runCaptureVars".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.analyzeResults".into(), status: "pending".into() },
+                OperationStep {
+                    label: "i18n:aiOp.step.startOpenOCD".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.connectGDB".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.setBreakpoint".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.runCaptureVars".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.analyzeResults".into(),
+                    status: "pending".into(),
+                },
             ],
             ..base
         })
-    } else if normalised.contains("openocd-start") || normalised.contains("openocd_start")
-        || lower.contains("openocd-start") || lower.contains("openocd_start")
+    } else if normalised.contains("openocd-start")
+        || normalised.contains("openocd_start")
+        || lower.contains("openocd-start")
+        || lower.contains("openocd_start")
     {
         Some(OperationProgress {
             operation_type: "openocd-start".into(),
             label: "i18n:aiOp.startOpenOCD".into(),
             steps: vec![
-                OperationStep { label: "i18n:aiOp.step.findOpenOCD".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.configJtagInterface".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.startOpenOCDService".into(), status: "pending".into() },
+                OperationStep {
+                    label: "i18n:aiOp.step.findOpenOCD".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.configJtagInterface".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.startOpenOCDService".into(),
+                    status: "pending".into(),
+                },
             ],
             ..base
         })
     } else if (normalised.contains("gdb") || lower.contains("gdb"))
-        && (normalised.contains("breakpoint") || normalised.contains("backtrace") || normalised.contains("continue")
-            || lower.contains("breakpoint") || lower.contains("backtrace") || lower.contains("continue"))
+        && (normalised.contains("breakpoint")
+            || normalised.contains("backtrace")
+            || normalised.contains("continue")
+            || lower.contains("breakpoint")
+            || lower.contains("backtrace")
+            || lower.contains("continue"))
     {
         Some(OperationProgress {
             operation_type: "gdb-debug".into(),
             label: "i18n:aiOp.gdbDebug".into(),
             steps: vec![
-                OperationStep { label: "i18n:aiOp.step.connectGDB".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.execDebugCmd".into(), status: "pending".into() },
-                OperationStep { label: "i18n:aiOp.step.readResults".into(), status: "pending".into() },
+                OperationStep {
+                    label: "i18n:aiOp.step.connectGDB".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.execDebugCmd".into(),
+                    status: "pending".into(),
+                },
+                OperationStep {
+                    label: "i18n:aiOp.step.readResults".into(),
+                    status: "pending".into(),
+                },
             ],
             ..base
         })
@@ -1692,18 +1947,20 @@ fn detect_jtag_operation(command: &str, tool_use_id: &str, is_jtag_mode: bool) -
         Some(OperationProgress {
             operation_type: "build".into(),
             label: "i18n:aiOp.compileFirmware".into(),
-            steps: vec![
-                OperationStep { label: "i18n:aiOp.step.compileFirmware".into(), status: "pending".into() },
-            ],
+            steps: vec![OperationStep {
+                label: "i18n:aiOp.step.compileFirmware".into(),
+                status: "pending".into(),
+            }],
             ..base
         })
     } else if normalised.contains("flash") || normalised.contains("idf.py flash") {
         Some(OperationProgress {
             operation_type: "flash".into(),
             label: "i18n:aiOp.flashFirmware".into(),
-            steps: vec![
-                OperationStep { label: "i18n:aiOp.step.uartFlash".into(), status: "pending".into() },
-            ],
+            steps: vec![OperationStep {
+                label: "i18n:aiOp.step.uartFlash".into(),
+                status: "pending".into(),
+            }],
             ..base
         })
     } else {
@@ -1718,7 +1975,14 @@ fn is_sensitive_tool(name: &str, input: Option<&serde_json::Value>) -> bool {
     }
     if matches!(
         lower_name.as_str(),
-        "exec_shell" | "shell" | "run_command" | "bash" | "cmd" | "terminal" | "powershell" | "pwsh"
+        "exec_shell"
+            | "shell"
+            | "run_command"
+            | "bash"
+            | "cmd"
+            | "terminal"
+            | "powershell"
+            | "pwsh"
     ) {
         let command = input
             .and_then(|v| {
@@ -1736,12 +2000,27 @@ fn is_sensitive_tool(name: &str, input: Option<&serde_json::Value>) -> bool {
             return false;
         }
         let sensitive_patterns = [
-            "rm ", "del ", "rmdir", "delete", "format", "diskpart",
-            "pip install", "pip3 install",
-            "idf.py", "export.bat", "export.sh",
-            "curl ", "wget ",
-            "regedit", "reg ",
-            "net user", "taskkill", "stop-process", "get-process", "wmic", "tskill",
+            "rm ",
+            "del ",
+            "rmdir",
+            "delete",
+            "format",
+            "diskpart",
+            "pip install",
+            "pip3 install",
+            "idf.py",
+            "export.bat",
+            "export.sh",
+            "curl ",
+            "wget ",
+            "regedit",
+            "reg ",
+            "net user",
+            "taskkill",
+            "stop-process",
+            "get-process",
+            "wmic",
+            "tskill",
         ];
         for pat in &sensitive_patterns {
             if command.contains(pat) {
@@ -1756,23 +2035,46 @@ fn is_sensitive_tool(name: &str, input: Option<&serde_json::Value>) -> bool {
 fn describe_sensitive_operation(name: &str, input: Option<&serde_json::Value>) -> String {
     let lower_name = name.to_ascii_lowercase();
     if lower_name == "delete_file" || lower_name == "remove_file" {
-        let path = input.and_then(|v| v.get("path").and_then(|p| p.as_str())).unwrap_or("i18n:aiBackend.unknown");
+        let path = input
+            .and_then(|v| v.get("path").and_then(|p| p.as_str()))
+            .unwrap_or("i18n:aiBackend.unknown");
         return format!("i18n:aiBackend.deleteFile|path={}", path);
     }
     if lower_name == "write_file" {
-        let path = input.and_then(|v| v.get("path").and_then(|p| p.as_str())).unwrap_or("i18n:aiBackend.unknown");
+        let path = input
+            .and_then(|v| v.get("path").and_then(|p| p.as_str()))
+            .unwrap_or("i18n:aiBackend.unknown");
         return format!("i18n:aiBackend.writeFile|path={}", path);
     }
     if lower_name == "apply_patch" {
-        let path = input.and_then(|v| v.get("path").and_then(|p| p.as_str())).unwrap_or("i18n:aiBackend.unknown");
+        let path = input
+            .and_then(|v| v.get("path").and_then(|p| p.as_str()))
+            .unwrap_or("i18n:aiBackend.unknown");
         return format!("i18n:aiBackend.writeFile|path={}", path);
     }
-    if matches!(lower_name.as_str(), "exec_shell" | "shell" | "run_command" | "bash" | "cmd" | "terminal" | "powershell" | "pwsh") {
+    if matches!(
+        lower_name.as_str(),
+        "exec_shell"
+            | "shell"
+            | "run_command"
+            | "bash"
+            | "cmd"
+            | "terminal"
+            | "powershell"
+            | "pwsh"
+    ) {
         let cmd = input
-            .and_then(|v| v.get("command").or_else(|| v.get("cmd")).or_else(|| v.get("args")))
+            .and_then(|v| {
+                v.get("command")
+                    .or_else(|| v.get("cmd"))
+                    .or_else(|| v.get("args"))
+            })
             .and_then(|c| c.as_str())
             .unwrap_or("i18n:aiBackend.unknownCommand");
-        return format!("i18n:aiBackend.execCommand|command={}", if cmd.len() > 80 { &cmd[..80] } else { cmd });
+        return format!(
+            "i18n:aiBackend.execCommand|command={}",
+            if cmd.len() > 80 { &cmd[..80] } else { cmd }
+        );
     }
     format!("i18n:aiBackend.operationName|name={}", name)
 }
@@ -1794,7 +2096,9 @@ fn ensure_project_agent_instructions(
     let _ = idf_path;
 
     // 根据 AI Provider 选择适配的工具名
-    let (shell_tool, file_tools, edit_tool, edit_desc, edit_rules) = if *provider_kind == crate::ai_provider::ProviderKind::MiMoCode {
+    let (shell_tool, file_tools, edit_tool, edit_desc, edit_rules) = if *provider_kind
+        == crate::ai_provider::ProviderKind::MiMoCode
+    {
         (
             "bash",
             "`list_directory` / `read` / `write`",
@@ -1986,8 +2290,14 @@ fn ensure_project_agent_instructions(
         while let Some(s) = cleaned_after.find("<!-- EXPERIENCE-ENGINE:START -->") {
             if let Some(e) = cleaned_after[s..].find("<!-- EXPERIENCE-ENGINE:END -->") {
                 let after = s + e + "<!-- EXPERIENCE-ENGINE:END -->".len();
-                let before = cleaned_after[..s].trim_end_matches('\n').trim_end_matches('\r').to_string();
-                let after_str = cleaned_after[after..].trim_start_matches('\n').trim_start_matches('\r').to_string();
+                let before = cleaned_after[..s]
+                    .trim_end_matches('\n')
+                    .trim_end_matches('\r')
+                    .to_string();
+                let after_str = cleaned_after[after..]
+                    .trim_start_matches('\n')
+                    .trim_start_matches('\r')
+                    .to_string();
                 cleaned_after = if after_str.is_empty() {
                     before
                 } else {
@@ -2007,7 +2317,10 @@ fn ensure_project_agent_instructions(
 
     // 仅在内容变更时写入，避免不必要的文件 I/O
     if updated != existing {
-        info!("[AGENTS.md] content changed, writing to {}", agents_path.display());
+        info!(
+            "[AGENTS.md] content changed, writing to {}",
+            agents_path.display()
+        );
         // 原子写入：先写临时文件，再重命名，避免编辑器标签页打开时的文件锁定问题
         let tmp_path = agents_path.with_extension("md.tmp");
         std::fs::write(&tmp_path, &updated).map_err(|e| e.to_string())?;
@@ -2017,7 +2330,10 @@ fn ensure_project_agent_instructions(
             format!("Failed to atomically replace AGENTS.md: {}", e)
         })?;
     } else {
-        info!("[AGENTS.md] content unchanged, skipping write (shell_tool='{}')", shell_tool);
+        info!(
+            "[AGENTS.md] content unchanged, skipping write (shell_tool='{}')",
+            shell_tool
+        );
     }
     Ok(Some(agents_path))
 }
@@ -2081,10 +2397,9 @@ pub async fn experience_export(export_path: String) -> Result<String, String> {
         "stats": stats,
     });
 
-    let content = serde_json::to_string_pretty(&export_data)
-        .map_err(|e| format!("序列化失败: {e}"))?;
-    std::fs::write(&export_path, content)
-        .map_err(|e| format!("写入文件失败: {e}"))?;
+    let content =
+        serde_json::to_string_pretty(&export_data).map_err(|e| format!("序列化失败: {e}"))?;
+    std::fs::write(&export_path, content).map_err(|e| format!("写入文件失败: {e}"))?;
 
     let count = skills.len();
     Ok(format!("已导出 {count} 条经验到 {}", export_path))
@@ -2093,10 +2408,10 @@ pub async fn experience_export(export_path: String) -> Result<String, String> {
 /// 从 JSON 文件导入经验库（合并，不覆盖已有记录）
 #[tauri::command]
 pub async fn experience_import(import_path: String) -> Result<String, String> {
-    let content = std::fs::read_to_string(&import_path)
-        .map_err(|e| format!("读取文件失败: {e}"))?;
-    let data: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析 JSON 失败: {e}"))?;
+    let content =
+        std::fs::read_to_string(&import_path).map_err(|e| format!("读取文件失败: {e}"))?;
+    let data: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {e}"))?;
 
     let dir = experience_dir();
     let skills_dir = dir.join("skills");
@@ -2116,8 +2431,7 @@ pub async fn experience_import(import_path: String) -> Result<String, String> {
                 } else {
                     let json = serde_json::to_string_pretty(skill)
                         .map_err(|e| format!("序列化 skill 失败: {e}"))?;
-                    std::fs::write(&dest, json)
-                        .map_err(|e| format!("写入 skill 失败: {e}"))?;
+                    std::fs::write(&dest, json).map_err(|e| format!("写入 skill 失败: {e}"))?;
                     imported_skills += 1;
                 }
             }
@@ -2129,13 +2443,18 @@ pub async fn experience_import(import_path: String) -> Result<String, String> {
     if let Some(stats) = data.get("stats").and_then(|v| v.as_array()) {
         for stat in stats {
             // stats 文件名从 board 和 test 字段推导
-            let board = stat.get("board").and_then(|v| v.as_str()).unwrap_or("unknown");
-            let test = stat.get("test").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let board = stat
+                .get("board")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let test = stat
+                .get("test")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             let dest = stats_dir.join(format!("{board}__{test}.json"));
-            let json = serde_json::to_string_pretty(stat)
-                .map_err(|e| format!("序列化 stat 失败: {e}"))?;
-            std::fs::write(&dest, json)
-                .map_err(|e| format!("写入 stat 失败: {e}"))?;
+            let json =
+                serde_json::to_string_pretty(stat).map_err(|e| format!("序列化 stat 失败: {e}"))?;
+            std::fs::write(&dest, json).map_err(|e| format!("写入 stat 失败: {e}"))?;
             imported_stats += 1;
         }
     }
@@ -2153,13 +2472,17 @@ pub async fn experience_stats() -> Result<serde_json::Value, String> {
     let stats_dir = dir.join("stats");
 
     let skill_count = if skills_dir.exists() {
-        std::fs::read_dir(&skills_dir).map(|e| e.count()).unwrap_or(0)
+        std::fs::read_dir(&skills_dir)
+            .map(|e| e.count())
+            .unwrap_or(0)
     } else {
         0
     };
 
     let stat_count = if stats_dir.exists() {
-        std::fs::read_dir(&stats_dir).map(|e| e.count()).unwrap_or(0)
+        std::fs::read_dir(&stats_dir)
+            .map(|e| e.count())
+            .unwrap_or(0)
     } else {
         0
     };
@@ -2203,8 +2526,7 @@ pub fn init_bundled_codewhale(resource_dir: &Path) {
 }
 
 fn get_codewhale_local_dir() -> PathBuf {
-    let base = dirs_next::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."));
+    let base = dirs_next::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("espsmith").join("codewhale")
 }
 
@@ -2229,14 +2551,18 @@ pub fn get_bundled_codewhale_binary() -> Option<PathBuf> {
 
 fn has_executable_extension(path: &Path) -> bool {
     match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) => matches!(ext.to_ascii_lowercase().as_str(), "exe" | "cmd" | "bat" | "com"),
+        Some(ext) => matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "exe" | "cmd" | "bat" | "com"
+        ),
         None => false,
     }
 }
 
 pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
     use std::sync::Mutex;
-    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<PathBuf>>>> =
+        OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
     if let Ok(guard) = cache.lock() {
         if let Some(cached) = guard.get(cmd) {
@@ -2258,7 +2584,9 @@ fn _which_cmd_uncached(cmd: &str) -> Option<PathBuf> {
         let mut c = std::process::Command::new("where");
         c.arg(cmd);
         #[cfg(windows)]
-        { c.creation_flags(CREATE_NO_WINDOW); }
+        {
+            c.creation_flags(CREATE_NO_WINDOW);
+        }
         let output = c.output().ok()?;
         if output.status.success() {
             let paths: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
@@ -2358,16 +2686,17 @@ pub async fn setup_codewhale(app_handle: tauri::AppHandle) -> Result<String, Str
     // 如果内嵌和本地都没有，尝试通过 npm 安装（向后兼容）
     let _ = app_handle.emit("codewhale-setup-progress", "checking_node");
 
-    let node_exe = which_cmd("node").ok_or_else(|| {
-        "i18n:aiBackend.nodejsNotInstalled".to_string()
-    })?;
+    let node_exe =
+        which_cmd("node").ok_or_else(|| "i18n:aiBackend.nodejsNotInstalled".to_string())?;
 
     let _ = app_handle.emit("codewhale-setup-progress", "installing");
 
     let local_dir = get_codewhale_local_dir();
-    fs::create_dir_all(&local_dir).map_err(|e| format!("i18n:aiBackend.createDirFailed|error={}", e))?;
+    fs::create_dir_all(&local_dir)
+        .map_err(|e| format!("i18n:aiBackend.createDirFailed|error={}", e))?;
 
-    let npm_bin = node_exe.parent()
+    let npm_bin = node_exe
+        .parent()
         .map(|p| p.join(if cfg!(windows) { "npm.cmd" } else { "npm" }))
         .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "npm.cmd" } else { "npm" }));
 
@@ -2378,8 +2707,11 @@ pub async fn setup_codewhale(app_handle: tauri::AppHandle) -> Result<String, Str
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let status = cmd.status()
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let status = cmd
+        .status()
         .map_err(|e| format!("i18n:aiBackend.npmStartFailed|error={}", e))?;
 
     if !status.success() {
@@ -2421,7 +2753,5 @@ pub fn ensure_codewhale_ready() -> Result<PathBuf, String> {
         }
     }
 
-    Err(
-        "i18n:aiBackend.codewhaleNotFoundAlt".into()
-    )
+    Err("i18n:aiBackend.codewhaleNotFoundAlt".into())
 }

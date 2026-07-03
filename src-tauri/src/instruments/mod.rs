@@ -62,7 +62,9 @@ pub struct InstrumentRegistry {
 
 impl InstrumentRegistry {
     pub fn new() -> Self {
-        Self { instruments: Vec::new() }
+        Self {
+            instruments: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, instrument: Box<dyn Instrument>) {
@@ -93,7 +95,10 @@ impl InstrumentRegistry {
     }
 
     pub fn run_all_health_checks(&self) -> Vec<HealthReport> {
-        self.instruments.iter().map(|i| i.run_health_check()).collect()
+        self.instruments
+            .iter()
+            .map(|i| i.run_health_check())
+            .collect()
     }
 }
 

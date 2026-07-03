@@ -11,14 +11,30 @@ use std::os::windows::process::CommandExt;
 pub struct SerialVerifyAdapter;
 
 impl Adapter for SerialVerifyAdapter {
-    fn name(&self) -> &str { "verify.serial" }
-    fn description(&self) -> &str { "Verify firmware via serial output pattern" }
+    fn name(&self) -> &str {
+        "verify.serial"
+    }
+    fn description(&self) -> &str {
+        "Verify firmware via serial output pattern"
+    }
 
     fn execute(&self, params: &serde_json::Value, _work_dir: &str) -> AdapterResult {
-        let port = params.get("port").and_then(|v| v.as_str()).unwrap_or(super::default_port_hint());
-        let baudrate = params.get("baudrate").and_then(|v| v.as_u64()).unwrap_or(115200) as u32;
-        let expected = params.get("expected_pattern").and_then(|v| v.as_str()).unwrap_or("");
-        let monitor_ms = params.get("monitor_ms").and_then(|v| v.as_u64()).unwrap_or(5000);
+        let port = params
+            .get("port")
+            .and_then(|v| v.as_str())
+            .unwrap_or(super::default_port_hint());
+        let baudrate = params
+            .get("baudrate")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(115200) as u32;
+        let expected = params
+            .get("expected_pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let monitor_ms = params
+            .get("monitor_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5000);
 
         let start = Instant::now();
 
@@ -87,8 +103,7 @@ impl Adapter for SerialVerifyAdapter {
             AdapterResult::fail(
                 format!(
                     "Verification failed: pattern '{}' not found in serial output:\n{}",
-                    expected,
-                    text
+                    expected, text
                 ),
                 Some(text),
                 duration,
@@ -101,33 +116,34 @@ impl Adapter for SerialVerifyAdapter {
 pub struct GdbVerifyAdapter;
 
 impl Adapter for GdbVerifyAdapter {
-    fn name(&self) -> &str { "verify.gdb" }
-    fn description(&self) -> &str { "Verify state via GDB command" }
+    fn name(&self) -> &str {
+        "verify.gdb"
+    }
+    fn description(&self) -> &str {
+        "Verify state via GDB command"
+    }
 
     fn execute(&self, params: &serde_json::Value, _work_dir: &str) -> AdapterResult {
-        let command = params.get("command").and_then(|v| v.as_str()).unwrap_or("monitor reg");
+        let command = params
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("monitor reg");
         let target_chip = params.get("target_chip").and_then(|v| v.as_str());
         let gdb_binary = match crate::commands::gdb_session::find_gdb_binary(target_chip) {
             Ok(path) => path,
             Err(e) => {
-                return AdapterResult::fail(
-                    format!("GDB not found: {}", e),
-                    Some(e),
-                    0,
-                );
+                return AdapterResult::fail(format!("GDB not found: {}", e), Some(e), 0);
             }
         };
         let start = Instant::now();
 
         let mut cmd = std::process::Command::new(&gdb_binary);
         let target_remote = format!("target remote {}", super::GDB_ADDR);
-        cmd.args([
-                "-batch", "-nx",
-                "-ex", &target_remote,
-                "-ex", command,
-            ]);
+        cmd.args(["-batch", "-nx", "-ex", &target_remote, "-ex", command]);
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
+        {
+            cmd.creation_flags(0x08000000);
+        }
         let output = cmd.output();
 
         match output {

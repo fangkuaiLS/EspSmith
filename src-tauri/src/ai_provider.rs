@@ -125,7 +125,14 @@ impl AIProvider for CodeWhaleProvider {
         {
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
-        cmd.args(["--model", &config.model, "exec", "--auto", "--output-format", "stream-json"]);
+        cmd.args([
+            "--model",
+            &config.model,
+            "exec",
+            "--auto",
+            "--output-format",
+            "stream-json",
+        ]);
 
         if let Some(sid) = session_id {
             cmd.arg("--session-id").arg(sid);
@@ -147,7 +154,10 @@ impl AIProvider for CodeWhaleProvider {
     fn api_key_env(&self, config: &AIConfig) -> Option<(String, String)> {
         match config.ai_provider.as_str() {
             "ollama" => None,
-            _ => config.api_key.as_ref().map(|k| ("DEEPSEEK_API_KEY".into(), k.clone())),
+            _ => config
+                .api_key
+                .as_ref()
+                .map(|k| ("DEEPSEEK_API_KEY".into(), k.clone())),
         }
     }
 
@@ -250,7 +260,10 @@ impl AIProvider for MiMoCodeProvider {
         if config.model.starts_with("mimo/") {
             return None;
         }
-        config.api_key.as_ref().map(|k| ("DEEPSEEK_API_KEY".into(), k.clone()))
+        config
+            .api_key
+            .as_ref()
+            .map(|k| ("DEEPSEEK_API_KEY".into(), k.clone()))
     }
 
     fn supports_session(&self) -> bool {
@@ -392,7 +405,8 @@ pub fn convert_mimo_event(raw: &serde_json::Value) -> Option<Vec<serde_json::Val
         }
         "reasoning" => {
             // 将 MiMo-Code 的 reasoning 事件转换为统一格式，供前端显示
-            if let Some(text) = raw.get("part")
+            if let Some(text) = raw
+                .get("part")
                 .and_then(|p| p.get("text"))
                 .or_else(|| raw.get("content"))
                 .or_else(|| raw.get("text"))

@@ -10,8 +10,12 @@ use std::os::windows::process::CommandExt;
 pub struct GdbSessionVerifyAdapter;
 
 impl Adapter for GdbSessionVerifyAdapter {
-    fn name(&self) -> &str { "verify.gdb_session" }
-    fn description(&self) -> &str { "Verify device state via GDB (batch mode)" }
+    fn name(&self) -> &str {
+        "verify.gdb_session"
+    }
+    fn description(&self) -> &str {
+        "Verify device state via GDB (batch mode)"
+    }
 
     fn execute(&self, params: &Value, work_dir: &str) -> super::AdapterResult {
         let start = Instant::now();
@@ -44,10 +48,13 @@ impl Adapter for GdbSessionVerifyAdapter {
             .or_else(|| {
                 // 从 .espsmith/project.json 读取
                 let proj_json = std::path::Path::new(work_dir)
-                    .join(".espsmith").join("project.json");
+                    .join(".espsmith")
+                    .join("project.json");
                 if let Ok(content) = std::fs::read_to_string(&proj_json) {
                     if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&content) {
-                        if let Some(chip) = cfg["chipModel"].as_str().or_else(|| cfg["chip"].as_str()) {
+                        if let Some(chip) =
+                            cfg["chipModel"].as_str().or_else(|| cfg["chip"].as_str())
+                        {
                             return Some(chip.to_string());
                         }
                     }
@@ -88,9 +95,12 @@ impl Adapter for GdbSessionVerifyAdapter {
         if std::net::TcpStream::connect_timeout(
             &super::gdb_addr(),
             std::time::Duration::from_millis(500),
-        ).is_err() {
+        )
+        .is_err()
+        {
             return super::AdapterResult::fail(
-                "GDB server (port 3333) not available. OpenOCD may not have started correctly.".to_string(),
+                "GDB server (port 3333) not available. OpenOCD may not have started correctly."
+                    .to_string(),
                 Some("Port 3333 not reachable".to_string()),
                 start.elapsed().as_millis() as u64,
             );
@@ -112,14 +122,23 @@ impl Adapter for GdbSessionVerifyAdapter {
             None => vec![],
         };
 
-        let mut args = vec!["-batch".to_string(), "-nx".to_string(), "-quiet".to_string()];
+        let mut args = vec![
+            "-batch".to_string(),
+            "-nx".to_string(),
+            "-quiet".to_string(),
+        ];
         args.extend(elf_arg);
         args.extend(vec![
-            "-ex".to_string(), "set remotetimeout 5".to_string(),
-            "-ex".to_string(), "target remote localhost:3333".to_string(),
-            "-ex".to_string(), "info registers pc".to_string(),
-            "-ex".to_string(), "backtrace 5".to_string(),
-            "-ex".to_string(), "monitor reset run".to_string(),
+            "-ex".to_string(),
+            "set remotetimeout 5".to_string(),
+            "-ex".to_string(),
+            "target remote localhost:3333".to_string(),
+            "-ex".to_string(),
+            "info registers pc".to_string(),
+            "-ex".to_string(),
+            "backtrace 5".to_string(),
+            "-ex".to_string(),
+            "monitor reset run".to_string(),
         ]);
 
         let mut cmd = std::process::Command::new(&gdb_binary);
@@ -128,7 +147,9 @@ impl Adapter for GdbSessionVerifyAdapter {
             .stderr(std::process::Stdio::piped())
             .stdin(std::process::Stdio::null());
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
+        {
+            cmd.creation_flags(0x08000000);
+        }
         let spawn_result = cmd.spawn();
 
         let child = match spawn_result {
@@ -159,7 +180,9 @@ impl Adapter for GdbSessionVerifyAdapter {
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null());
                 #[cfg(windows)]
-                { cmd.creation_flags(0x08000000); }
+                {
+                    cmd.creation_flags(0x08000000);
+                }
                 let _ = cmd.spawn();
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 Err("GDB process timed out after 15s".to_string())
@@ -220,11 +243,7 @@ impl Adapter for GdbSessionVerifyAdapter {
                 }
             }
             Err(e) => {
-                super::AdapterResult::fail(
-                    format!("Failed to run GDB: {}", e),
-                    Some(e),
-                    duration,
-                )
+                super::AdapterResult::fail(format!("Failed to run GDB: {}", e), Some(e), duration)
             }
         }
     }

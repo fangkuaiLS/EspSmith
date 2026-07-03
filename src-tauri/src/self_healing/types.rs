@@ -72,7 +72,11 @@ pub struct RetryBudget {
 
 impl Default for RetryBudget {
     fn default() -> Self {
-        Self { build: 1, run: 2, check: 2 }
+        Self {
+            build: 1,
+            run: 2,
+            check: 2,
+        }
     }
 }
 
@@ -90,10 +94,7 @@ impl Default for RecoveryPolicy {
     fn default() -> Self {
         Self {
             enabled: true,
-            allowed_actions: vec![
-                RecoveryAction::SerialReset,
-                RecoveryAction::ProbeSoftReset,
-            ],
+            allowed_actions: vec![RecoveryAction::SerialReset, RecoveryAction::ProbeSoftReset],
             retries: RetryBudget::default(),
         }
     }

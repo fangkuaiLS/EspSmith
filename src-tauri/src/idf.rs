@@ -5,6 +5,7 @@
 //! - 用户配置的路径保存
 //! - 执行 idf.py 命令（通过虚拟环境 Python，不再依赖 export.bat）
 
+use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -12,7 +13,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tracing::{info, warn};
 
@@ -224,30 +224,27 @@ pub(crate) fn build_eim_path_entries(tools_path: &str) -> Vec<String> {
 /// 自动发现 EIM 安装的 IDF 环境（读取 eim_idf.json）
 fn detect_eim_setups() -> Vec<EimIdfInstalled> {
     let candidates = if cfg!(windows) {
-        vec![
-            r"C:\Espressif\tools\eim_idf.json".to_string(),
-        ]
+        vec![r"C:\Espressif\tools\eim_idf.json".to_string()]
     } else {
-        vec![
-            shellexpand::tilde("~/.espressif/tools/eim_idf.json").to_string(),
-        ]
+        vec![shellexpand::tilde("~/.espressif/tools/eim_idf.json").to_string()]
     };
 
     for candidate in candidates {
         let path = Path::new(&candidate);
         if path.exists() {
             match std::fs::read_to_string(path) {
-                Ok(content) => {
-                    match serde_json::from_str::<EimIdfConfig>(&content) {
-                        Ok(config) => {
-                            info!("Found EIM IDF config: {} setups", config.idf_installed.len());
-                            return config.idf_installed;
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse eim_idf.json: {}", e);
-                        }
+                Ok(content) => match serde_json::from_str::<EimIdfConfig>(&content) {
+                    Ok(config) => {
+                        info!(
+                            "Found EIM IDF config: {} setups",
+                            config.idf_installed.len()
+                        );
+                        return config.idf_installed;
                     }
-                }
+                    Err(e) => {
+                        warn!("Failed to parse eim_idf.json: {}", e);
+                    }
+                },
                 Err(e) => {
                     warn!("Failed to read eim_idf.json: {}", e);
                 }
@@ -265,14 +262,22 @@ pub(crate) fn find_eim_setup(idf_path: &str) -> Option<EimIdfInstalled> {
         .unwrap_or_else(|_| PathBuf::from(idf_path));
 
     let setups = detect_eim_setups();
-    info!("find_eim_setup: looking for idf_path='{}', normalized='{}', {} setups available", idf_path, normalized.display(), setups.len());
+    info!(
+        "find_eim_setup: looking for idf_path='{}', normalized='{}', {} setups available",
+        idf_path,
+        normalized.display(),
+        setups.len()
+    );
 
     for setup in &setups {
         let setup_path = Path::new(&setup.path)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&setup.path));
         if normalized == setup_path {
-            info!("find_eim_setup: matched '{}' by canonicalized path, python={}", setup.name, setup.python);
+            info!(
+                "find_eim_setup: matched '{}' by canonicalized path, python={}",
+                setup.name, setup.python
+            );
             return Some(setup.clone());
         }
     }
@@ -280,7 +285,10 @@ pub(crate) fn find_eim_setup(idf_path: &str) -> Option<EimIdfInstalled> {
     // 也尝试直接比较字符串
     for setup in &setups {
         if setup.path == idf_path {
-            info!("find_eim_setup: matched '{}' by string, python={}", setup.name, setup.python);
+            info!(
+                "find_eim_setup: matched '{}' by string, python={}",
+                setup.name, setup.python
+            );
             return Some(setup.clone());
         }
     }
@@ -291,13 +299,19 @@ pub(crate) fn find_eim_setup(idf_path: &str) -> Option<EimIdfInstalled> {
         for setup in &setups {
             let setup_lower = setup.path.to_ascii_lowercase();
             if idf_lower == setup_lower {
-                info!("find_eim_setup: matched '{}' by case-insensitive, python={}", setup.name, setup.python);
+                info!(
+                    "find_eim_setup: matched '{}' by case-insensitive, python={}",
+                    setup.name, setup.python
+                );
                 return Some(setup.clone());
             }
         }
     }
 
-    warn!("find_eim_setup: no match for '{}', falling back to export.bat", idf_path);
+    warn!(
+        "find_eim_setup: no match for '{}', falling back to export.bat",
+        idf_path
+    );
     None
 }
 
@@ -312,7 +326,10 @@ pub fn find_eim_setup_public(idf_path: &str) -> Option<EimIdfInstalled> {
 pub fn find_esptool_py(idf_path: &str) -> Option<PathBuf> {
     let idf = Path::new(idf_path);
     let candidates = [
-        idf.join("components").join("esptool_py").join("esptool").join("esptool.py"),
+        idf.join("components")
+            .join("esptool_py")
+            .join("esptool")
+            .join("esptool.py"),
         idf.join("tools").join("esptool.py"),
         idf.join("esptool.py"),
     ];
@@ -370,11 +387,22 @@ fn parse_target_list(content: &str, var_name: &str, is_preview: bool) -> Vec<Chi
     let mut depth = 0;
     let mut end_idx = 0;
     for (i, ch) in slice.char_indices() {
-        if ch == '[' { depth += 1; }
-        else if ch == ']' { depth -= 1; if depth == 0 { end_idx = i; break; } }
+        if ch == '[' {
+            depth += 1;
+        } else if ch == ']' {
+            depth -= 1;
+            if depth == 0 {
+                end_idx = i;
+                break;
+            }
+        }
     }
 
-    let array_content = if end_idx > 0 { &slice[1..end_idx] } else { return vec![] };
+    let array_content = if end_idx > 0 {
+        &slice[1..end_idx]
+    } else {
+        return vec![];
+    };
 
     // 提取引号内的字符串
     let mut targets = Vec::new();
@@ -392,7 +420,11 @@ fn parse_target_list(content: &str, var_name: &str, is_preview: bool) -> Vec<Chi
                             target: current.clone(),
                             label,
                             is_preview,
-                            description: if is_preview { "(Preview)".into() } else { String::new() },
+                            description: if is_preview {
+                                "(Preview)".into()
+                            } else {
+                                String::new()
+                            },
                         });
                     }
                     current.clear();
@@ -409,7 +441,11 @@ fn parse_target_list(content: &str, var_name: &str, is_preview: bool) -> Vec<Chi
                             target: current.clone(),
                             label,
                             is_preview,
-                            description: if is_preview { "(Preview)".into() } else { String::new() },
+                            description: if is_preview {
+                                "(Preview)".into()
+                            } else {
+                                String::new()
+                            },
                         });
                     }
                     current.clear();
@@ -447,17 +483,66 @@ fn make_chip_label(target: &str) -> String {
 
 fn get_fallback_targets() -> Vec<ChipTargetInfo> {
     vec![
-        ChipTargetInfo { target: "esp32".into(), label: "ESP32".into(), is_preview: false, description: String::new() },
-        ChipTargetInfo { target: "esp32s2".into(), label: "ESP32-S2".into(), is_preview: false, description: String::new() },
-        ChipTargetInfo { target: "esp32s3".into(), label: "ESP32-S3".into(), is_preview: false, description: String::new() },
-        ChipTargetInfo { target: "esp32c2".into(), label: "ESP32-C2".into(), is_preview: false, description: String::new() },
-        ChipTargetInfo { target: "esp32c3".into(), label: "ESP32-C3".into(), is_preview: false, description: String::new() }, 
-        ChipTargetInfo { target: "esp32c5".into(), label: "ESP32-C5".into(), is_preview: false, description: String::new() },
-        ChipTargetInfo { target: "esp32c6".into(), label: "ESP32-C6".into(), is_preview: false, description: String::new() },
-        ChipTargetInfo { target: "esp32h2".into(), label: "ESP32-H2".into(), is_preview: false, description: String::new() },    
-        ChipTargetInfo { target: "esp32p4".into(), label: "ESP32-P4".into(), is_preview: false, description: String::new() },
-        ChipTargetInfo { target: "esp32s31".into(), label: "ESP32-S31".into(), is_preview: false, description: String::new() },
-        
+        ChipTargetInfo {
+            target: "esp32".into(),
+            label: "ESP32".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32s2".into(),
+            label: "ESP32-S2".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32s3".into(),
+            label: "ESP32-S3".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32c2".into(),
+            label: "ESP32-C2".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32c3".into(),
+            label: "ESP32-C3".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32c5".into(),
+            label: "ESP32-C5".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32c6".into(),
+            label: "ESP32-C6".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32h2".into(),
+            label: "ESP32-H2".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32p4".into(),
+            label: "ESP32-P4".into(),
+            is_preview: false,
+            description: String::new(),
+        },
+        ChipTargetInfo {
+            target: "esp32s31".into(),
+            label: "ESP32-S31".into(),
+            is_preview: false,
+            description: String::new(),
+        },
     ]
 }
 
@@ -480,7 +565,10 @@ pub fn detect_idf() -> Option<IDFEnvironment> {
     for setup in &eim_setups {
         let path = Path::new(&setup.path);
         if path.exists() && path.join("tools").exists() {
-            info!("Detected ESP-IDF from EIM: {} at {}", setup.name, setup.path);
+            info!(
+                "Detected ESP-IDF from EIM: {} at {}",
+                setup.name, setup.path
+            );
             return Some(IDFEnvironment {
                 idf_path: setup.path.clone(),
                 version: setup.name.clone(),
@@ -569,12 +657,14 @@ pub fn get_idf_version(idf_path: &str) -> String {
         let mut cmd = Command::new("git");
         cmd.args(["-C", idf_path, "describe", "--tags", "--always"]);
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
+        {
+            cmd.creation_flags(0x08000000);
+        }
         cmd.output()
     }) {
-            if output.status.success() {
-                return String::from_utf8_lossy(&output.stdout).trim().to_string();
-            }
+        if output.status.success() {
+            return String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
     }
 
     "unknown".to_string()
@@ -617,7 +707,8 @@ pub fn validate_idf_path(path: &str) -> Result<IDFEnvironment, String> {
     if !idf_path.join("tools").exists() {
         return Err("Not an ESP-IDF directory (missing 'tools' subdir)".to_string());
     }
-    let has_idf_py = idf_path.join("idf.py").exists() || idf_path.join("tools").join("idf.py").exists();
+    let has_idf_py =
+        idf_path.join("idf.py").exists() || idf_path.join("tools").join("idf.py").exists();
     if !has_idf_py {
         return Err("Not an ESP-IDF directory (missing 'idf.py')".to_string());
     }
@@ -654,8 +745,12 @@ pub fn validate_idf_path(path: &str) -> Result<IDFEnvironment, String> {
     if python_path.is_none() {
         let eim_setups = detect_eim_setups();
         for setup in &eim_setups {
-            let setup_path = Path::new(&setup.path).canonicalize().unwrap_or_else(|_| PathBuf::from(&setup.path));
-            let current = idf_path.canonicalize().unwrap_or_else(|_| idf_path.to_path_buf());
+            let setup_path = Path::new(&setup.path)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(&setup.path));
+            let current = idf_path
+                .canonicalize()
+                .unwrap_or_else(|_| idf_path.to_path_buf());
             if setup_path == current {
                 python_path = Some(setup.python.clone());
                 info!("Python from EIM (path match): {}", setup.python);
@@ -664,7 +759,10 @@ pub fn validate_idf_path(path: &str) -> Result<IDFEnvironment, String> {
         }
     }
 
-    let tools_path = Path::new(sanitized.as_str()).join("tools").to_string_lossy().to_string();
+    let tools_path = Path::new(sanitized.as_str())
+        .join("tools")
+        .to_string_lossy()
+        .to_string();
 
     Ok(IDFEnvironment {
         idf_path: sanitized,
@@ -687,17 +785,30 @@ pub(crate) fn sanitize_idf_path(idf_path: &str) -> String {
                 parent.join("export.sh").exists()
             };
             if has_export {
-                info!("IDF path ends with 'tools', auto-correcting to: {}", parent_str);
+                info!(
+                    "IDF path ends with 'tools', auto-correcting to: {}",
+                    parent_str
+                );
                 return parent_str;
             }
         }
 
-        let normalized = idf_path.trim_end_matches('\\').trim_end_matches('/').to_ascii_lowercase();
+        let normalized = idf_path
+            .trim_end_matches('\\')
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
         let setups = detect_eim_setups();
         for setup in &setups {
-            let tools_normalized = setup.idf_tools_path.trim_end_matches('\\').trim_end_matches('/').to_ascii_lowercase();
+            let tools_normalized = setup
+                .idf_tools_path
+                .trim_end_matches('\\')
+                .trim_end_matches('/')
+                .to_ascii_lowercase();
             if normalized == tools_normalized {
-                info!("IDF path matches EIM tools path, auto-correcting to: {}", setup.path);
+                info!(
+                    "IDF path matches EIM tools path, auto-correcting to: {}",
+                    setup.path
+                );
                 return setup.path.clone();
             }
         }
@@ -718,9 +829,16 @@ pub(crate) fn find_idf_py(idf_path: &str) -> Option<std::path::PathBuf> {
     }
 
     let setups = detect_eim_setups();
-    let normalized = idf_path.trim_end_matches('\\').trim_end_matches('/').to_ascii_lowercase();
+    let normalized = idf_path
+        .trim_end_matches('\\')
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
     for setup in &setups {
-        let tools_normalized = setup.idf_tools_path.trim_end_matches('\\').trim_end_matches('/').to_ascii_lowercase();
+        let tools_normalized = setup
+            .idf_tools_path
+            .trim_end_matches('\\')
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
         if normalized == tools_normalized || normalized.starts_with(&tools_normalized) {
             let eim_idf = Path::new(&setup.path);
             let eim_root = eim_idf.join("idf.py");
@@ -768,24 +886,41 @@ fn detect_target_from_project(project_path: &str) -> Option<String> {
 ///
 /// 优先使用 EIM/VSCode 扩展安装的虚拟环境 Python 直接调用 idf.py，
 /// 如果找不到 EIM 配置则回退到 export.bat 方式。
-pub fn run_idf_command(project_path: &str, idf_path: &str, args: &[&str]) -> Result<String, String> {
+pub fn run_idf_command(
+    project_path: &str,
+    idf_path: &str,
+    args: &[&str],
+) -> Result<String, String> {
     let idf_path = sanitize_idf_path(idf_path);
     let idf_path = idf_path.as_str();
     info!("Running idf.py {:?} in {}", args, project_path);
 
-    let idf_py = find_idf_py(idf_path)
-        .ok_or_else(|| {
-            let root_py = Path::new(idf_path).join("idf.py");
-            format!("idf.py not found at {} or {}", root_py.display(), Path::new(idf_path).join("tools").join("idf.py").display())
-        })?;
+    let idf_py = find_idf_py(idf_path).ok_or_else(|| {
+        let root_py = Path::new(idf_path).join("idf.py");
+        format!(
+            "idf.py not found at {} or {}",
+            root_py.display(),
+            Path::new(idf_path).join("tools").join("idf.py").display()
+        )
+    })?;
 
     // 尝试 EIM 方式：用虚拟环境 Python 直接执行
     if let Some(eim_setup) = find_eim_setup(idf_path) {
         let python_path = &eim_setup.python;
         let tools_path = &eim_setup.idf_tools_path;
-        info!("Using EIM venv Python: {} with tools at {}", python_path, tools_path);
+        info!(
+            "Using EIM venv Python: {} with tools at {}",
+            python_path, tools_path
+        );
 
-        return run_with_eim_python(project_path, python_path, &idf_py, idf_path, tools_path, args);
+        return run_with_eim_python(
+            project_path,
+            python_path,
+            &idf_py,
+            idf_path,
+            tools_path,
+            args,
+        );
     }
 
     // 回退：export.bat 方式（内部会做 shell 转义）
@@ -813,10 +948,8 @@ fn run_with_eim_python(
 
     // 确保工作目录存在（idf.py create-project 会创建项目子目录）
     if !Path::new(project_path).exists() {
-        std::fs::create_dir_all(project_path).map_err(|e| format!(
-            "无法创建工作目录 {}: {}",
-            project_path, e
-        ))?;
+        std::fs::create_dir_all(project_path)
+            .map_err(|e| format!("无法创建工作目录 {}: {}", project_path, e))?;
     }
 
     // 构建 PATH：工具链路径 + 原 PATH
@@ -830,21 +963,33 @@ fn run_with_eim_python(
     let new_path = if eim_path_entries.is_empty() {
         format!("{}{}{}", python_scripts, PATH_LIST_SEP, system_path)
     } else {
-        format!("{}{}{}{}{}", eim_path_entries.join(PATH_LIST_SEP), PATH_LIST_SEP, python_scripts, PATH_LIST_SEP, system_path)
+        format!(
+            "{}{}{}{}{}",
+            eim_path_entries.join(PATH_LIST_SEP),
+            PATH_LIST_SEP,
+            python_scripts,
+            PATH_LIST_SEP,
+            system_path
+        )
     };
 
     // 设置 IDF_PYTHON_ENV_PATH（python 的 venv 根目录）
     let idf_python_env_path = Path::new(&python_path)
-        .parent()  // Scripts
-        .and_then(|p| p.parent())  // venv
+        .parent() // Scripts
+        .and_then(|p| p.parent()) // venv
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
 
     // idf.py 需要找到 tools/ 下的模块（如 python_version_checker）
     let idf_tools_dir = join_path_parts(&[idf_path, "tools"]);
 
-    info!("EIM env: IDF_PATH={}, IDF_TOOLS_PATH={}, IDF_PYTHON_ENV_PATH={}, ESP_IDF_VERSION={}",
-        idf_path, tools_path, idf_python_env_path, get_idf_version_for_env(idf_path));
+    info!(
+        "EIM env: IDF_PATH={}, IDF_TOOLS_PATH={}, IDF_PYTHON_ENV_PATH={}, ESP_IDF_VERSION={}",
+        idf_path,
+        tools_path,
+        idf_python_env_path,
+        get_idf_version_for_env(idf_path)
+    );
 
     let output = {
         let mut cmd = Command::new(&python_path);
@@ -857,17 +1002,39 @@ fn run_with_eim_python(
             .env("ESP_IDF_VERSION", get_idf_version_for_env(idf_path))
             .env("IDF_COMPONENT_MANAGER", "1")
             .env("PATH", &new_path)
-            .env("PYTHONPATH", format!("{}{}{}", &idf_tools_dir, PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
-            .env("OPENOCD_SCRIPTS", join_path_parts(&[tools_path, "openocd-esp32"]))
-            .env("ESP_ROM_ELF_DIR", join_path_parts(&[idf_path, "components", "esp_rom",
-                &detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())]))
+            .env(
+                "PYTHONPATH",
+                format!(
+                    "{}{}{}",
+                    &idf_tools_dir,
+                    PATH_LIST_SEP,
+                    std::env::var("PYTHONPATH").unwrap_or_default()
+                ),
+            )
+            .env(
+                "OPENOCD_SCRIPTS",
+                join_path_parts(&[tools_path, "openocd-esp32"]),
+            )
+            .env(
+                "ESP_ROM_ELF_DIR",
+                join_path_parts(&[
+                    idf_path,
+                    "components",
+                    "esp_rom",
+                    &detect_target_from_project(project_path)
+                        .unwrap_or_else(|| "esp32".to_string()),
+                ]),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000);
+        }
         cmd.spawn()
     }
     .and_then(|child| child.wait_with_output())
-        .map_err(|e| format!("Failed to execute idf.py via EIM python: {}", e))?;
+    .map_err(|e| format!("Failed to execute idf.py via EIM python: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -910,7 +1077,10 @@ fn run_with_export_bat(
             .current_dir(project_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000);
+        }
         cmd.spawn()
             .and_then(|child| child.wait_with_output())
             .map_err(|e| format!("Failed to execute idf.py via cmd: {}", e))?
@@ -971,11 +1141,17 @@ pub fn run_idf_command_streaming(
     let idf_path_str = idf_path_sanitized.as_str();
     info!("Streaming idf.py {:?} in {}", args, project_path);
 
-    let idf_py = find_idf_py(idf_path_str)
-        .ok_or_else(|| {
-            let root_py = Path::new(idf_path_str).join("idf.py");
-            format!("idf.py not found at {} or {}", root_py.display(), Path::new(idf_path_str).join("tools").join("idf.py").display())
-        })?;
+    let idf_py = find_idf_py(idf_path_str).ok_or_else(|| {
+        let root_py = Path::new(idf_path_str).join("idf.py");
+        format!(
+            "idf.py not found at {} or {}",
+            root_py.display(),
+            Path::new(idf_path_str)
+                .join("tools")
+                .join("idf.py")
+                .display()
+        )
+    })?;
     let idf_py = Arc::new(idf_py);
 
     let app_handle = app.clone();
@@ -996,47 +1172,87 @@ pub fn run_idf_command_streaming(
         let new_path = if eim_path_entries.is_empty() {
             format!("{}{}{}", python_scripts, PATH_LIST_SEP, system_path)
         } else {
-            format!("{}{}{}{}{}", eim_path_entries.join(PATH_LIST_SEP), PATH_LIST_SEP, python_scripts, PATH_LIST_SEP, system_path)
+            format!(
+                "{}{}{}{}{}",
+                eim_path_entries.join(PATH_LIST_SEP),
+                PATH_LIST_SEP,
+                python_scripts,
+                PATH_LIST_SEP,
+                system_path
+            )
         };
         let idf_python_env_path = Path::new(&python_path)
-            .parent().and_then(|p| p.parent())
+            .parent()
+            .and_then(|p| p.parent())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
         let idf_path = idf_path_str.to_string();
         let esp_idf_version = get_idf_version_for_env(&idf_path);
         let idf_tools_dir = join_path_parts(&[idf_path_str, "tools"]);
-        info!("Streaming EIM: python={}, idf_path={}, tools={}, version={}", python_path, idf_path, tools_path, esp_idf_version);
+        info!(
+            "Streaming EIM: python={}, idf_path={}, tools={}, version={}",
+            python_path, idf_path, tools_path, esp_idf_version
+        );
 
         std::thread::spawn(move || {
             let mut cmd = Command::new(&python_path);
             cmd.arg(idf_py.as_os_str())
-               .args(&args_vec)
-               .current_dir(&project_path)
-               .env("IDF_PATH", &idf_path)
-               .env("IDF_TOOLS_PATH", &tools_path)
-               .env("IDF_PYTHON_ENV_PATH", &idf_python_env_path)
-               .env("ESP_IDF_VERSION", &esp_idf_version)
-               .env("IDF_COMPONENT_MANAGER", "1")
-               .env("PATH", &new_path)
-               .env("PYTHONPATH", format!("{}{}{}", idf_tools_dir, PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
-               .env("OPENOCD_SCRIPTS", join_path_parts(&[&tools_path, "openocd-esp32"]))
-               .env("ESP_ROM_ELF_DIR", join_path_parts(&[&idf_path, "components", "esp_rom",
-                   &detect_target_from_project(&project_path).unwrap_or_else(|| "esp32".to_string())]))
-               .stdout(Stdio::piped())
-               .stderr(Stdio::piped());
-            #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+                .args(&args_vec)
+                .current_dir(&project_path)
+                .env("IDF_PATH", &idf_path)
+                .env("IDF_TOOLS_PATH", &tools_path)
+                .env("IDF_PYTHON_ENV_PATH", &idf_python_env_path)
+                .env("ESP_IDF_VERSION", &esp_idf_version)
+                .env("IDF_COMPONENT_MANAGER", "1")
+                .env("PATH", &new_path)
+                .env(
+                    "PYTHONPATH",
+                    format!(
+                        "{}{}{}",
+                        idf_tools_dir,
+                        PATH_LIST_SEP,
+                        std::env::var("PYTHONPATH").unwrap_or_default()
+                    ),
+                )
+                .env(
+                    "OPENOCD_SCRIPTS",
+                    join_path_parts(&[&tools_path, "openocd-esp32"]),
+                )
+                .env(
+                    "ESP_ROM_ELF_DIR",
+                    join_path_parts(&[
+                        &idf_path,
+                        "components",
+                        "esp_rom",
+                        &detect_target_from_project(&project_path)
+                            .unwrap_or_else(|| "esp32".to_string()),
+                    ]),
+                )
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            #[cfg(windows)]
+            {
+                cmd.creation_flags(0x08000000);
+            }
 
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = app_handle.emit("build-output", BuildOutputPayload {
-                        line: format!("Failed to spawn idf.py: {}", e),
-                        is_stderr: true,
-                    });
-                    let _ = app_handle.emit("build-done", BuildDonePayload {
-                        success: false, errors: vec![],
-                    });
+                    let _ = app_handle.emit(
+                        "build-output",
+                        BuildOutputPayload {
+                            line: format!("Failed to spawn idf.py: {}", e),
+                            is_stderr: true,
+                        },
+                    );
+                    let _ = app_handle.emit(
+                        "build-done",
+                        BuildDonePayload {
+                            success: false,
+                            errors: vec![],
+                        },
+                    );
                     return;
                 }
             };
@@ -1045,7 +1261,13 @@ pub fn run_idf_command_streaming(
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     for l in BufReader::new(stdout).lines().map_while(Result::ok) {
-                            let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: false });
+                        let _ = app.emit(
+                            "build-output",
+                            BuildOutputPayload {
+                                line: l,
+                                is_stderr: false,
+                            },
+                        );
                     }
                 });
             }
@@ -1053,13 +1275,25 @@ pub fn run_idf_command_streaming(
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     for l in BufReader::new(stderr).lines().map_while(Result::ok) {
-                            let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: true });
+                        let _ = app.emit(
+                            "build-output",
+                            BuildOutputPayload {
+                                line: l,
+                                is_stderr: true,
+                            },
+                        );
                     }
                 });
             }
 
             let status = child.wait().unwrap_or_default();
-            let _ = app_handle.emit("build-done", BuildDonePayload { success: status.success(), errors: vec![] });
+            let _ = app_handle.emit(
+                "build-done",
+                BuildDonePayload {
+                    success: status.success(),
+                    errors: vec![],
+                },
+            );
         });
 
         return Ok("Build started (EIM streaming)".into());
@@ -1080,7 +1314,11 @@ pub fn run_idf_command_streaming(
                 export_bat.display(),
                 esp_idf_version_fallback,
                 idf_py.display(),
-                args_vec.iter().map(|a| format!("\"{}\"", a)).collect::<Vec<_>>().join(" ")
+                args_vec
+                    .iter()
+                    .map(|a| format!("\"{}\"", a))
+                    .collect::<Vec<_>>()
+                    .join(" ")
             );
             info!("Streaming cmd: {}", cmd_str);
 
@@ -1089,15 +1327,27 @@ pub fn run_idf_command_streaming(
                 .current_dir(&project_path)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            #[cfg(windows)] { cmd.creation_flags(0x08000000); }
-            let mut child = match cmd.spawn()
+            #[cfg(windows)]
             {
+                cmd.creation_flags(0x08000000);
+            }
+            let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = app_handle.emit("build-output", BuildOutputPayload {
-                        line: format!("Failed to spawn cmd: {}", e), is_stderr: true,
-                    });
-                    let _ = app_handle.emit("build-done", BuildDonePayload { success: false, errors: vec![] });
+                    let _ = app_handle.emit(
+                        "build-output",
+                        BuildOutputPayload {
+                            line: format!("Failed to spawn cmd: {}", e),
+                            is_stderr: true,
+                        },
+                    );
+                    let _ = app_handle.emit(
+                        "build-done",
+                        BuildDonePayload {
+                            success: false,
+                            errors: vec![],
+                        },
+                    );
                     return;
                 }
             };
@@ -1106,7 +1356,13 @@ pub fn run_idf_command_streaming(
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     for l in BufReader::new(stdout).lines().map_while(Result::ok) {
-                            let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: false });
+                        let _ = app.emit(
+                            "build-output",
+                            BuildOutputPayload {
+                                line: l,
+                                is_stderr: false,
+                            },
+                        );
                     }
                 });
             }
@@ -1114,13 +1370,25 @@ pub fn run_idf_command_streaming(
                 let app = app_handle.clone();
                 std::thread::spawn(move || {
                     for l in BufReader::new(stderr).lines().map_while(Result::ok) {
-                            let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: true });
+                        let _ = app.emit(
+                            "build-output",
+                            BuildOutputPayload {
+                                line: l,
+                                is_stderr: true,
+                            },
+                        );
                     }
                 });
             }
 
             let status = child.wait().unwrap_or_default();
-            let _ = app_handle.emit("build-done", BuildDonePayload { success: status.success(), errors: vec![] });
+            let _ = app_handle.emit(
+                "build-done",
+                BuildDonePayload {
+                    success: status.success(),
+                    errors: vec![],
+                },
+            );
         });
 
         return Ok("Build started (cmd streaming)".into());
@@ -1152,10 +1420,20 @@ pub fn run_idf_command_streaming(
         {
             Ok(c) => c,
             Err(e) => {
-                let _ = app_handle.emit("build-output", BuildOutputPayload {
-                    line: format!("Failed to spawn bash: {}", e), is_stderr: true,
-                });
-                let _ = app_handle.emit("build-done", BuildDonePayload { success: false, errors: vec![] });
+                let _ = app_handle.emit(
+                    "build-output",
+                    BuildOutputPayload {
+                        line: format!("Failed to spawn bash: {}", e),
+                        is_stderr: true,
+                    },
+                );
+                let _ = app_handle.emit(
+                    "build-done",
+                    BuildDonePayload {
+                        success: false,
+                        errors: vec![],
+                    },
+                );
                 return;
             }
         };
@@ -1164,7 +1442,13 @@ pub fn run_idf_command_streaming(
             let app = app_handle.clone();
             std::thread::spawn(move || {
                 for l in BufReader::new(stdout).lines().map_while(Result::ok) {
-                        let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: false });
+                    let _ = app.emit(
+                        "build-output",
+                        BuildOutputPayload {
+                            line: l,
+                            is_stderr: false,
+                        },
+                    );
                 }
             });
         }
@@ -1172,13 +1456,25 @@ pub fn run_idf_command_streaming(
             let app = app_handle.clone();
             std::thread::spawn(move || {
                 for l in BufReader::new(stderr).lines().map_while(Result::ok) {
-                        let _ = app.emit("build-output", BuildOutputPayload { line: l, is_stderr: true });
+                    let _ = app.emit(
+                        "build-output",
+                        BuildOutputPayload {
+                            line: l,
+                            is_stderr: true,
+                        },
+                    );
                 }
             });
         }
 
         let status = child.wait().unwrap_or_default();
-        let _ = app_handle.emit("build-done", BuildDonePayload { success: status.success(), errors: vec![] });
+        let _ = app_handle.emit(
+            "build-done",
+            BuildDonePayload {
+                success: status.success(),
+                errors: vec![],
+            },
+        );
     });
 
     Ok("Build started (bash streaming)".into())
@@ -1186,24 +1482,41 @@ pub fn run_idf_command_streaming(
 
 // ==================== 便捷函数 ====================
 
-pub fn idf_create_project(parent_path: &str, project_name: &str, idf_path: &str) -> Result<(), String> {
-    info!("Running idf.py create-project {} in {}", project_name, parent_path);
-    run_idf_command(parent_path, idf_path, &["create-project", project_name])
-        .map(|output| { info!("idf.py create-project output:\n{}", output); })
+pub fn idf_create_project(
+    parent_path: &str,
+    project_name: &str,
+    idf_path: &str,
+) -> Result<(), String> {
+    info!(
+        "Running idf.py create-project {} in {}",
+        project_name, parent_path
+    );
+    run_idf_command(parent_path, idf_path, &["create-project", project_name]).map(|output| {
+        info!("idf.py create-project output:\n{}", output);
+    })
 }
 
 pub fn set_target(project_path: &str, idf_path: &str, target: &str) -> Result<(), String> {
     info!("Running idf.py set-target {} in {}", target, project_path);
-    run_idf_command(project_path, idf_path, &["set-target", target])
-        .map(|output| { info!("idf.py set-target output:\n{}", output); })
+    run_idf_command(project_path, idf_path, &["set-target", target]).map(|output| {
+        info!("idf.py set-target output:\n{}", output);
+    })
 }
 
 /// 设置目标芯片（流式输出，不阻塞 UI）
 #[tauri::command]
-pub fn idf_set_target(app: tauri::AppHandle, project_path: String, idf_path: String, target: String) -> Result<String, String> {
+pub fn idf_set_target(
+    app: tauri::AppHandle,
+    project_path: String,
+    idf_path: String,
+    target: String,
+) -> Result<String, String> {
     // 归一化目标名称：ESP32-S3 → esp32s3（idf.py set-target 要求小写无连字符）
     let normalized = target.to_lowercase().replace('-', "");
-    info!("Setting target (streaming): {} (from {}) in project {}", normalized, target, project_path);
+    info!(
+        "Setting target (streaming): {} (from {}) in project {}",
+        normalized, target, project_path
+    );
     run_idf_command_streaming(&app, &project_path, &idf_path, &["set-target", &normalized])
 }
 
@@ -1215,8 +1528,17 @@ pub fn flash(project_path: &str, idf_path: &str, port: &str) -> Result<String, S
     run_idf_command(project_path, idf_path, &["-p", port, "flash"])
 }
 
-pub fn monitor(project_path: &str, idf_path: &str, port: &str, baudrate: u32) -> Result<String, String> {
-    run_idf_command(project_path, idf_path, &["-p", port, "-b", &baudrate.to_string(), "monitor"])
+pub fn monitor(
+    project_path: &str,
+    idf_path: &str,
+    port: &str,
+    baudrate: u32,
+) -> Result<String, String> {
+    run_idf_command(
+        project_path,
+        idf_path,
+        &["-p", port, "-b", &baudrate.to_string(), "monitor"],
+    )
 }
 
 pub fn menuconfig(project_path: &str, idf_path: &str) -> Result<String, String> {
@@ -1239,8 +1561,11 @@ pub fn size(project_path: &str, idf_path: &str) -> Result<String, String> {
     // Try JSON format first (--json size-components), fallback to text
     let json_result = run_idf_command(project_path, idf_path, &["--json", "size-components"]);
     match json_result {
-        Ok(output) if !output.trim().is_empty() && serde_json::from_str::<serde_json::Value>(&output).is_ok() => {
-                return Ok(output);
+        Ok(output)
+            if !output.trim().is_empty()
+                && serde_json::from_str::<serde_json::Value>(&output).is_ok() =>
+        {
+            return Ok(output);
         }
         _ => {}
     }
@@ -1250,7 +1575,10 @@ pub fn size(project_path: &str, idf_path: &str) -> Result<String, String> {
 
 /// Get firmware size as structured data for frontend visualization
 #[tauri::command]
-pub async fn idf_size_json(project_path: String, idf_path: String) -> Result<serde_json::Value, String> {
+pub async fn idf_size_json(
+    project_path: String,
+    idf_path: String,
+) -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(move || {
         let output = size(&project_path, &idf_path)?;
         // Try parsing as JSON first, if it's the text format, convert to structured
@@ -1276,7 +1604,9 @@ pub async fn idf_size_json(project_path: String, idf_path: String) -> Result<ser
             "components": components,
             "format": "text"
         }))
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub fn erase_flash(project_path: &str, idf_path: &str, port: &str) -> Result<String, String> {
@@ -1284,21 +1614,36 @@ pub fn erase_flash(project_path: &str, idf_path: &str, port: &str) -> Result<Str
     run_idf_command(project_path, idf_path, &["-p", port, "erase-flash"])
 }
 
-pub fn build_flash_monitor(project_path: &str, idf_path: &str, port: &str) -> Result<String, String> {
+pub fn build_flash_monitor(
+    project_path: &str,
+    idf_path: &str,
+    port: &str,
+) -> Result<String, String> {
     info!("Build + Flash + Monitor for {} on {}", project_path, port);
-    run_idf_command_foreground(project_path, idf_path, &["-p", port, "build", "flash", "monitor"])
+    run_idf_command_foreground(
+        project_path,
+        idf_path,
+        &["-p", port, "build", "flash", "monitor"],
+    )
 }
 
 /// 在新终端窗口中运行 idf.py 命令（用于交互式命令如 menuconfig、monitor）
-fn run_idf_command_foreground(project_path: &str, idf_path: &str, args: &[&str]) -> Result<String, String> {
+fn run_idf_command_foreground(
+    project_path: &str,
+    idf_path: &str,
+    args: &[&str],
+) -> Result<String, String> {
     let idf_path = sanitize_idf_path(idf_path);
     let idf_path = idf_path.as_str();
 
-    let idf_py = find_idf_py(idf_path)
-        .ok_or_else(|| {
-            let root_py = Path::new(idf_path).join("idf.py");
-            format!("idf.py not found at {} or {}", root_py.display(), Path::new(idf_path).join("tools").join("idf.py").display())
-        })?;
+    let idf_py = find_idf_py(idf_path).ok_or_else(|| {
+        let root_py = Path::new(idf_path).join("idf.py");
+        format!(
+            "idf.py not found at {} or {}",
+            root_py.display(),
+            Path::new(idf_path).join("tools").join("idf.py").display()
+        )
+    })?;
 
     // Shell-escape args for safe interpolation into cmd /C or bash -c
     let args_str = shell_join(args);
@@ -1315,7 +1660,8 @@ fn run_idf_command_foreground(project_path: &str, idf_path: &str, args: &[&str])
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         let idf_python_env_path = Path::new(&python_path)
-            .parent().and_then(|p| p.parent())
+            .parent()
+            .and_then(|p| p.parent())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         let idf_tools_dir = join_path_parts(&[idf_path, "tools"]);
@@ -1354,8 +1700,12 @@ fn run_idf_command_foreground(project_path: &str, idf_path: &str, args: &[&str])
                 format!("{}:{}:$PATH", eim_path_entries.join(":"), python_scripts)
             };
             let openocd_scripts = join_path_parts(&[tools_path, "openocd-esp32"]);
-            let esp_rom_elf_dir = join_path_parts(&[idf_path, "components", "esp_rom",
-                &detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())]);
+            let esp_rom_elf_dir = join_path_parts(&[
+                idf_path,
+                "components",
+                "esp_rom",
+                &detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string()),
+            ]);
 
             let cmd_str = format!(
                 "export IDF_PATH={} && export IDF_TOOLS_PATH={} && export IDF_PYTHON_ENV_PATH={} && export ESP_IDF_VERSION={} && export PATH={} && export PYTHONPATH={} && export OPENOCD_SCRIPTS={} && export ESP_ROM_ELF_DIR={} && python {} {} {}; echo 'Press Enter to close...'; read",
@@ -1438,8 +1788,15 @@ pub fn idf_validate_path(path: String) -> Result<IDFEnvironment, String> {
 
 /// 构建项目（流式输出，不阻塞 UI）
 #[tauri::command]
-pub fn idf_build(app: tauri::AppHandle, project_path: String, idf_path: String) -> Result<String, String> {
-    info!("Building project (streaming): {} with ESP-IDF at {}", project_path, idf_path);
+pub fn idf_build(
+    app: tauri::AppHandle,
+    project_path: String,
+    idf_path: String,
+) -> Result<String, String> {
+    info!(
+        "Building project (streaming): {} with ESP-IDF at {}",
+        project_path, idf_path
+    );
     run_idf_command_streaming(&app, &project_path, &idf_path, &["build"])
 }
 
@@ -1453,8 +1810,16 @@ pub fn build_sync(project_path: &str, idf_path: &str) -> Result<String, String> 
 }
 
 #[tauri::command]
-pub fn idf_flash(app: tauri::AppHandle, project_path: String, idf_path: String, port: String) -> Result<String, String> {
-    info!("Flashing project (streaming): {} to port: {} with ESP-IDF at {}", project_path, port, idf_path);
+pub fn idf_flash(
+    app: tauri::AppHandle,
+    project_path: String,
+    idf_path: String,
+    port: String,
+) -> Result<String, String> {
+    info!(
+        "Flashing project (streaming): {} to port: {} with ESP-IDF at {}",
+        project_path, port, idf_path
+    );
     run_idf_command_streaming(&app, &project_path, &idf_path, &["-p", &port, "flash"])
 }
 
@@ -1462,8 +1827,13 @@ pub fn parse_compile_errors(output: &str) -> Vec<crate::commands::build::Compile
     use std::sync::OnceLock;
     static GCC_RE: OnceLock<regex::Regex> = OnceLock::new();
     static CMAKE_RE: OnceLock<regex::Regex> = OnceLock::new();
-    let gcc_re = GCC_RE.get_or_init(|| regex::Regex::new(r"([^:]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap());
-    let cmake_re = CMAKE_RE.get_or_init(|| regex::Regex::new(r"CMake\s+(Error|Warning)\s+at\s+([^:]+):(\d+)\s*\(([^)]*)\)\s*:").unwrap());
+    let gcc_re = GCC_RE.get_or_init(|| {
+        regex::Regex::new(r"([^:]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap()
+    });
+    let cmake_re = CMAKE_RE.get_or_init(|| {
+        regex::Regex::new(r"CMake\s+(Error|Warning)\s+at\s+([^:]+):(\d+)\s*\(([^)]*)\)\s*:")
+            .unwrap()
+    });
 
     let mut errors = Vec::new();
 
@@ -1477,9 +1847,19 @@ pub fn parse_compile_errors(output: &str) -> Vec<crate::commands::build::Compile
             if caps.len() >= 6 {
                 errors.push(crate::commands::build::CompileError {
                     file: caps.get(1).map(|m| m.as_str()).unwrap_or("").to_string(),
-                    line: caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0),
-                    column: caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0),
-                    error_type: caps.get(4).map(|m| m.as_str()).unwrap_or("error").to_string(),
+                    line: caps
+                        .get(2)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0),
+                    column: caps
+                        .get(3)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0),
+                    error_type: caps
+                        .get(4)
+                        .map(|m| m.as_str())
+                        .unwrap_or("error")
+                        .to_string(),
                     message: caps.get(5).map(|m| m.as_str()).unwrap_or("").to_string(),
                 });
             }
@@ -1487,9 +1867,16 @@ pub fn parse_compile_errors(output: &str) -> Vec<crate::commands::build::Compile
 
         // Try CMake format
         if let Some(caps) = cmake_re.captures(line) {
-            let error_type = caps.get(1).map(|m| m.as_str()).unwrap_or("Error").to_lowercase();
+            let error_type = caps
+                .get(1)
+                .map(|m| m.as_str())
+                .unwrap_or("Error")
+                .to_lowercase();
             let file = caps.get(2).map(|m| m.as_str()).unwrap_or("").to_string();
-            let line_num = caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+            let line_num = caps
+                .get(3)
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(0);
 
             // Collect message from subsequent indented lines
             let mut message = String::new();
@@ -1502,7 +1889,10 @@ pub fn parse_compile_errors(output: &str) -> Vec<crate::commands::build::Compile
                     continue;
                 }
                 // Stop if we hit another error pattern or Call Stack
-                if gcc_re.is_match(trimmed) || cmake_re.is_match(trimmed) || trimmed.starts_with("Call Stack") {
+                if gcc_re.is_match(trimmed)
+                    || cmake_re.is_match(trimmed)
+                    || trimmed.starts_with("Call Stack")
+                {
                     break;
                 }
                 if !message.is_empty() {
@@ -1529,8 +1919,11 @@ pub fn parse_compile_errors(output: &str) -> Vec<crate::commands::build::Compile
     if errors.is_empty() {
         for line in &lines {
             let lower = line.to_lowercase();
-            if lower.contains("error") && !lower.contains("without error") && !lower.contains("no error")
-                && !lower.contains("permission denied") && !lower.contains("filenotfounderror")
+            if lower.contains("error")
+                && !lower.contains("without error")
+                && !lower.contains("no error")
+                && !lower.contains("permission denied")
+                && !lower.contains("filenotfounderror")
                 && !lower.contains("no such file or directory")
                 && !lower.contains("errno")
             {
@@ -1557,7 +1950,12 @@ pub fn parse_compile_errors(output: &str) -> Vec<crate::commands::build::Compile
 }
 
 #[tauri::command]
-pub fn idf_monitor(project_path: String, idf_path: String, port: String, baudrate: u32) -> Result<String, String> {
+pub fn idf_monitor(
+    project_path: String,
+    idf_path: String,
+    port: String,
+    baudrate: u32,
+) -> Result<String, String> {
     info!("Starting monitor: {} at {} baud", port, baudrate);
     monitor(&project_path, &idf_path, &port, baudrate)
 }
@@ -1569,40 +1967,59 @@ pub fn idf_menuconfig(project_path: String, idf_path: String) -> Result<String, 
 
 #[tauri::command]
 pub async fn idf_clean(project_path: String, idf_path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || clean(&project_path, &idf_path)).await.map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || clean(&project_path, &idf_path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn idf_fullclean(project_path: String, idf_path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || fullclean(&project_path, &idf_path)).await.map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || fullclean(&project_path, &idf_path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn idf_size(project_path: String, idf_path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || size(&project_path, &idf_path)).await.map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || size(&project_path, &idf_path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn idf_erase_flash(project_path: String, idf_path: String, port: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || erase_flash(&project_path, &idf_path, &port)).await.map_err(|e| e.to_string())?
+pub async fn idf_erase_flash(
+    project_path: String,
+    idf_path: String,
+    port: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || erase_flash(&project_path, &idf_path, &port))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn idf_build_flash_monitor(project_path: String, idf_path: String, port: String) -> Result<String, String> {
+pub fn idf_build_flash_monitor(
+    project_path: String,
+    idf_path: String,
+    port: String,
+) -> Result<String, String> {
     build_flash_monitor(&project_path, &idf_path, &port)
 }
 
 #[tauri::command]
 pub fn idf_get_eim_setups() -> Result<Vec<serde_json::Value>, String> {
     let setups = detect_eim_setups();
-    let result: Vec<serde_json::Value> = setups.iter().map(|s| {
-        serde_json::json!({
-            "name": s.name,
-            "path": s.path,
-            "toolsPath": s.idf_tools_path,
-            "python": s.python,
+    let result: Vec<serde_json::Value> = setups
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "name": s.name,
+                "path": s.path,
+                "toolsPath": s.idf_tools_path,
+                "python": s.python,
+            })
         })
-    }).collect();
+        .collect();
     Ok(result)
 }
 
@@ -1631,7 +2048,11 @@ pub fn idf_list_templates(idf_path: String) -> Result<Vec<serde_json::Value>, St
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 let cmake = path.join("CMakeLists.txt");
                 let main = path.join("main").join("CMakeLists.txt");
                 if cmake.exists() || main.exists() {
@@ -1669,18 +2090,25 @@ pub fn idf_list_templates(idf_path: String) -> Result<Vec<serde_json::Value>, St
 
 /// 读取和解析分区表 CSV（参考官方 partition-table 编辑器）
 #[tauri::command]
-pub fn idf_read_partition_table(project_path: String, _idf_path: Option<String>) -> Result<serde_json::Value, String> {
+pub fn idf_read_partition_table(
+    project_path: String,
+    _idf_path: Option<String>,
+) -> Result<serde_json::Value, String> {
     let proj = Path::new(&project_path);
     // Find partition table CSV (prioritize project-specific, then sdkconfig default)
     let candidates = [
         proj.join("partitions.csv"),
         proj.join("partitions_singleapp.csv"),
-        proj.join("build").join("partition_table").join("partitions.csv"),
+        proj.join("build")
+            .join("partition_table")
+            .join("partitions.csv"),
     ];
-    let csv_path = candidates.iter().find(|p| p.exists())
-        .ok_or_else(|| "No partition table found. Create partitions.csv in your project.".to_string())?;
+    let csv_path = candidates.iter().find(|p| p.exists()).ok_or_else(|| {
+        "No partition table found. Create partitions.csv in your project.".to_string()
+    })?;
 
-    let content = std::fs::read_to_string(csv_path).map_err(|e| format!("Failed to read: {}", e))?;
+    let content =
+        std::fs::read_to_string(csv_path).map_err(|e| format!("Failed to read: {}", e))?;
     let rows = parse_partition_csv(&content);
 
     Ok(serde_json::json!({
@@ -1698,7 +2126,10 @@ fn parse_partition_csv(content: &str) -> Vec<serde_json::Value> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        let cols: Vec<&str> = trimmed.split(',').map(|s| s.trim().trim_matches('"')).collect();
+        let cols: Vec<&str> = trimmed
+            .split(',')
+            .map(|s| s.trim().trim_matches('"'))
+            .collect();
         if cols.len() >= 5 {
             rows.push(serde_json::json!({
                 "name": cols[0],
@@ -1715,13 +2146,18 @@ fn parse_partition_csv(content: &str) -> Vec<serde_json::Value> {
 
 /// 组件管理：列出已安装的组件（参考官方 component-manager）
 #[tauri::command]
-pub fn idf_component_list(project_path: String, idf_path: String) -> Result<serde_json::Value, String> {
+pub fn idf_component_list(
+    project_path: String,
+    idf_path: String,
+) -> Result<serde_json::Value, String> {
     let _ = idf_path; // reserved for future filtering
-    
+
     // ESP-IDF 5.x 支持在项目根目录或组件目录放置 idf_component.yml
     let root_yml = Path::new(&project_path).join("idf_component.yml");
-    let main_yml = Path::new(&project_path).join("main").join("idf_component.yml");
-    
+    let main_yml = Path::new(&project_path)
+        .join("main")
+        .join("idf_component.yml");
+
     let mut components = Vec::new();
 
     // Check managed_components directory
@@ -1739,7 +2175,12 @@ pub fn idf_component_list(project_path: String, idf_path: String) -> Result<serd
                             .and_then(|c| {
                                 c.lines()
                                     .find(|l| l.trim().starts_with("version:"))
-                                    .map(|l| l.trim().trim_start_matches("version:").trim_matches('"').to_string())
+                                    .map(|l| {
+                                        l.trim()
+                                            .trim_start_matches("version:")
+                                            .trim_matches('"')
+                                            .to_string()
+                                    })
                             })
                             .unwrap_or_default()
                     } else {
@@ -1773,10 +2214,11 @@ pub async fn idf_component_add(
     version: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let ver_str = version.unwrap_or_else(|| "*".into());
-    let result = run_idf_command_live(&project_path, &idf_path, &[
-        "add-dependency",
-        &format!("{}@{}", component_name, ver_str),
-    ]);
+    let result = run_idf_command_live(
+        &project_path,
+        &idf_path,
+        &["add-dependency", &format!("{}@{}", component_name, ver_str)],
+    );
     match result {
         Ok(output) => Ok(serde_json::json!({"success": true, "output": output})),
         Err(e) => Err(e),
@@ -1790,7 +2232,8 @@ pub fn idf_get_sdkconfig(project_path: String) -> Result<serde_json::Value, Stri
     let defaults = Path::new(&project_path).join("sdkconfig.defaults");
 
     let content = if sdkconfig.exists() {
-        std::fs::read_to_string(&sdkconfig).map_err(|e| format!("Failed to read sdkconfig: {}", e))?
+        std::fs::read_to_string(&sdkconfig)
+            .map_err(|e| format!("Failed to read sdkconfig: {}", e))?
     } else {
         String::new()
     };
@@ -1822,9 +2265,16 @@ pub fn idf_get_sdkconfig(project_path: String) -> Result<serde_json::Value, Stri
 
 /// Arduino 支持：将 Arduino 添加为 ESP-IDF 组件（参考官方 addArduinoComponent）
 #[tauri::command]
-pub fn idf_add_arduino(project_path: String, idf_path: String) -> Result<serde_json::Value, String> {
+pub fn idf_add_arduino(
+    project_path: String,
+    idf_path: String,
+) -> Result<serde_json::Value, String> {
     info!("Adding Arduino as ESP-IDF component for {}", project_path);
-    let result = run_idf_command(&project_path, &idf_path, &["add-dependency", "espressif/arduino-esp32"]);
+    let result = run_idf_command(
+        &project_path,
+        &idf_path,
+        &["add-dependency", "espressif/arduino-esp32"],
+    );
     match result {
         Ok(output) => Ok(serde_json::json!({"success": true, "output": output})),
         Err(e) => Err(format!("Failed to add Arduino component: {}", e)),
@@ -1833,7 +2283,10 @@ pub fn idf_add_arduino(project_path: String, idf_path: String) -> Result<serde_j
 
 /// eFuse: 读取芯片 eFuse 摘要（参考官方 efuse/index.ts）
 #[tauri::command]
-pub fn idf_efuse_summary(project_path: String, idf_path: String) -> Result<serde_json::Value, String> {
+pub fn idf_efuse_summary(
+    project_path: String,
+    idf_path: String,
+) -> Result<serde_json::Value, String> {
     info!("Reading eFuse summary for {}", project_path);
     let result = run_idf_command(&project_path, &idf_path, &["efuse-summary"]);
     match result {
@@ -1844,14 +2297,25 @@ pub fn idf_efuse_summary(project_path: String, idf_path: String) -> Result<serde
 
 /// eFuse: 烧录 eFuse（需谨慎！）
 #[tauri::command]
-pub fn idf_efuse_burn(project_path: String, idf_path: String, efuse_name: String, value: String) -> Result<serde_json::Value, String> {
-    info!("Burning eFuse {}={} for {}", efuse_name, value, project_path);
-    let confirm = format!("Are you sure you want to burn eFuse {}={}? This operation is IRREVERSIBLE!", efuse_name, value);
-    let result = run_idf_command(&project_path, &idf_path, &[
-        "efuse-burn",
-        &efuse_name,
-        &value,
-    ]);
+pub fn idf_efuse_burn(
+    project_path: String,
+    idf_path: String,
+    efuse_name: String,
+    value: String,
+) -> Result<serde_json::Value, String> {
+    info!(
+        "Burning eFuse {}={} for {}",
+        efuse_name, value, project_path
+    );
+    let confirm = format!(
+        "Are you sure you want to burn eFuse {}={}? This operation is IRREVERSIBLE!",
+        efuse_name, value
+    );
+    let result = run_idf_command(
+        &project_path,
+        &idf_path,
+        &["efuse-burn", &efuse_name, &value],
+    );
     match result {
         Ok(output) => Ok(serde_json::json!({
             "success": true,
@@ -1872,7 +2336,11 @@ pub fn idf_find_tests(project_path: String) -> Result<serde_json::Value, String>
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "c" || e == "cpp") {
-                    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                    let name = path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     tests.push(serde_json::json!({
                         "name": name,
                         "path": path.to_string_lossy(),
@@ -1888,7 +2356,11 @@ pub fn idf_find_tests(project_path: String) -> Result<serde_json::Value, String>
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "c" || e == "cpp") {
-                    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                    let name = path
+                        .file_stem()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
                     tests.push(serde_json::json!({
                         "name": name,
                         "path": path.to_string_lossy(),
@@ -1902,7 +2374,11 @@ pub fn idf_find_tests(project_path: String) -> Result<serde_json::Value, String>
 
 /// App Tracing: 启动应用追踪（参考官方 appTrace + SystemView）
 #[tauri::command]
-pub fn idf_app_trace_start(project_path: String, idf_path: String, port: Option<String>) -> Result<serde_json::Value, String> {
+pub fn idf_app_trace_start(
+    project_path: String,
+    idf_path: String,
+    port: Option<String>,
+) -> Result<serde_json::Value, String> {
     info!("Starting app trace for {}", project_path);
     let port_str = port.unwrap_or_else(|| "auto".into());
     let result = if port_str == "auto" {
@@ -1912,16 +2388,27 @@ pub fn idf_app_trace_start(project_path: String, idf_path: String, port: Option<
     };
     match result {
         Ok(output) => Ok(serde_json::json!({"success": true, "output": output})),
-        Err(e) => Err(format!("App trace failed: {}. Ensure CONFIG_APPTRACE_ENABLE=y and OpenOCD is running.", e)),
+        Err(e) => Err(format!(
+            "App trace failed: {}. Ensure CONFIG_APPTRACE_ENABLE=y and OpenOCD is running.",
+            e
+        )),
     }
 }
 
 #[tauri::command]
-pub async fn idf_doctor(project_path: Option<String>, idf_path: Option<String>) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || doctor_internal(project_path, idf_path)).await.map_err(|e| e.to_string())?
+pub async fn idf_doctor(
+    project_path: Option<String>,
+    idf_path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || doctor_internal(project_path, idf_path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
-pub fn doctor_internal(project_path: Option<String>, idf_path: Option<String>) -> Result<serde_json::Value, String> {
+pub fn doctor_internal(
+    project_path: Option<String>,
+    idf_path: Option<String>,
+) -> Result<serde_json::Value, String> {
     let mut checks: Vec<serde_json::Value> = Vec::new();
     let mut pass = 0;
     let mut fail = 0;
@@ -1934,7 +2421,11 @@ pub fn doctor_internal(project_path: Option<String>, idf_path: Option<String>) -
             checks.push(serde_json::json!({"name": "IDF Path", "status": "ok", "detail": idf}));
             pass += 1;
         } else {
-            let detail = if !idf_exists { "IDF directory not found" } else { "idf.py not found in IDF directory" };
+            let detail = if !idf_exists {
+                "IDF directory not found"
+            } else {
+                "idf.py not found in IDF directory"
+            };
             checks.push(serde_json::json!({"name": "IDF Path", "status": "error", "detail": format!("{}: {}", idf, detail)}));
             fail += 1;
         }
@@ -1959,7 +2450,10 @@ pub fn doctor_internal(project_path: Option<String>, idf_path: Option<String>) -
         } else {
             let mut python_cmd = Command::new("python");
             python_cmd.arg("--version");
-            #[cfg(windows)] { python_cmd.creation_flags(0x08000000); }
+            #[cfg(windows)]
+            {
+                python_cmd.creation_flags(0x08000000);
+            }
             let python_result = python_cmd.output();
             match python_result {
                 Ok(o) if o.status.success() => {
@@ -2000,7 +2494,8 @@ pub fn doctor_internal(project_path: Option<String>, idf_path: Option<String>) -
     if let Some(ref proj) = project_path {
         let proj_path = Path::new(proj);
         if proj_path.exists() {
-            checks.push(serde_json::json!({"name": "Project Path", "status": "ok", "detail": proj}));
+            checks
+                .push(serde_json::json!({"name": "Project Path", "status": "ok", "detail": proj}));
             pass += 1;
 
             if proj_path.join("sdkconfig").exists() {
@@ -2031,7 +2526,13 @@ pub fn doctor_internal(project_path: Option<String>, idf_path: Option<String>) -
         }
     }
 
-    let health = if fail == 0 { "healthy" } else if fail <= checks.len() / 4 { "warn" } else { "error" };
+    let health = if fail == 0 {
+        "healthy"
+    } else if fail <= checks.len() / 4 {
+        "warn"
+    } else {
+        "error"
+    };
     Ok(serde_json::json!({
         "health": health,
         "pass": pass,
@@ -2054,13 +2555,15 @@ pub fn run_idf_command_live(
 ) -> Result<String, String> {
     let idf_path_sanitized = sanitize_idf_path(idf_path);
     let idf_path_str = idf_path_sanitized.as_str();
-    info!("Running idf.py {:?} in {} (idf_path='{}')", args, project_path, idf_path_str);
+    info!(
+        "Running idf.py {:?} in {} (idf_path='{}')",
+        args, project_path, idf_path_str
+    );
 
-    let idf_py = find_idf_py(idf_path_str)
-        .ok_or_else(|| {
-            let root_py = Path::new(idf_path_str).join("idf.py");
-            format!("idf.py not found at {}", root_py.display())
-        })?;
+    let idf_py = find_idf_py(idf_path_str).ok_or_else(|| {
+        let root_py = Path::new(idf_path_str).join("idf.py");
+        format!("idf.py not found at {}", root_py.display())
+    })?;
 
     // 尝试 EIM 方式
     if let Some(eim_setup) = find_eim_setup(idf_path_str) {
@@ -2076,10 +2579,18 @@ pub fn run_idf_command_live(
         let new_path = if eim_path_entries.is_empty() {
             format!("{}{}{}", python_scripts, PATH_LIST_SEP, system_path)
         } else {
-            format!("{}{}{}{}{}", eim_path_entries.join(PATH_LIST_SEP), PATH_LIST_SEP, python_scripts, PATH_LIST_SEP, system_path)
+            format!(
+                "{}{}{}{}{}",
+                eim_path_entries.join(PATH_LIST_SEP),
+                PATH_LIST_SEP,
+                python_scripts,
+                PATH_LIST_SEP,
+                system_path
+            )
         };
         let idf_python_env_path = Path::new(&python_path)
-            .parent().and_then(|p| p.parent())
+            .parent()
+            .and_then(|p| p.parent())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         let esp_idf_version = get_idf_version_for_env(idf_path_str);
@@ -2095,13 +2606,35 @@ pub fn run_idf_command_live(
             .env("ESP_IDF_VERSION", &esp_idf_version)
             .env("IDF_COMPONENT_MANAGER", "1")
             .env("PATH", &new_path)
-            .env("PYTHONPATH", format!("{}{}{}", &idf_tools_dir, PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
-            .env("OPENOCD_SCRIPTS", join_path_parts(&[tools_path, "openocd-esp32"]))
-            .env("ESP_ROM_ELF_DIR", join_path_parts(&[idf_path_str, "components", "esp_rom",
-                &detect_target_from_project(project_path).unwrap_or_else(|| "esp32".to_string())]))
+            .env(
+                "PYTHONPATH",
+                format!(
+                    "{}{}{}",
+                    &idf_tools_dir,
+                    PATH_LIST_SEP,
+                    std::env::var("PYTHONPATH").unwrap_or_default()
+                ),
+            )
+            .env(
+                "OPENOCD_SCRIPTS",
+                join_path_parts(&[tools_path, "openocd-esp32"]),
+            )
+            .env(
+                "ESP_ROM_ELF_DIR",
+                join_path_parts(&[
+                    idf_path_str,
+                    "components",
+                    "esp_rom",
+                    &detect_target_from_project(project_path)
+                        .unwrap_or_else(|| "esp32".to_string()),
+                ]),
+            )
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000);
+        }
 
         return spawn_and_stream_live(cmd);
     }
@@ -2143,7 +2676,10 @@ pub fn run_idf_command_live(
         cmd.current_dir(project_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000);
+        }
         return spawn_and_stream_live(cmd);
     }
 
@@ -2170,10 +2706,13 @@ pub fn run_idf_command_live(
 
 /// 启动子进程，实时打印 stdout/stderr，最后返回完整输出摘要
 fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)] { cmd.creation_flags(0x08000000); }
-    let mut child = cmd.spawn()
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn process: {}", e))?;
 
     let stdout_reader = child.stdout.take().map(BufReader::new);
@@ -2187,8 +2726,8 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
         let lines = stdout_lines.clone();
         std::thread::spawn(move || {
             for line in reader.lines().map_while(Result::ok) {
-                    println!("{}", line);
-                    lines.lock().unwrap_or_else(|e| e.into_inner()).push(line);
+                println!("{}", line);
+                lines.lock().unwrap_or_else(|e| e.into_inner()).push(line);
             }
         });
     }
@@ -2198,20 +2737,27 @@ fn spawn_and_stream_live(mut cmd: Command) -> Result<String, String> {
         let lines = stderr_lines.clone();
         std::thread::spawn(move || {
             for line in reader.lines().map_while(Result::ok) {
-                    eprintln!("{}", line);
-                    lines.lock().unwrap_or_else(|e| e.into_inner()).push(line);
+                eprintln!("{}", line);
+                lines.lock().unwrap_or_else(|e| e.into_inner()).push(line);
             }
         });
     }
 
-    let status = child.wait()
+    let status = child
+        .wait()
         .map_err(|e| format!("Failed to wait for process: {}", e))?;
 
     // Give reader threads a moment to finish
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    let stdout_text = stdout_lines.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
-    let stderr_text = stderr_lines.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
+    let stdout_text = stdout_lines
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .join("\n");
+    let stderr_text = stderr_lines
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .join("\n");
     let combined = if stderr_text.is_empty() {
         stdout_text.clone()
     } else if stdout_text.is_empty() {
@@ -2237,8 +2783,11 @@ pub fn validate_python_path(path: String) -> Result<String, String> {
     let mut cmd = std::process::Command::new(&path);
     cmd.args(["--version"]);
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
-    let output = cmd.output()
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    let output = cmd
+        .output()
         .map_err(|e| format!("无法执行 Python: {}", e))?;
 
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();

@@ -21,7 +21,9 @@ pub const OPENOCD_ADDR: &str = "127.0.0.1:4444";
 
 /// Parsed OpenOCD address — use this instead of `OPENOCD_ADDR.parse().unwrap()`.
 pub fn openocd_addr() -> SocketAddr {
-    OPENOCD_ADDR.parse().expect("OPENOCD_ADDR is a valid SocketAddr")
+    OPENOCD_ADDR
+        .parse()
+        .expect("OPENOCD_ADDR is a valid SocketAddr")
 }
 
 /// GDB address used by the verify adapter.
@@ -115,29 +117,40 @@ pub trait Adapter: Send + Sync {
 pub struct PreflightCheckAdapter;
 
 impl Adapter for PreflightCheckAdapter {
-    fn name(&self) -> &str { "check.preflight" }
-    fn description(&self) -> &str { "Pre-flight checks: validate serial port and board" }
+    fn name(&self) -> &str {
+        "check.preflight"
+    }
+    fn description(&self) -> &str {
+        "Pre-flight checks: validate serial port and board"
+    }
 
     fn execute(&self, params: &serde_json::Value, _work_dir: &str) -> AdapterResult {
-        let port = params.get("port").and_then(|v| v.as_str()).unwrap_or(default_port_hint());
-        let _board = params.get("board").and_then(|v| v.as_str()).unwrap_or("esp32");
+        let port = params
+            .get("port")
+            .and_then(|v| v.as_str())
+            .unwrap_or(default_port_hint());
+        let _board = params
+            .get("board")
+            .and_then(|v| v.as_str())
+            .unwrap_or("esp32");
         let start = Instant::now();
 
         let ports = serialport::available_ports().unwrap_or_default();
         let duration = start.elapsed().as_millis() as u64;
 
         if ports.iter().any(|p| p.port_name == port) {
-            AdapterResult::ok(
-                Some(format!("Port {} is available", port)),
-                duration,
-            )
+            AdapterResult::ok(Some(format!("Port {} is available", port)), duration)
         } else {
             let available: Vec<String> = ports.iter().map(|p| p.port_name.clone()).collect();
             AdapterResult::fail(
                 format!(
                     "Port {} not found. Available: {}",
                     port,
-                    if available.is_empty() { "none".into() } else { available.join(", ") }
+                    if available.is_empty() {
+                        "none".into()
+                    } else {
+                        available.join(", ")
+                    }
                 ),
                 None,
                 duration,
@@ -153,7 +166,9 @@ pub struct AdapterRegistry {
 
 impl AdapterRegistry {
     pub fn new() -> Self {
-        Self { adapters: HashMap::new() }
+        Self {
+            adapters: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, adapter: Arc<dyn Adapter>) {
@@ -215,23 +230,19 @@ pub fn resolve_and_execute(
     let adapter = match registry.get(adapter_name) {
         Some(a) => a,
         None => {
-            return AdapterResult::fail(
-                format!("Unknown adapter: {}", adapter_name),
-                None,
-                0,
-            );
+            return AdapterResult::fail(format!("Unknown adapter: {}", adapter_name), None, 0);
         }
     };
 
-    let needs_idf = matches!(
-        adapter_name,
-        "build.idf" | "flash.idf_esptool"
-    );
+    let needs_idf = matches!(adapter_name, "build.idf" | "flash.idf_esptool");
 
     let effective_params = if needs_idf && !idf_path.is_empty() {
         let mut map = params.clone();
         if let Some(obj) = map.as_object_mut() {
-            obj.insert("idf_path".into(), serde_json::Value::String(idf_path.to_string()));
+            obj.insert(
+                "idf_path".into(),
+                serde_json::Value::String(idf_path.to_string()),
+            );
         }
         map
     } else {

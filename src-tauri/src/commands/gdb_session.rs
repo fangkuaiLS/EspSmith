@@ -102,7 +102,9 @@ impl GdbSession {
                 Ok(GdbLine::Line(l)) => l,
                 Ok(GdbLine::Eof) => {
                     self.connected = false;
-                    return Err("GDB process terminated unexpectedly (EOF). Restart debug session.".into());
+                    return Err(
+                        "GDB process terminated unexpectedly (EOF). Restart debug session.".into(),
+                    );
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     self.connected = false;
@@ -125,7 +127,10 @@ impl GdbSession {
             output.push('\n');
             if trimmed.starts_with(&format!("{token}^error")) {
                 let msg = extract_mi_field(trimmed, "msg");
-                return Err(format!("GDB error: {}", msg.unwrap_or_else(|| trimmed.into())));
+                return Err(format!(
+                    "GDB error: {}",
+                    msg.unwrap_or_else(|| trimmed.into())
+                ));
             }
         }
         Ok(output)
@@ -141,7 +146,10 @@ impl GdbSession {
             }
             if trimmed.starts_with(&format!("{token_str}^error")) {
                 let msg = extract_mi_field(trimmed, "msg");
-                return Err(format!("GDB error: {}", msg.unwrap_or_else(|| trimmed.into())));
+                return Err(format!(
+                    "GDB error: {}",
+                    msg.unwrap_or_else(|| trimmed.into())
+                ));
             }
         }
         Ok(raw)
@@ -202,12 +210,18 @@ fn check_session_alive(session: &mut GdbSession) -> Result<(), String> {
     match session.child.try_wait() {
         Ok(Some(status)) => {
             session.connected = false;
-            Err(format!("GDB process has exited (status={}). Restart debug session.", status))
+            Err(format!(
+                "GDB process has exited (status={}). Restart debug session.",
+                status
+            ))
         }
         Ok(None) => Ok(()),
         Err(e) => {
             session.connected = false;
-            Err(format!("GDB process check failed: {}. Restart debug session.", e))
+            Err(format!(
+                "GDB process check failed: {}. Restart debug session.",
+                e
+            ))
         }
     }
 }
@@ -259,9 +273,7 @@ pub(crate) fn find_gdb_binary(target_chip: Option<&str>) -> Result<String, Strin
         return Ok(found);
     }
 
-    let mut alt_tools = vec![
-        home.join(".espressif").join("dist"),
-    ];
+    let mut alt_tools = vec![home.join(".espressif").join("dist")];
     if cfg!(windows) {
         alt_tools.push(std::path::PathBuf::from("C:\\Espressif\\tools"));
     } else if cfg!(target_os = "macos") {
@@ -347,7 +359,12 @@ fn search_gdb_in_dir(tools_root: &std::path::Path, gdb_name: &str) -> Result<Str
     }
 }
 
-fn walk_dir_for_gdb(dir: &std::path::Path, gdb_name: &str, max_depth: u32, found: &mut Option<String>) {
+fn walk_dir_for_gdb(
+    dir: &std::path::Path,
+    gdb_name: &str,
+    max_depth: u32,
+    found: &mut Option<String>,
+) {
     if max_depth == 0 || found.is_some() {
         return;
     }
@@ -405,18 +422,15 @@ pub async fn debug_start(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
-    let mut child = cmd.spawn()
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start GDB ({gdb_binary}): {e}"))?;
 
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or("Failed to capture GDB stdin")?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Failed to capture GDB stdout")?;
+    let stdin = child.stdin.take().ok_or("Failed to capture GDB stdin")?;
+    let stdout = child.stdout.take().ok_or("Failed to capture GDB stdout")?;
     let rx = spawn_read_pump(stdout);
 
     let mut session = GdbSession {
@@ -430,7 +444,10 @@ pub async fn debug_start(
     };
 
     session.send_command("")?;
-    let elf_normalized = elf_path.as_deref().map(crate::adapters::normalize_path_for_gdb).unwrap_or_default();
+    let elf_normalized = elf_path
+        .as_deref()
+        .map(crate::adapters::normalize_path_for_gdb)
+        .unwrap_or_default();
     session
         .send_mi_and_get_result(&format!("-file-exec-and-symbols {}", elf_normalized))
         .map_err(|e| format!("Failed to load ELF: {e}"))?;
@@ -540,8 +557,7 @@ pub async fn debug_list_breakpoints() -> Result<Vec<Breakpoint>, String> {
                         let line_num = extract_mi_field(bp_str, "line")
                             .and_then(|n| n.parse().ok())
                             .unwrap_or(0);
-                        let addr = extract_mi_field(bp_str, "addr")
-                            .unwrap_or_else(|| "?".into());
+                        let addr = extract_mi_field(bp_str, "addr").unwrap_or_else(|| "?".into());
                         let hit = extract_mi_field(bp_str, "times")
                             .and_then(|n| n.parse().ok())
                             .unwrap_or(0);
@@ -658,10 +674,8 @@ pub async fn debug_get_registers() -> Result<Vec<(String, String)>, String> {
         if trimmed.starts_with("^done") {
             if let Some(values) = extract_mi_list(trimmed, "register-values") {
                 for reg_str in split_mi_values(&values) {
-                    let number = extract_mi_field(reg_str, "number")
-                        .unwrap_or_else(|| "?".into());
-                    let value = extract_mi_field(reg_str, "value")
-                        .unwrap_or_else(|| "?".into());
+                    let number = extract_mi_field(reg_str, "number").unwrap_or_else(|| "?".into());
+                    let value = extract_mi_field(reg_str, "value").unwrap_or_else(|| "?".into());
                     regs.push((format!("r{}", number), value));
                 }
             }
@@ -687,16 +701,15 @@ pub async fn debug_get_backtrace() -> Result<Vec<StackFrame>, String> {
                     let level = extract_mi_field(frame_str, "level")
                         .and_then(|n| n.parse().ok())
                         .unwrap_or(0);
-                    let function = extract_mi_field(frame_str, "func")
-                        .unwrap_or_else(|| "?".into());
+                    let function =
+                        extract_mi_field(frame_str, "func").unwrap_or_else(|| "?".into());
                     let file = extract_mi_field(frame_str, "fullname")
                         .or_else(|| extract_mi_field(frame_str, "file"))
                         .unwrap_or_else(|| "?".into());
                     let line = extract_mi_field(frame_str, "line")
                         .and_then(|n| n.parse().ok())
                         .unwrap_or(0);
-                    let address = extract_mi_field(frame_str, "addr")
-                        .unwrap_or_else(|| "?".into());
+                    let address = extract_mi_field(frame_str, "addr").unwrap_or_else(|| "?".into());
                     frames.push(StackFrame {
                         level,
                         function,
@@ -768,16 +781,15 @@ fn collect_debug_state(session: &mut GdbSession) -> Result<DebugState, String> {
                     let level = extract_mi_field(frame_str, "level")
                         .and_then(|n| n.parse().ok())
                         .unwrap_or(0);
-                    let function = extract_mi_field(frame_str, "func")
-                        .unwrap_or_else(|| "?".into());
+                    let function =
+                        extract_mi_field(frame_str, "func").unwrap_or_else(|| "?".into());
                     let file = extract_mi_field(frame_str, "fullname")
                         .or_else(|| extract_mi_field(frame_str, "file"))
                         .unwrap_or_else(|| "?".into());
                     let line = extract_mi_field(frame_str, "line")
                         .and_then(|n| n.parse().ok())
                         .unwrap_or(0);
-                    let address = extract_mi_field(frame_str, "addr")
-                        .unwrap_or_else(|| "?".into());
+                    let address = extract_mi_field(frame_str, "addr").unwrap_or_else(|| "?".into());
                     stack.push(StackFrame {
                         level,
                         function,
@@ -797,10 +809,8 @@ fn collect_debug_state(session: &mut GdbSession) -> Result<DebugState, String> {
         if trimmed.starts_with("^done") {
             if let Some(values) = extract_mi_list(trimmed, "register-values") {
                 for reg_str in split_mi_values(&values) {
-                    let number =
-                        extract_mi_field(reg_str, "number").unwrap_or_else(|| "?".into());
-                    let value =
-                        extract_mi_field(reg_str, "value").unwrap_or_else(|| "?".into());
+                    let number = extract_mi_field(reg_str, "number").unwrap_or_else(|| "?".into());
+                    let value = extract_mi_field(reg_str, "value").unwrap_or_else(|| "?".into());
                     registers.push((format!("r{}", number), value));
                 }
             }
@@ -814,10 +824,8 @@ fn collect_debug_state(session: &mut GdbSession) -> Result<DebugState, String> {
         if trimmed.starts_with("^done") {
             if let Some(local_vars) = extract_mi_list(trimmed, "locals") {
                 for var_str in split_mi_values(&local_vars) {
-                    let name = extract_mi_field(var_str, "name")
-                        .unwrap_or_else(|| "?".into());
-                    let value = extract_mi_field(var_str, "value")
-                        .unwrap_or_else(|| "?".into());
+                    let name = extract_mi_field(var_str, "name").unwrap_or_else(|| "?".into());
+                    let value = extract_mi_field(var_str, "value").unwrap_or_else(|| "?".into());
                     locals.push((name, value));
                 }
             }
@@ -892,18 +900,15 @@ pub async fn analyze_coredump_mi(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
-    let mut child = cmd.spawn()
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start GDB for coredump: {e}"))?;
 
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or("Failed to capture GDB stdin")?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Failed to capture GDB stdout")?;
+    let stdin = child.stdin.take().ok_or("Failed to capture GDB stdin")?;
+    let stdout = child.stdout.take().ok_or("Failed to capture GDB stdout")?;
     let rx = spawn_read_pump(stdout);
 
     let mut session = GdbSession {
@@ -1006,8 +1011,11 @@ pub fn connect_session_sync(elf_path: &str, target: &str, target_chip: &str) -> 
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit());
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
-    let mut child = cmd.spawn()
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start GDB ({gdb_name_for_display}): {e}"))?;
 
     let stdin = child.stdin.take().ok_or("Failed to capture GDB stdin")?;
@@ -1046,10 +1054,15 @@ pub fn connect_session_sync(elf_path: &str, target: &str, target_chip: &str) -> 
             }
         }
     }
-    info!("GDB init output: {} bytes, {} lines", init_output.len(), init_line_count);
+    info!(
+        "GDB init output: {} bytes, {} lines",
+        init_output.len(),
+        init_line_count
+    );
 
     let elf_path_normalized = crate::adapters::normalize_path_for_gdb(elf_path);
-    session.send_mi_and_get_result(&format!("-file-exec-and-symbols {}", elf_path_normalized))
+    session
+        .send_mi_and_get_result(&format!("-file-exec-and-symbols {}", elf_path_normalized))
         .map_err(|e| format!("Failed to load ELF: {e}"))?;
 
     // ESP32-S3 dual-core SMP workaround: set hardware watchpoint limit
@@ -1057,7 +1070,8 @@ pub fn connect_session_sync(elf_path: &str, target: &str, target_chip: &str) -> 
     let _ = session.send_mi_and_get_result("-gdb-set remote hardware-watchpoint-limit 2");
     let _ = session.send_mi_and_get_result("-gdb-set remote hardware-breakpoint-limit 6");
 
-    session.send_mi_and_get_result(&format!("-target-select extended-remote {}", target))
+    session
+        .send_mi_and_get_result(&format!("-target-select extended-remote {}", target))
         .map_err(|e| format!("Failed to connect to target: {e}"))?;
     session.connected = true;
 
@@ -1080,7 +1094,10 @@ pub fn send_mi_command_sync(cmd: &[u8]) -> Result<String, String> {
         }
         if trimmed.starts_with(&format!("{token_str}^error")) {
             let msg = extract_mi_field(trimmed, "msg");
-            return Err(format!("GDB error: {}", msg.unwrap_or_else(|| trimmed.into())));
+            return Err(format!(
+                "GDB error: {}",
+                msg.unwrap_or_else(|| trimmed.into())
+            ));
         }
     }
     Ok(raw)

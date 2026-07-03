@@ -55,7 +55,10 @@ enum IpcInbound {
     Event { data: RunnerEvent },
     /// Delegate: ask main process to run a Self-Healing command
     #[serde(rename = "delegate")]
-    Delegate { command: String, args: serde_json::Value },
+    Delegate {
+        command: String,
+        args: serde_json::Value,
+    },
 }
 
 /// Messages from main process → CLI.
@@ -97,9 +100,13 @@ fn read_ipc_addr_file() -> Option<String> {
     let path = std::env::temp_dir().join("espsmith").join("ipc_addr");
     let content = std::fs::read_to_string(&path).ok()?;
     let addr = content.trim().to_string();
-    if addr.is_empty() { return None; }
+    if addr.is_empty() {
+        return None;
+    }
     // Validate format: should be "127.0.0.1:PORT"
-    if !addr.contains(':') { return None; }
+    if !addr.contains(':') {
+        return None;
+    }
     tracing::info!("[IPC] Discovered address from file: {}", addr);
     Some(addr)
 }
@@ -177,7 +184,10 @@ pub fn start_ipc_server() {
 }
 
 fn handle_client(mut stream: TcpStream) {
-    let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_default();
+    let peer = stream
+        .peer_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_default();
     tracing::info!("[IPC] Client connected from {}", peer);
 
     let reader = BufReader::new(&stream);
@@ -269,18 +279,29 @@ pub fn send_delegate_and_wait(command: &str, args: &serde_json::Value) -> Option
     send_delegate_and_wait_with_addr(command, args, None)
 }
 
-pub fn send_delegate_and_wait_with_addr(command: &str, args: &serde_json::Value, explicit_addr: Option<&str>) -> Option<DelegateResult> {
+pub fn send_delegate_and_wait_with_addr(
+    command: &str,
+    args: &serde_json::Value,
+    explicit_addr: Option<&str>,
+) -> Option<DelegateResult> {
     let addr = explicit_addr
         .map(|s| s.to_string())
         .or_else(|| std::env::var(ENV_PIPE_NAME).ok())
-        .or_else(read_ipc_addr_file)
-        ?;
+        .or_else(read_ipc_addr_file)?;
 
-    tracing::info!("[IPC] Connecting to parent at {} for delegate: {}", addr, command);
+    tracing::info!(
+        "[IPC] Connecting to parent at {} for delegate: {}",
+        addr,
+        command
+    );
     let mut stream = TcpStream::connect(&addr).ok()?;
     // Self-Healing engine may take minutes; use a long read timeout
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(600))).ok();
-    stream.set_write_timeout(Some(std::time::Duration::from_millis(2000))).ok();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(600)))
+        .ok();
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_millis(2000)))
+        .ok();
 
     // Send delegate request
     let request = IpcInbound::Delegate {
@@ -300,9 +321,17 @@ pub fn send_delegate_and_wait_with_addr(command: &str, args: &serde_json::Value,
                     continue;
                 }
                 match serde_json::from_str::<IpcOutbound>(&line) {
-                    Ok(IpcOutbound::DelegateResult { success, data, error }) => {
+                    Ok(IpcOutbound::DelegateResult {
+                        success,
+                        data,
+                        error,
+                    }) => {
                         tracing::info!("[IPC] Delegate result received: success={}", success);
-                        return Some(DelegateResult { success, data, error });
+                        return Some(DelegateResult {
+                            success,
+                            data,
+                            error,
+                        });
                     }
                     Err(e) => {
                         tracing::error!("[IPC] Failed to parse delegate result: {}", e);
@@ -332,8 +361,12 @@ pub fn send_event_to_parent(event: &RunnerEvent) {
 
     // Connect per-event (simple, no cached state)
     if let Ok(mut stream) = TcpStream::connect(&addr) {
-        stream.set_write_timeout(Some(std::time::Duration::from_millis(500))).ok();
-        let msg = IpcInbound::Event { data: event.clone() };
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_millis(500)))
+            .ok();
+        let msg = IpcInbound::Event {
+            data: event.clone(),
+        };
         if let Ok(json) = serde_json::to_string(&msg) {
             let _ = writeln!(stream, "{}", json);
         }

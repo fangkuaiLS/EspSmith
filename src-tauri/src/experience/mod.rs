@@ -54,7 +54,9 @@ pub fn query_context(board: &str, test: &str) -> Option<engine::ExperienceContex
 /// Returns None if the engine has not been initialized.
 pub fn record_run(board: &str, test: &str, passed: bool) -> Option<engine::RunStats> {
     let mut guard = EXPERIENCE.lock().unwrap_or_else(|e| e.into_inner());
-    guard.as_mut().map(|eng| eng.record_run(board, test, passed))
+    guard
+        .as_mut()
+        .map(|eng| eng.record_run(board, test, passed))
 }
 
 /// Record an engineering skill/experience with **upsert semantics**.
@@ -132,7 +134,10 @@ pub fn build_context_prompt(board: &str, test: &str) -> Option<String> {
                 skill.trigger, skill.fix, iter_marker, stale_marker
             ));
         }
-        let hidden = ctx.relevant_skills.len().saturating_sub(MAX_SKILLS_IN_PROMPT);
+        let hidden = ctx
+            .relevant_skills
+            .len()
+            .saturating_sub(MAX_SKILLS_IN_PROMPT);
         if hidden > 0 {
             parts.push(format!(
                 "... and {} more skills available via query_experience tool",

@@ -16,11 +16,11 @@
 //! 通过此通道发出，AI 助手线程监听后转发为 Tauri 事件 `ai-runner-event`，
 //! 前端据此实时更新操作进度卡片。
 
-pub mod types;
-pub mod stages;
-pub mod runner;
-pub mod recovery;
 pub mod ipc;
+pub mod recovery;
+pub mod runner;
+pub mod stages;
+pub mod types;
 
 use crate::self_healing::types::RunnerEvent;
 use std::sync::{Arc, Mutex};
@@ -28,17 +28,22 @@ use std::sync::{Arc, Mutex};
 /// 全局 RunnerEvent 广播接收器列表。
 /// CLI/Tauri 路径注册回调后，自愈引擎执行时每个事件都会通知所有监听者。
 #[allow(clippy::type_complexity)]
-static BROADCAST_LISTENERS: Mutex<Vec<Arc<dyn Fn(&RunnerEvent) + Send + Sync>>> = Mutex::new(Vec::new());
+static BROADCAST_LISTENERS: Mutex<Vec<Arc<dyn Fn(&RunnerEvent) + Send + Sync>>> =
+    Mutex::new(Vec::new());
 
 /// 注册一个全局事件监听器。返回的 Arc 用于后续移除（drop 即可）。
 pub fn add_global_listener(listener: Arc<dyn Fn(&RunnerEvent) + Send + Sync>) {
-    let mut listeners = BROADCAST_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut listeners = BROADCAST_LISTENERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     listeners.push(listener);
 }
 
 /// 向所有已注册的监听器广播一个 RunnerEvent。
 pub fn broadcast_event(event: &RunnerEvent) {
-    let listeners = BROADCAST_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
+    let listeners = BROADCAST_LISTENERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     for listener in listeners.iter() {
         listener(event);
     }

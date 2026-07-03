@@ -32,10 +32,17 @@ fn find_openocd_binary() -> Result<PathBuf, String> {
         warn!("OPENOCD_BIN is set to '{}' but file does not exist", path);
     }
 
-    let exe_name = if cfg!(windows) { "openocd.exe" } else { "openocd" };
+    let exe_name = if cfg!(windows) {
+        "openocd.exe"
+    } else {
+        "openocd"
+    };
 
     if let Ok(idf_path) = std::env::var("IDF_PATH") {
-        let candidate = PathBuf::from(&idf_path).join("tools").join("openocd").join(exe_name);
+        let candidate = PathBuf::from(&idf_path)
+            .join("tools")
+            .join("openocd")
+            .join(exe_name);
         if candidate.exists() {
             info!("Found OpenOCD from IDF_PATH: {}", candidate.display());
             return Ok(candidate);
@@ -44,11 +51,21 @@ fn find_openocd_binary() -> Result<PathBuf, String> {
 
     let home = dirs_next::home_dir().ok_or("Cannot determine home directory")?;
     let mut patterns = vec![
-        home.join(".espressif").join("tools").join("openocd-esp32").join("bin").join(exe_name),
-        home.join(".espressif").join("tools").join("openocd").join("bin").join(exe_name),
+        home.join(".espressif")
+            .join("tools")
+            .join("openocd-esp32")
+            .join("bin")
+            .join(exe_name),
+        home.join(".espressif")
+            .join("tools")
+            .join("openocd")
+            .join("bin")
+            .join(exe_name),
     ];
     if cfg!(windows) {
-        patterns.push(PathBuf::from("C:\\Espressif\\tools\\openocd-esp32\\bin\\openocd.exe"));
+        patterns.push(PathBuf::from(
+            "C:\\Espressif\\tools\\openocd-esp32\\bin\\openocd.exe",
+        ));
     } else if cfg!(target_os = "macos") {
         patterns.push(PathBuf::from("/opt/homebrew/bin/openocd"));
         patterns.push(PathBuf::from("/usr/local/bin/openocd"));
@@ -79,17 +96,30 @@ fn find_openocd_scripts_dir() -> Result<PathBuf, String> {
     if let Ok(dir) = std::env::var("OPENOCD_SCRIPTS") {
         let p = PathBuf::from(&dir);
         if p.exists() {
-            info!("Found OpenOCD scripts from OPENOCD_SCRIPTS env: {}", p.display());
+            info!(
+                "Found OpenOCD scripts from OPENOCD_SCRIPTS env: {}",
+                p.display()
+            );
             return Ok(p);
         }
-        warn!("OPENOCD_SCRIPTS is set to '{}' but directory does not exist", dir);
+        warn!(
+            "OPENOCD_SCRIPTS is set to '{}' but directory does not exist",
+            dir
+        );
     }
 
     if let Ok(bin) = find_openocd_binary() {
         if let Some(bin_dir) = bin.parent() {
-            let candidate = bin_dir.join("..").join("share").join("openocd").join("scripts");
+            let candidate = bin_dir
+                .join("..")
+                .join("share")
+                .join("openocd")
+                .join("scripts");
             if candidate.exists() {
-                info!("Found OpenOCD scripts from binary path: {}", candidate.display());
+                info!(
+                    "Found OpenOCD scripts from binary path: {}",
+                    candidate.display()
+                );
                 return Ok(candidate);
             }
         }
@@ -131,7 +161,10 @@ fn probe_interface_config(probe_name: &str) -> Option<&'static str> {
 fn patch_scripts_dir(scripts_dir: &Path) -> Result<PathBuf, String> {
     let common_cfg = scripts_dir.join("target").join("esp_common.cfg");
     if !common_cfg.exists() {
-        info!("esp_common.cfg not found at {}, skipping patch", common_cfg.display());
+        info!(
+            "esp_common.cfg not found at {}, skipping patch",
+            common_cfg.display()
+        );
         return Ok(scripts_dir.to_path_buf());
     }
 
@@ -148,53 +181,75 @@ fn patch_scripts_dir(scripts_dir: &Path) -> Result<PathBuf, String> {
         return Ok(scripts_dir.to_path_buf());
     }
 
-    let tmp_dir = std::env::temp_dir().join("espsmith").join("openocd_scripts");
+    let tmp_dir = std::env::temp_dir()
+        .join("espsmith")
+        .join("openocd_scripts");
     let tmp_target = tmp_dir.join("target");
     let _ = std::fs::create_dir_all(&tmp_target);
     std::fs::write(tmp_target.join("esp_common.cfg"), &patched)
         .map_err(|e| format!("Cannot write patched esp_common.cfg: {}", e))?;
 
-    info!("Patched -expected-id removed, overlay dir -> {}", tmp_dir.display());
+    info!(
+        "Patched -expected-id removed, overlay dir -> {}",
+        tmp_dir.display()
+    );
     Ok(tmp_dir)
 }
 
 #[tauri::command]
-pub async fn openocd_start(chip: Option<String>, probe: Option<String>, speed_khz: Option<u32>) -> Result<String, String> {
+pub async fn openocd_start(
+    chip: Option<String>,
+    probe: Option<String>,
+    speed_khz: Option<u32>,
+) -> Result<String, String> {
     let mut guard = OPENOCD_STATE.lock().map_err(|e| e.to_string())?;
     if guard.is_some() {
         return Err("OpenOCD is already running. Stop it first with openocd_stop.".into());
     }
 
-    let chip = chip.ok_or_else(|| "chip is required (e.g. esp32c3, esp32s3). Auto-detection removed — use project config.".to_string())?;
+    let chip = chip.ok_or_else(|| {
+        "chip is required (e.g. esp32c3, esp32s3). Auto-detection removed — use project config."
+            .to_string()
+    })?;
     info!("OpenOCD start: chip={}, probe={:?}", chip, probe);
     let chip_lower = chip.to_ascii_lowercase();
     let (target_cfg, default_interface) = chip_config(&chip_lower)?;
 
     // 如果指定了外部探头，使用对应的 interface 配置；否则使用默认配置
     let interface_cfg = match probe.as_deref() {
-        Some(probe_name) => {
-            match probe_interface_config(probe_name) {
-                Some(iface) => {
-                    info!("Using probe-specific interface config: {} for {}", iface, probe_name);
-                    iface
-                }
-                None => {
-                    info!("Unknown probe '{}', using default interface: {}", probe_name, default_interface);
-                    default_interface
-                }
+        Some(probe_name) => match probe_interface_config(probe_name) {
+            Some(iface) => {
+                info!(
+                    "Using probe-specific interface config: {} for {}",
+                    iface, probe_name
+                );
+                iface
             }
-        }
+            None => {
+                info!(
+                    "Unknown probe '{}', using default interface: {}",
+                    probe_name, default_interface
+                );
+                default_interface
+            }
+        },
         None => default_interface,
     };
 
     let openocd_bin = find_openocd_binary()?;
     let scripts_dir = find_openocd_scripts_dir()?;
 
-    info!("Starting OpenOCD: {} for chip={}", openocd_bin.display(), chip);
+    info!(
+        "Starting OpenOCD: {} for chip={}",
+        openocd_bin.display(),
+        chip
+    );
     info!("  scripts_dir: {}", scripts_dir.display());
     info!("  interface: {}", interface_cfg);
     info!("  target: {}", target_cfg);
-    if let Some(s) = speed_khz { info!("  speed: {} kHz", s); }
+    if let Some(s) = speed_khz {
+        info!("  speed: {} kHz", s);
+    }
 
     let overlay_dir = patch_scripts_dir(&scripts_dir)?;
 
@@ -206,10 +261,14 @@ pub async fn openocd_start(chip: Option<String>, probe: Option<String>, speed_kh
 
     let mut cmd = Command::new(&openocd_bin);
     cmd.args([
-        "-s", &overlay_dir.to_string_lossy(),
-        "-s", &scripts_dir.to_string_lossy(),
-        "-f", interface_cfg,
-        "-f", target_cfg,
+        "-s",
+        &overlay_dir.to_string_lossy(),
+        "-s",
+        &scripts_dir.to_string_lossy(),
+        "-f",
+        interface_cfg,
+        "-f",
+        target_cfg,
     ]);
     // 降低 JTAG 时钟频率可避免 ESP32-S3 USB-JTAG 的 IN buffer overflow 错误。
     // -c 命令在 -f 配置文件之后执行，会覆盖配置文件中的 adapter speed 设置。
@@ -217,11 +276,12 @@ pub async fn openocd_start(chip: Option<String>, probe: Option<String>, speed_kh
         cmd.arg("-c").arg(format!("adapter speed {}", speed));
     }
     cmd.stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::from(log_file));
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(log_file));
     #[cfg(windows)]
     cmd.creation_flags(0x00000008);
-    let child = cmd.spawn()
+    let child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start OpenOCD ({}): {}", openocd_bin.display(), e))?;
 
     let pid = child.id();
@@ -234,7 +294,10 @@ pub async fn openocd_start(chip: Option<String>, probe: Option<String>, speed_kh
 
     *guard = Some(session);
 
-    let msg = format!("OpenOCD started (PID={}) for {} — GDB port: 3333, Telnet: 4444", pid, chip);
+    let msg = format!(
+        "OpenOCD started (PID={}) for {} — GDB port: 3333, Telnet: 4444",
+        pid, chip
+    );
     info!("{}", msg);
     Ok(msg)
 }
@@ -292,9 +355,15 @@ pub fn is_openocd_running_sync() -> bool {
     };
     if let Some(ref mut session) = *guard {
         match session.child.try_wait() {
-            Ok(Some(_)) => { *guard = None; false }
+            Ok(Some(_)) => {
+                *guard = None;
+                false
+            }
             Ok(None) => true,
-            Err(_) => { *guard = None; false },
+            Err(_) => {
+                *guard = None;
+                false
+            }
         }
     } else {
         false
@@ -310,7 +379,11 @@ pub fn diagnose_on_gdb_connect_failure() -> String {
 
     let mut diag = format!(
         "\n[OpenOCD status] telnet:4444={}, gdb_log_ready={}",
-        if telnet_ready { "LISTENING" } else { "NOT_LISTENING" },
+        if telnet_ready {
+            "LISTENING"
+        } else {
+            "NOT_LISTENING"
+        },
         if gdb_in_log { "YES" } else { "NO" }
     );
 
@@ -332,7 +405,10 @@ pub fn diagnose_on_gdb_connect_failure() -> String {
 
 #[allow(dead_code)] // CLI使用
 pub fn get_openocd_chip_sync() -> Option<String> {
-    OPENOCD_STATE.lock().ok().and_then(|g| g.as_ref().map(|s| s.chip.clone()))
+    OPENOCD_STATE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.chip.clone()))
 }
 
 pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), String> {
@@ -343,7 +419,8 @@ pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), 
     // 导致 "attempted 'gdb' connection rejected" 错误，可能干扰后续真正的 GDB 连接。
     if port_ready(4444) {
         // 验证运行中的 OpenOCD 是否针对正确的 chip（仅当状态可查时）
-        let running_chip = OPENOCD_STATE.lock()
+        let running_chip = OPENOCD_STATE
+            .lock()
             .ok()
             .and_then(|g| g.as_ref().map(|s| s.chip.clone()));
 
@@ -354,7 +431,10 @@ pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), 
             }
             Some(ref c) => {
                 // chip 不匹配，需要重启 OpenOCD
-                info!("OpenOCD running with chip={} but requested={}, restarting...", c, chip_lower);
+                info!(
+                    "OpenOCD running with chip={} but requested={}, restarting...",
+                    c, chip_lower
+                );
                 kill_openocd_sync();
             }
             None => {
@@ -379,7 +459,11 @@ pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), 
     let openocd_bin = find_openocd_binary()?;
     let scripts_dir = find_openocd_scripts_dir()?;
 
-    info!("Auto-starting OpenOCD: {} for chip={}", openocd_bin.display(), chip);
+    info!(
+        "Auto-starting OpenOCD: {} for chip={}",
+        openocd_bin.display(),
+        chip
+    );
 
     let overlay_dir = patch_scripts_dir(&scripts_dir)?;
 
@@ -391,21 +475,26 @@ pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), 
 
     let mut cmd = Command::new(&openocd_bin);
     cmd.args([
-        "-s", &overlay_dir.to_string_lossy(),
-        "-s", &scripts_dir.to_string_lossy(),
-        "-f", interface_cfg,
-        "-f", target_cfg,
+        "-s",
+        &overlay_dir.to_string_lossy(),
+        "-s",
+        &scripts_dir.to_string_lossy(),
+        "-f",
+        interface_cfg,
+        "-f",
+        target_cfg,
     ]);
     // 降低 JTAG 时钟频率可避免 ESP32-S3 USB-JTAG 的 IN buffer overflow 错误。
     if let Some(speed) = speed_khz {
         cmd.arg("-c").arg(format!("adapter speed {}", speed));
     }
     cmd.stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::from(log_file));
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(log_file));
     #[cfg(windows)]
     cmd.creation_flags(0x00000008);
-    let child = cmd.spawn()
+    let child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to start OpenOCD: {}", e))?;
 
     let pid = child.id();
@@ -437,7 +526,11 @@ pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), 
 
         // 用日志检测 GDB 3333 端口就绪（不干扰 GDB 服务器）
         if gdb_port_ready_in_log(&log_path) {
-            info!("OpenOCD auto-started (PID={}), GDB ready after ~{}ms", pid, i * RETRY_INTERVAL_MS as u32);
+            info!(
+                "OpenOCD auto-started (PID={}), GDB ready after ~{}ms",
+                pid,
+                i * RETRY_INTERVAL_MS as u32
+            );
             return Ok(());
         }
 
@@ -494,9 +587,12 @@ pub fn ensure_openocd_running(chip: &str, speed_khz: Option<u32>) -> Result<(), 
 fn port_ready(port: u16) -> bool {
     let addr = format!("127.0.0.1:{}", port);
     TcpStream::connect_timeout(
-        &addr.parse().unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap()),
+        &addr
+            .parse()
+            .unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap()),
         std::time::Duration::from_millis(150),
-    ).is_ok()
+    )
+    .is_ok()
 }
 
 /// 通过日志检测 GDB 3333 端口是否就绪。
@@ -520,7 +616,9 @@ fn check_fatal_log_error(log_path: &std::path::Path) -> Option<String> {
     if content.contains("Unsupported DTM version")
         || (content.contains("TAP") && content.contains("expected") && content.contains("got"))
     {
-        return Some("JTAG TAP ID mismatch — connected chip does NOT match configured target".into());
+        return Some(
+            "JTAG TAP ID mismatch — connected chip does NOT match configured target".into(),
+        );
     }
 
     // USB 驱动问题
@@ -528,7 +626,9 @@ fn check_fatal_log_error(log_path: &std::path::Path) -> Option<String> {
         || content.contains("LIBUSB_ERROR_NOT_FOUND")
         || content.contains("no device found matching")
     {
-        return Some("USB device not accessible — check driver (Zadig/WinUSB) or connection".into());
+        return Some(
+            "USB device not accessible — check driver (Zadig/WinUSB) or connection".into(),
+        );
     }
 
     // 配置文件错误
@@ -542,7 +642,9 @@ fn check_fatal_log_error(log_path: &std::path::Path) -> Option<String> {
     }
 
     // ESP32-S3 USB-JTAG IN buffer overflow — USB 端点缓冲区溢出（非时钟频率问题）
-    if content.contains("IN buffer overflow") || content.contains("missing data from bitq interface") {
+    if content.contains("IN buffer overflow")
+        || content.contains("missing data from bitq interface")
+    {
         return Some(
             "ESP32-S3 USB-JTAG IN buffer overflow — the chip's USB IN endpoint buffer (16 bytes) is overwhelmed. \
              This is a hardware/firmware limitation of the built-in USB-JTAG, NOT a clock speed issue. \
@@ -572,7 +674,8 @@ fn diagnose_openocd_log(log_path: &std::path::Path) -> (String, bool) {
     let mut diag = String::new();
     let mut is_fatal = false;
 
-    if content.contains("Unsupported DTM version") || (content.contains("TAP") && content.contains("expected") && content.contains("got"))
+    if content.contains("Unsupported DTM version")
+        || (content.contains("TAP") && content.contains("expected") && content.contains("got"))
     {
         is_fatal = true;
         diag.push_str("\n[DIAGNOSIS] FATAL: JTAG TAP ID mismatch. The connected chip is NOT the same as the configured target.\n");
@@ -594,14 +697,18 @@ fn diagnose_openocd_log(log_path: &std::path::Path) -> (String, bool) {
         diag.push_str("\n[DIAGNOSIS] USB driver issue. The JTAG interface may need WinUSB driver via Zadig.\n");
     }
 
-    if content.contains("IN buffer overflow") || content.contains("missing data from bitq interface") {
+    if content.contains("IN buffer overflow")
+        || content.contains("missing data from bitq interface")
+    {
         is_fatal = true;
         diag.push_str("\n[DIAGNOSIS] FATAL: ESP32-S3 USB-JTAG IN buffer overflow.\n");
         diag.push_str("The chip's built-in USB IN endpoint buffer (16 bytes) is overwhelmed during JTAG init.\n");
         diag.push_str("This is a hardware/firmware limitation, NOT a clock speed issue (lowering speed_khz won't help).\n");
         diag.push_str("Solutions:\n");
         diag.push_str("  1. Use an external JTAG probe (ESP-PROG) instead of built-in USB-JTAG\n");
-        diag.push_str("  2. Try a different USB cable (shielded) or USB 2.0 port (avoid USB 3.0 hubs)\n");
+        diag.push_str(
+            "  2. Try a different USB cable (shielded) or USB 2.0 port (avoid USB 3.0 hubs)\n",
+        );
         diag.push_str("  3. Power-cycle the board (unplug and replug USB)\n");
         diag.push_str("  4. Use UART mode as fallback: closed_loop --force-uart\n");
     }

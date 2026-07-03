@@ -7,17 +7,12 @@ use tauri::Emitter;
 use tracing::{debug, info, warn};
 
 const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "svgz",
-    "ttf", "otf", "woff", "woff2", "bdf", "fon",
-    "exe", "dll", "so", "dylib", "bin", "obj", "o", "a", "lib",
-    "zip", "tar", "gz", "bz2", "xz", "7z", "rar",
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-    "pyc", "pyo", "class", "elf", "wasm",
-    "mp3", "wav", "ogg", "flac", "mp4", "avi", "mkv", "webm",
-    "dat", "dmg", "iso",
-    "odg", "xcf", "psd", "ai", "eps", "svg",
-    "pdb", "ilk", "exp", "map", "hex", "uf2",
-    "ds_store", "db", "sqlite", "sqlite3",
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "svgz", "ttf", "otf", "woff", "woff2", "bdf", "fon",
+    "exe", "dll", "so", "dylib", "bin", "obj", "o", "a", "lib", "zip", "tar", "gz", "bz2", "xz",
+    "7z", "rar", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pyc", "pyo", "class", "elf",
+    "wasm", "mp3", "wav", "ogg", "flac", "mp4", "avi", "mkv", "webm", "dat", "dmg", "iso", "odg",
+    "xcf", "psd", "ai", "eps", "svg", "pdb", "ilk", "exp", "map", "hex", "uf2", "ds_store", "db",
+    "sqlite", "sqlite3",
 ];
 
 pub fn is_binary_ext(path: &Path) -> bool {
@@ -40,7 +35,10 @@ fn ensure_in_active_project(path: &Path) -> Result<PathBuf, String> {
     if canonical.starts_with(&root) {
         Ok(canonical)
     } else {
-        Err(format!("Path outside project directory: {}", path.display()))
+        Err(format!(
+            "Path outside project directory: {}",
+            path.display()
+        ))
     }
 }
 
@@ -108,17 +106,12 @@ pub async fn write_file(
     info!("Writing file: {} (safe_mode: {})", path, safe_mode);
 
     let file_path = resolve_write_path(&path)?;
-    let file_name = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let file_name = file_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     if file_name.eq_ignore_ascii_case("hardware_pins.h") {
-        return Err(
-            "hardware_pins.h 是自动生成的文件，禁止直接修改。\n\
+        return Err("hardware_pins.h 是自动生成的文件，禁止直接修改。\n\
              请通过硬件配置面板修改 .espsmith/hardware_config.json 来更新引脚配置。"
-                .to_string(),
-        );
+            .to_string());
     }
 
     if safe_mode {
@@ -134,10 +127,11 @@ pub async fn write_file(
     } else {
         // 原子写入：先写临时文件，再重命名，避免文件被编辑器标签页打开时的锁定问题
         let tmp_path = file_path.with_extension(
-            file_path.extension()
+            file_path
+                .extension()
                 .and_then(|e| e.to_str())
                 .map(|ext| format!("{}.tmp", ext))
-                .unwrap_or_else(|| "tmp".to_string())
+                .unwrap_or_else(|| "tmp".to_string()),
         );
         fs::write(&tmp_path, &content).map_err(|e| {
             warn!("Failed to write temp file {}: {}", tmp_path.display(), e);
@@ -155,10 +149,9 @@ pub async fn write_file(
             if parent.file_name().and_then(|n| n.to_str()) == Some(".espsmith") {
                 if let Some(project_dir) = parent.parent() {
                     if let Ok(config_str) = fs::read_to_string(&file_path) {
-                        if let Ok(config) =
-                            serde_json::from_str::<crate::commands::hardware::HardwareConfig>(
-                                &config_str,
-                            )
+                        if let Ok(config) = serde_json::from_str::<
+                            crate::commands::hardware::HardwareConfig,
+                        >(&config_str)
                         {
                             let _ = crate::commands::hardware::generate_hardware_header(
                                 project_dir.to_string_lossy().to_string(),
@@ -277,10 +270,7 @@ pub async fn create_file(
 
 /// 创建新文件夹
 #[tauri::command]
-pub async fn create_folder(
-    parent_path: String,
-    name: String,
-) -> Result<FileEntry, String> {
+pub async fn create_folder(parent_path: String, name: String) -> Result<FileEntry, String> {
     let parent_dir = resolve_existing_path(&parent_path)?;
     let dir_path = parent_dir.join(&name);
     info!("Creating folder: {}", dir_path.display());
@@ -304,10 +294,7 @@ pub async fn create_folder(
 
 /// 重命名文件或文件夹
 #[tauri::command]
-pub async fn rename_file(
-    old_path: String,
-    new_name: String,
-) -> Result<FileEntry, String> {
+pub async fn rename_file(old_path: String, new_name: String) -> Result<FileEntry, String> {
     let old = resolve_existing_path(&old_path)?;
     info!("Renaming: {} -> {}", old.display(), new_name);
 
@@ -373,12 +360,11 @@ pub async fn duplicate_file(path: String) -> Result<FileEntry, String> {
         return Err(format!("File not found: {}", original.display()));
     }
 
-    let stem = original.file_stem()
+    let stem = original
+        .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("copy");
-    let ext = original.extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let ext = original.extension().and_then(|s| s.to_str()).unwrap_or("");
 
     let parent = original.parent().ok_or("Cannot determine parent")?;
 
@@ -431,7 +417,10 @@ pub struct SearchMatch {
 
 /// 在项目文件中搜索文本
 #[tauri::command]
-pub async fn search_in_files(project_path: String, query: String) -> Result<Vec<SearchMatch>, String> {
+pub async fn search_in_files(
+    project_path: String,
+    query: String,
+) -> Result<Vec<SearchMatch>, String> {
     use std::io::{BufRead, BufReader};
 
     if query.is_empty() {
@@ -493,7 +482,9 @@ pub async fn search_in_files(project_path: String, query: String) -> Result<Vec<
                 if results.len() >= max_results {
                     break;
                 }
-                let Ok(line_content) = line else { continue; };
+                let Ok(line_content) = line else {
+                    continue;
+                };
                 if line_content.to_lowercase().contains(query_lower) {
                     results.push(SearchMatch {
                         file_path: path.to_string_lossy().to_string(),

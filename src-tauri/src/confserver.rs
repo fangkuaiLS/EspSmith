@@ -17,10 +17,10 @@
 //!   already be configured (i.e. `build/config.env` exists) from a prior CMake run.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use crate::idf;
 use tracing::{debug, info, warn};
@@ -51,7 +51,11 @@ impl ConfserverProcess {
         // If build directory is already configured, call kconfserver directly.
         if config_env.exists() {
             return Self::start_kconfserver_direct(
-                project_path, idf_path, &build_dir, &sdkconfig_path, &config_env,
+                project_path,
+                idf_path,
+                &build_dir,
+                &sdkconfig_path,
+                &config_env,
             );
         }
 
@@ -68,7 +72,11 @@ impl ConfserverProcess {
         }
 
         Self::start_kconfserver_direct(
-            project_path, idf_path, &build_dir, &sdkconfig_path, &config_env,
+            project_path,
+            idf_path,
+            &build_dir,
+            &sdkconfig_path,
+            &config_env,
         )
     }
 
@@ -77,9 +85,15 @@ impl ConfserverProcess {
         // Clean stale git-data cache that can cause "grabRef.cmake: configure_file No error"
         // This happens when a previous CMake run was interrupted or the build directory
         // is in an inconsistent state.
-        let git_data_dir = Path::new(project_path).join("build").join("CMakeFiles").join("git-data");
+        let git_data_dir = Path::new(project_path)
+            .join("build")
+            .join("CMakeFiles")
+            .join("git-data");
         if git_data_dir.exists() {
-            info!("[confserver] Cleaning stale git-data cache: {}", git_data_dir.display());
+            info!(
+                "[confserver] Cleaning stale git-data cache: {}",
+                git_data_dir.display()
+            );
             let _ = std::fs::remove_dir_all(&git_data_dir);
         }
 
@@ -107,8 +121,11 @@ impl ConfserverProcess {
 
     /// Start kconfserver directly using the build directory's config.env.
     fn start_kconfserver_direct(
-        project_path: &str, idf_path: &str,
-        _build_dir: &Path, sdkconfig_path: &Path, config_env: &Path,
+        project_path: &str,
+        idf_path: &str,
+        _build_dir: &Path,
+        sdkconfig_path: &Path,
+        config_env: &Path,
     ) -> Result<(Self, serde_json::Value), String> {
         // Normalize sdkconfig path to forward slashes (consistent with save command)
         let sdkconfig = sdkconfig_path.to_string_lossy().replace('\\', "/");
@@ -118,7 +135,12 @@ impl ConfserverProcess {
         // Try EIM Python first, then fall back to export.bat
         if let Some(eim_setup) = idf::find_eim_setup(idf_path) {
             return Self::start_kconfserver_eim(
-                project_path, idf_path, &eim_setup, &sdkconfig, &idf_kconfig, &config_env_str,
+                project_path,
+                idf_path,
+                &eim_setup,
+                &sdkconfig,
+                &idf_kconfig,
+                &config_env_str,
             );
         }
 
@@ -126,18 +148,27 @@ impl ConfserverProcess {
         #[cfg(windows)]
         {
             Self::start_kconfserver_export_bat(
-                project_path, idf_path, &sdkconfig, &idf_kconfig, &config_env_str,
+                project_path,
+                idf_path,
+                &sdkconfig,
+                &idf_kconfig,
+                &config_env_str,
             )
         }
         #[cfg(not(windows))]
-        { Err("kconfserver only supported on Windows via EIM or export.bat".to_string()) }
+        {
+            Err("kconfserver only supported on Windows via EIM or export.bat".to_string())
+        }
     }
 
     /// Start kconfserver using EIM Python environment.
     fn start_kconfserver_eim(
-        project_path: &str, idf_path: &str,
+        project_path: &str,
+        idf_path: &str,
         eim_setup: &idf::EimIdfInstalled,
-        sdkconfig: &str, idf_kconfig: &Path, config_env: &str,
+        sdkconfig: &str,
+        idf_kconfig: &Path,
+        config_env: &str,
     ) -> Result<(Self, serde_json::Value), String> {
         let python = idf::normalize_path_sep(&eim_setup.python);
         if !Path::new(&python).exists() {
@@ -145,18 +176,28 @@ impl ConfserverProcess {
         }
 
         let system_path = std::env::var("PATH").unwrap_or_default();
-        let py_scripts = Path::new(&python).parent()
-            .map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let py_scripts = Path::new(&python)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
 
         let eim_path_entries = idf::build_eim_path_entries(&eim_setup.idf_tools_path);
         let new_path = if eim_path_entries.is_empty() {
             format!("{}{}{}", py_scripts, idf::PATH_LIST_SEP, system_path)
         } else {
-            format!("{}{}{}{}{}", eim_path_entries.join(idf::PATH_LIST_SEP), idf::PATH_LIST_SEP, py_scripts, idf::PATH_LIST_SEP, system_path)
+            format!(
+                "{}{}{}{}{}",
+                eim_path_entries.join(idf::PATH_LIST_SEP),
+                idf::PATH_LIST_SEP,
+                py_scripts,
+                idf::PATH_LIST_SEP,
+                system_path
+            )
         };
 
         let idf_python_env_path = Path::new(&python)
-            .parent().and_then(|p| p.parent())
+            .parent()
+            .and_then(|p| p.parent())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
@@ -164,14 +205,17 @@ impl ConfserverProcess {
 
         // Step 1: Run prepare_kconfig_files.py to generate kconfigs.in / kconfigs_projbuild.in
         let prepare_py = Path::new(idf_path)
-            .join("tools").join("kconfig_new").join("prepare_kconfig_files.py");
+            .join("tools")
+            .join("kconfig_new")
+            .join("prepare_kconfig_files.py");
         if prepare_py.exists() {
             info!("[confserver] Running prepare_kconfig_files.py");
             let mut prepare_cmd = Command::new(&python);
             prepare_cmd
                 .arg(&prepare_py)
                 .arg("--list-separator=semicolon")
-                .arg("--env-file").arg(config_env)
+                .arg("--env-file")
+                .arg(config_env)
                 .env("IDF_PATH", idf_path)
                 .env("IDF_TOOLS_PATH", &eim_setup.idf_tools_path)
                 .env("IDF_PYTHON_ENV_PATH", &idf_python_env_path)
@@ -179,37 +223,66 @@ impl ConfserverProcess {
                 .current_dir(project_path)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            #[cfg(windows)] { prepare_cmd.creation_flags(0x08000000); }
-            let prepare_output = prepare_cmd.spawn()
+            #[cfg(windows)]
+            {
+                prepare_cmd.creation_flags(0x08000000);
+            }
+            let prepare_output = prepare_cmd
+                .spawn()
                 .and_then(|c| c.wait_with_output())
                 .map_err(|e| format!("Failed to run prepare_kconfig_files.py: {}", e))?;
             if !prepare_output.status.success() {
                 let stderr = String::from_utf8_lossy(&prepare_output.stderr);
-                warn!("[confserver] prepare_kconfig_files.py stderr: {}", stderr.trim());
+                warn!(
+                    "[confserver] prepare_kconfig_files.py stderr: {}",
+                    stderr.trim()
+                );
             }
         }
 
         // Step 2: Run kconfserver directly
-        info!("[confserver] Starting kconfserver: python={}, kconfig={}, config={}, env-file={}",
-            python, idf_kconfig.display(), sdkconfig, config_env);
+        info!(
+            "[confserver] Starting kconfserver: python={}, kconfig={}, config={}, env-file={}",
+            python,
+            idf_kconfig.display(),
+            sdkconfig,
+            config_env
+        );
 
         let mut cmd = Command::new(&python);
         cmd.args(["-m", "kconfserver"])
-            .arg("--env-file").arg(config_env)
-            .arg("--kconfig").arg(idf_kconfig)
-            .arg("--config").arg(sdkconfig)
+            .arg("--env-file")
+            .arg(config_env)
+            .arg("--kconfig")
+            .arg(idf_kconfig)
+            .arg("--config")
+            .arg(sdkconfig)
             .env("IDF_PATH", idf_path)
             .env("IDF_TOOLS_PATH", &eim_setup.idf_tools_path)
             .env("IDF_PYTHON_ENV_PATH", &idf_python_env_path)
             .env("ESP_IDF_VERSION", idf::get_idf_version_for_env(idf_path))
             .env("PATH", &new_path)
-            .env("PYTHONPATH", format!("{}{}{}", &idf_tools, idf::PATH_LIST_SEP, std::env::var("PYTHONPATH").unwrap_or_default()))
-            .env("OPENOCD_SCRIPTS", idf::join_path_parts(&[&eim_setup.idf_tools_path, "openocd-esp32"]))
+            .env(
+                "PYTHONPATH",
+                format!(
+                    "{}{}{}",
+                    &idf_tools,
+                    idf::PATH_LIST_SEP,
+                    std::env::var("PYTHONPATH").unwrap_or_default()
+                ),
+            )
+            .env(
+                "OPENOCD_SCRIPTS",
+                idf::join_path_parts(&[&eim_setup.idf_tools_path, "openocd-esp32"]),
+            )
             .current_dir(project_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000);
+        }
 
         Self::spawn_and_read_initial(cmd, "EIM")
     }
@@ -217,8 +290,11 @@ impl ConfserverProcess {
     /// Start kconfserver via export.bat (cmd) for non-EIM setups.
     #[cfg(windows)]
     fn start_kconfserver_export_bat(
-        project_path: &str, idf_path: &str,
-        sdkconfig: &str, idf_kconfig: &Path, config_env: &str,
+        project_path: &str,
+        idf_path: &str,
+        sdkconfig: &str,
+        idf_kconfig: &Path,
+        config_env: &str,
     ) -> Result<(Self, serde_json::Value), String> {
         let export_bat = Path::new(idf_path).join("export.bat");
         if !export_bat.exists() {
@@ -226,7 +302,9 @@ impl ConfserverProcess {
         }
 
         let prepare_py = Path::new(idf_path)
-            .join("tools").join("kconfig_new").join("prepare_kconfig_files.py");
+            .join("tools")
+            .join("kconfig_new")
+            .join("prepare_kconfig_files.py");
 
         let cmd_str = if prepare_py.exists() {
             format!(
@@ -253,16 +331,21 @@ impl ConfserverProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)] { cmd.creation_flags(0x08000000); }
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000);
+        }
 
         Self::spawn_and_read_initial(cmd, "export.bat")
     }
 
     /// Spawn the process, set up stderr reading, and return the initial JSON response.
     fn spawn_and_read_initial(
-        mut cmd: Command, source: &str,
+        mut cmd: Command,
+        source: &str,
     ) -> Result<(Self, serde_json::Value), String> {
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| format!("Failed to start confserver via {}: {}", source, e))?;
 
         let stdin = child.stdin.take().ok_or("confserver stdin unavailable")?;
@@ -275,12 +358,15 @@ impl ConfserverProcess {
             std::thread::spawn(move || {
                 for text in stderr_reader.lines().map_while(Result::ok) {
                     let trimmed = text.trim();
-                    if trimmed.is_empty() { continue; }
+                    if trimmed.is_empty() {
+                        continue;
+                    }
                     if trimmed.starts_with("Server running")
                         || trimmed.starts_with("Saving config")
                         || trimmed.starts_with("Loading config")
                         || trimmed.contains("not visible so were not updated")
-                        || trimmed.starts_with("WARNING:") {
+                        || trimmed.starts_with("WARNING:")
+                    {
                         info!("[confserver stderr] {}", trimmed);
                     } else {
                         warn!("[confserver stderr] {}", trimmed);
@@ -294,9 +380,15 @@ impl ConfserverProcess {
         }
 
         let reader = BufReader::new(stdout);
-        let mut process = ConfserverProcess { child, stdin, reader, stderr_buf };
+        let mut process = ConfserverProcess {
+            child,
+            stdin,
+            reader,
+            stderr_buf,
+        };
 
-        let initial = process.read_response()
+        let initial = process
+            .read_response()
             .map_err(|e| format!("confserver: no initial response: {}", e))?;
 
         Ok((process, initial))
@@ -311,11 +403,21 @@ impl ConfserverProcess {
         let mut line_count = 0u32;
         loop {
             let mut line = String::new();
-            debug!("[confserver::read_response] Waiting for line {} from stdout...", line_count + 1);
-            let n = self.reader.read_line(&mut line)
+            debug!(
+                "[confserver::read_response] Waiting for line {} from stdout...",
+                line_count + 1
+            );
+            let n = self
+                .reader
+                .read_line(&mut line)
                 .map_err(|e| format!("confserver read error: {}", e))?;
             line_count += 1;
-            debug!("[confserver::read_response] Read {} bytes, line {}: {:?}", n, line_count, line.trim_end());
+            debug!(
+                "[confserver::read_response] Read {} bytes, line {}: {:?}",
+                n,
+                line_count,
+                line.trim_end()
+            );
             if n == 0 {
                 // stdout closed — always include stderr for diagnostics
                 let exit_status = self.child.try_wait().ok().flatten();
@@ -323,7 +425,11 @@ impl ConfserverProcess {
                     Some(s) => format!("exited with {}", s),
                     None => "still running".to_string(),
                 };
-                let stderr = self.stderr_buf.lock().map(|b| b.clone()).unwrap_or_default();
+                let stderr = self
+                    .stderr_buf
+                    .lock()
+                    .map(|b| b.clone())
+                    .unwrap_or_default();
                 let partial = if buf.trim().is_empty() {
                     "(no output)".to_string()
                 } else {
@@ -331,7 +437,9 @@ impl ConfserverProcess {
                 };
                 return Err(format!(
                     "confserver stdout closed ({}) | partial stdout: {} | stderr: {}",
-                    exit_info, partial.trim(), stderr.trim()
+                    exit_info,
+                    partial.trim(),
+                    stderr.trim()
                 ));
             }
 
@@ -344,13 +452,19 @@ impl ConfserverProcess {
             // The confserver sends each JSON response on a single line.
             match serde_json::from_str::<serde_json::Value>(trimmed) {
                 Ok(val) => {
-                    debug!("[confserver] Received response, version={}", val.get("version").and_then(|v| v.as_i64()).unwrap_or(0));
+                    debug!(
+                        "[confserver] Received response, version={}",
+                        val.get("version").and_then(|v| v.as_i64()).unwrap_or(0)
+                    );
                     return Ok(val);
                 }
                 Err(_) => {
                     // Non-JSON line (e.g. "Set CONFIG_FOO" debug message from confserver).
                     // Accumulate it for diagnostics, then skip it.
-                    warn!("[confserver::read_response] Skipping non-JSON stdout line: {}", trimmed);
+                    warn!(
+                        "[confserver::read_response] Skipping non-JSON stdout line: {}",
+                        trimmed
+                    );
                     buf.push_str(&line);
                     continue;
                 }
@@ -361,11 +475,14 @@ impl ConfserverProcess {
     /// Send a JSON command via stdin and wait for the response.
     pub fn send_command(&mut self, cmd: &str) -> Result<serde_json::Value, String> {
         info!("[confserver] Sending: {}", cmd);
-        self.stdin.write_all(cmd.as_bytes())
+        self.stdin
+            .write_all(cmd.as_bytes())
             .map_err(|e| format!("confserver write error: {}", e))?;
-        self.stdin.write_all(b"\n")
+        self.stdin
+            .write_all(b"\n")
             .map_err(|e| format!("confserver write error: {}", e))?;
-        self.stdin.flush()
+        self.stdin
+            .flush()
             .map_err(|e| format!("confserver flush error: {}", e))?;
 
         self.read_response()
@@ -376,7 +493,8 @@ impl ConfserverProcess {
         if let Some(errors) = response.get("error") {
             if let Some(arr) = errors.as_array() {
                 if !arr.is_empty() {
-                    let msgs: Vec<String> = arr.iter()
+                    let msgs: Vec<String> = arr
+                        .iter()
                         .filter_map(|e| e.as_str().map(|s| s.to_string()))
                         .collect();
                     return Some(msgs.join("; "));
@@ -391,7 +509,11 @@ impl ConfserverProcess {
     }
 
     /// Set a configuration value.
-    pub fn set_value(&mut self, key: &str, value: &serde_json::Value) -> Result<serde_json::Value, String> {
+    pub fn set_value(
+        &mut self,
+        key: &str,
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let cmd = format!(r#"{{"version":2,"set":{{"{}":{}}}}}"#, key, value);
         let response = self.send_command(&cmd)?;
         if let Some(err) = Self::check_response_errors(&response) {
@@ -411,15 +533,25 @@ impl ConfserverProcess {
         }
         // 验证文件是否真的被写入
         match std::fs::metadata(&path) {
-            Ok(meta) => info!("[confserver] Saved sdkconfig successfully, file size={} bytes, modified={:?}", meta.len(), meta.modified().ok()),
-            Err(e) => warn!("[confserver] Save command succeeded but cannot stat file: {}", e),
+            Ok(meta) => info!(
+                "[confserver] Saved sdkconfig successfully, file size={} bytes, modified={:?}",
+                meta.len(),
+                meta.modified().ok()
+            ),
+            Err(e) => warn!(
+                "[confserver] Save command succeeded but cannot stat file: {}",
+                e
+            ),
         }
         Ok(())
     }
 
     /// Load configuration from sdkconfig file.
     pub fn load(&mut self, sdkconfig_path: &str) -> Result<serde_json::Value, String> {
-        let cmd = format!(r#"{{"version":2,"load":"{}"}}"#, sdkconfig_path.replace('\\', "/"));
+        let cmd = format!(
+            r#"{{"version":2,"load":"{}"}}"#,
+            sdkconfig_path.replace('\\', "/")
+        );
         self.send_command(&cmd)
     }
 
@@ -434,8 +566,8 @@ impl ConfserverProcess {
 /// from every line. This avoids CMake target mismatch errors caused by stray
 /// spaces/newlines in values like CONFIG_IDF_TARGET.
 fn sanitize_sdkconfig(path: &Path) -> Result<(), String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Cannot read sdkconfig: {}", e))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Cannot read sdkconfig: {}", e))?;
 
     // Normalize \r\n → \n and trim trailing whitespace from each line
     let cleaned: String = content
@@ -445,6 +577,5 @@ fn sanitize_sdkconfig(path: &Path) -> Result<(), String> {
         .join("\n");
 
     info!("[confserver] Sanitized sdkconfig (normalized line endings & trimmed whitespace)");
-    std::fs::write(path, &cleaned)
-        .map_err(|e| format!("Cannot write sdkconfig: {}", e))
+    std::fs::write(path, &cleaned).map_err(|e| format!("Cannot write sdkconfig: {}", e))
 }

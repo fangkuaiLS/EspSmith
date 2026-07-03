@@ -6,14 +6,14 @@
 //! - UART (CP210x/CH340/FTDI): 仅串口，无 JTAG 功能
 
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
 use tracing::{info, warn};
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 static WATCHER_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -87,26 +87,30 @@ lazy_static::lazy_static! {
 const ESPRESSIF_USB_VID: u16 = 0x303A;
 
 const USB_JTAG_PID_MAP: &[(&str, u16)] = &[
-    ("ESP32-S2",   0x1000),
-    ("ESP32-USB-JTAG", 0x1001),  // S3/C3/C6/H2 共用此 PID
-    ("ESP32-P4",   0x1007),
+    ("ESP32-S2", 0x1000),
+    ("ESP32-USB-JTAG", 0x1001), // S3/C3/C6/H2 共用此 PID
+    ("ESP32-P4", 0x1007),
 ];
 
 /// 外部 JTAG/调试探头的 VID 列表
 const EXTERNAL_JTAG_VID_PID: &[(&str, u16, &[u16])] = &[
     // (名称, VID, 允许的PID列表 / 空表示该VID下所有PID)
-    ("J-Link",             0x1366, &[]),           // SEGGER J-Link — 所有 PID 均视为 JTAG
-    ("DAP-Link",           0x0D28, &[]),           // ARM DAP-Link (CMSIS-DAP)
-    ("ST-Link",            0x0483, &[0x3748, 0x374B, 0x374E, 0x374F]), // ST-Link V2/V3
-    ("FTDI JTAG",          0x0403, &[0x6010, 0x6011, 0x6014,             // FT2232H 系列
-                                      0x8A88, 0x8A89, 0x8A8A, 0x8A8B]), // FT4232H 系列
+    ("J-Link", 0x1366, &[]),   // SEGGER J-Link — 所有 PID 均视为 JTAG
+    ("DAP-Link", 0x0D28, &[]), // ARM DAP-Link (CMSIS-DAP)
+    ("ST-Link", 0x0483, &[0x3748, 0x374B, 0x374E, 0x374F]), // ST-Link V2/V3
+    (
+        "FTDI JTAG",
+        0x0403,
+        &[
+            0x6010, 0x6011, 0x6014, // FT2232H 系列
+            0x8A88, 0x8A89, 0x8A8A, 0x8A8B,
+        ],
+    ), // FT4232H 系列
 ];
 
 #[allow(dead_code)] // 预留：PID映射表
-const ESPRESSIF_SERIAL_PID_MAP: &[(&str, u16)] = &[
-    ("ESP32-S2", 0x1000),
-    ("ESP32-USB-JTAG", 0x1001),
-];
+const ESPRESSIF_SERIAL_PID_MAP: &[(&str, u16)] =
+    &[("ESP32-S2", 0x1000), ("ESP32-USB-JTAG", 0x1001)];
 
 fn chip_from_pid(pid: u16) -> Option<&'static str> {
     for (name, id) in USB_JTAG_PID_MAP {
@@ -124,9 +128,9 @@ fn idf_target_from_vid_pid(vid: u16, pid: u16) -> Option<&'static str> {
         return None;
     }
     match pid {
-        0x1000 => Some("ESP32-S2"),  // ESP32-S2
-        0x1001 => None,              // ESP32-USB-JTAG: S3/C3/C6/H2 共用，需 esptool 检测
-        0x1007 => Some("ESP32-P4"),  // ESP32-P4
+        0x1000 => Some("ESP32-S2"), // ESP32-S2
+        0x1001 => None,             // ESP32-USB-JTAG: S3/C3/C6/H2 共用，需 esptool 检测
+        0x1007 => Some("ESP32-P4"), // ESP32-P4
         _ => None,
     }
 }
@@ -145,9 +149,14 @@ fn is_ch340(vid: u16) -> bool {
 
 /// 检查是否为 FTDI **UART 芯片**（非 JTAG 探头）
 fn is_ftdi_uart(vid: u16, pid: u16) -> bool {
-    if vid != 0x0403 { return false; }
+    if vid != 0x0403 {
+        return false;
+    }
     // 这些 PID 是纯 UART 芯片 (FT232RL/FT232R 等)
-    matches!(pid, 0x6001 | 0x6018 | 0x6019 | 0x601A | 0x601B | 0x601C | 0x601D)
+    matches!(
+        pid,
+        0x6001 | 0x6018 | 0x6019 | 0x601A | 0x601B | 0x601C | 0x601D
+    )
 }
 
 /// 检查是否为外部 JTAG/调试探头
@@ -171,7 +180,10 @@ pub fn detect_connection_mode(target_port: Option<&str>) -> ConnectionInfo {
             return cache_and_log(info);
         }
         // 目标端口未找到（可能已断开），回退到全端口扫描
-        warn!("Target port {} not found in available ports, falling back to scan-all", tp);
+        warn!(
+            "Target port {} not found in available ports, falling back to scan-all",
+            tp
+        );
     }
 
     // ── 回退：扫描所有端口，选择最佳匹配（无 target_port 或目标端口不存在时） ──
@@ -179,7 +191,10 @@ pub fn detect_connection_mode(target_port: Option<&str>) -> ConnectionInfo {
 }
 
 /// 识别单个指定端口的连接模式（用于 target_port 精确匹配）。
-fn identify_single_port(ports: &[serialport::SerialPortInfo], target: &str) -> Option<ConnectionInfo> {
+fn identify_single_port(
+    ports: &[serialport::SerialPortInfo],
+    target: &str,
+) -> Option<ConnectionInfo> {
     let port_info = ports.iter().find(|p| p.port_name == target)?;
 
     if let serialport::SerialPortType::UsbPort(ref usb_info) = port_info.port_type {
@@ -200,16 +215,27 @@ fn identify_single_port(ports: &[serialport::SerialPortInfo], target: &str) -> O
             } else {
                 (
                     Some("ESP32-USB-JTAG".to_string()),
-                    vec!["flash".into(), "debug".into(), "breakpoints".into(),
-                         "watchpoints".into(), "registers".into(), "backtrace".into(), "coredump".into()],
+                    vec![
+                        "flash".into(),
+                        "debug".into(),
+                        "breakpoints".into(),
+                        "watchpoints".into(),
+                        "registers".into(),
+                        "backtrace".into(),
+                        "coredump".into(),
+                    ],
                     "ESP32-S3/C3/C6/H2 通过 USB-JTAG 连接 — 推荐使用 JTAG 模式。".to_string(),
                 )
             };
             return Some(make_info(
                 ConnectionMode::Jtag,
-                target, vid, pid,
-                chip_hint_label, target_idf.map(|s| s.to_string()),
-                capabilities, recommendation,
+                target,
+                vid,
+                pid,
+                chip_hint_label,
+                target_idf.map(|s| s.to_string()),
+                capabilities,
+                recommendation,
             ));
         }
 
@@ -217,11 +243,23 @@ fn identify_single_port(ports: &[serialport::SerialPortInfo], target: &str) -> O
         if let Some(probe_name) = is_external_jtag_probe(vid, pid) {
             return Some(make_info(
                 ConnectionMode::Jtag,
-                target, vid, pid,
-                Some(probe_name.to_string()), None,
-                vec!["flash".into(), "debug".into(), "breakpoints".into(),
-                     "watchpoints".into(), "registers".into(), "backtrace".into()],
-                format!("检测到外部 JTAG 探头: {}。请确保 OpenOCD 已配置且支持此探头。", probe_name),
+                target,
+                vid,
+                pid,
+                Some(probe_name.to_string()),
+                None,
+                vec![
+                    "flash".into(),
+                    "debug".into(),
+                    "breakpoints".into(),
+                    "watchpoints".into(),
+                    "registers".into(),
+                    "backtrace".into(),
+                ],
+                format!(
+                    "检测到外部 JTAG 探头: {}。请确保 OpenOCD 已配置且支持此探头。",
+                    probe_name
+                ),
             ));
         }
 
@@ -269,8 +307,13 @@ fn scan_best_match(ports: &[serialport::SerialPortInfo]) -> ConnectionInfo {
                     chip_hint = hint;
                     idf_target = target;
                     capabilities = vec![
-                        "flash".into(), "debug".into(), "breakpoints".into(),
-                        "watchpoints".into(), "registers".into(), "backtrace".into(), "coredump".into(),
+                        "flash".into(),
+                        "debug".into(),
+                        "breakpoints".into(),
+                        "watchpoints".into(),
+                        "registers".into(),
+                        "backtrace".into(),
+                        "coredump".into(),
                     ];
                     recommendation = format!(
                         "{} 通过 USB-JTAG 连接 — 推荐使用 JTAG 模式。",
@@ -287,8 +330,12 @@ fn scan_best_match(ports: &[serialport::SerialPortInfo]) -> ConnectionInfo {
                     best_pid = Some(format!("{:04X}", pid));
                     chip_hint = Some(probe_name);
                     capabilities = vec![
-                        "flash".into(), "debug".into(), "breakpoints".into(),
-                        "watchpoints".into(), "registers".into(), "backtrace".into(),
+                        "flash".into(),
+                        "debug".into(),
+                        "breakpoints".into(),
+                        "watchpoints".into(),
+                        "registers".into(),
+                        "backtrace".into(),
                     ];
                     recommendation = format!(
                         "检测到外部 JTAG 探头: {}。请确保 OpenOCD 已配置且支持此探头，并在项目设置中选择正确的芯片型号。",
@@ -297,7 +344,9 @@ fn scan_best_match(ports: &[serialport::SerialPortInfo]) -> ConnectionInfo {
                 }
 
             // ── 优先级 3: 纯 UART 串口 (CP210x / CH340 / FTDI UART) ──
-            } else if best_mode == ConnectionMode::Unknown && (is_cp210x(vid, pid) || is_ch340(vid) || is_ftdi_uart(vid, pid)) {
+            } else if best_mode == ConnectionMode::Unknown
+                && (is_cp210x(vid, pid) || is_ch340(vid) || is_ftdi_uart(vid, pid))
+            {
                 best_mode = ConnectionMode::Uart;
                 best_port = Some(port_info.port_name.clone());
                 best_vid = Some(format!("{:04X}", vid));
@@ -311,8 +360,14 @@ fn scan_best_match(ports: &[serialport::SerialPortInfo]) -> ConnectionInfo {
     make_info(
         best_mode,
         best_port.as_deref().unwrap_or(""),
-        best_vid.as_ref().and_then(|v| u16::from_str_radix(v, 16).ok()).unwrap_or(0),
-        best_pid.as_ref().and_then(|p| u16::from_str_radix(p, 16).ok()).unwrap_or(0),
+        best_vid
+            .as_ref()
+            .and_then(|v| u16::from_str_radix(v, 16).ok())
+            .unwrap_or(0),
+        best_pid
+            .as_ref()
+            .and_then(|p| u16::from_str_radix(p, 16).ok())
+            .unwrap_or(0),
         chip_hint.map(|s| s.to_string()),
         idf_target.map(|s| s.to_string()),
         capabilities,
@@ -336,9 +391,21 @@ fn make_info(
         mode,
         mode_label: mode.label().to_string(),
         recommended: mode.recommended(),
-        port: if port.is_empty() { None } else { Some(port.to_string()) },
-        vid: if vid == 0 { None } else { Some(format!("{:04X}", vid)) },
-        pid: if pid == 0 { None } else { Some(format!("{:04X}", pid)) },
+        port: if port.is_empty() {
+            None
+        } else {
+            Some(port.to_string())
+        },
+        vid: if vid == 0 {
+            None
+        } else {
+            Some(format!("{:04X}", vid))
+        },
+        pid: if pid == 0 {
+            None
+        } else {
+            Some(format!("{:04X}", pid))
+        },
         chip_hint,
         idf_target,
         capabilities,
@@ -352,7 +419,10 @@ fn cache_and_log(info: ConnectionInfo) -> ConnectionInfo {
     if let Ok(mut guard) = CONNECTION_MODE.lock() {
         *guard = info.clone();
     }
-    info!("Connection detected: {:?} on {:?}, idf_target={:?}", info.mode, info.port, info.idf_target);
+    info!(
+        "Connection detected: {:?} on {:?}, idf_target={:?}",
+        info.mode, info.port, info.idf_target
+    );
     info
 }
 
@@ -397,16 +467,18 @@ pub async fn force_refresh_connection(port: Option<String>) -> Result<Connection
 
 fn port_fingerprint() -> String {
     let ports = serialport::available_ports().unwrap_or_default();
-    let mut items: Vec<String> = ports.iter().map(|p| {
-        let (vid, pid) = match &p.port_type {
-            serialport::SerialPortType::UsbPort(info) => (
-                format!("{:04X}", info.vid),
-                format!("{:04X}", info.pid),
-            ),
-            _ => ("0000".into(), "0000".into()),
-        };
-        format!("{}:{}:{}", p.port_name, vid, pid)
-    }).collect();
+    let mut items: Vec<String> = ports
+        .iter()
+        .map(|p| {
+            let (vid, pid) = match &p.port_type {
+                serialport::SerialPortType::UsbPort(info) => {
+                    (format!("{:04X}", info.vid), format!("{:04X}", info.pid))
+                }
+                _ => ("0000".into(), "0000".into()),
+            };
+            format!("{}:{}:{}", p.port_name, vid, pid)
+        })
+        .collect();
     items.sort();
     items.join("|")
 }
@@ -443,7 +515,10 @@ pub fn start_port_watcher(app_handle: tauri::AppHandle) {
                 // If VID/PID couldn't determine the exact chip (e.g. PID 0x1001),
                 // run esptool chip_id to detect it immediately instead of waiting
                 // for the frontend's 2s polling cycle + esptool delay.
-                if info.idf_target.is_none() && info.port.is_some() && info.mode == ConnectionMode::Jtag {
+                if info.idf_target.is_none()
+                    && info.port.is_some()
+                    && info.mode == ConnectionMode::Jtag
+                {
                     if let Some(ref port) = info.port {
                         if let Some(chip) = detect_chip_via_esptool(port) {
                             info!("Port watcher: esptool detected chip={} on {}", chip, port);
@@ -496,9 +571,11 @@ fn detect_chip_via_esptool(port: &str) -> Option<String> {
 
     let mut cmd = std::process::Command::new(&python);
     cmd.arg(&esptool)
-       .args(["--port", port, "--chip", "auto", "chip_id"]);
+        .args(["--port", port, "--chip", "auto", "chip_id"]);
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
+    {
+        cmd.creation_flags(0x08000000);
+    }
     let output = cmd.output().ok()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -507,7 +584,20 @@ fn detect_chip_via_esptool(port: &str) -> Option<String> {
 
     for line in combined.lines() {
         let trimmed = line.trim();
-        for chip in &["ESP32-S3", "ESP32-S2", "ESP32-C3", "ESP32-C2", "ESP32-C5", "ESP32-C6", "ESP32-C61", "ESP32-H2", "ESP32-H21", "ESP32-H4", "ESP32-P4", "ESP32"] {
+        for chip in &[
+            "ESP32-S3",
+            "ESP32-S2",
+            "ESP32-C3",
+            "ESP32-C2",
+            "ESP32-C5",
+            "ESP32-C6",
+            "ESP32-C61",
+            "ESP32-H2",
+            "ESP32-H21",
+            "ESP32-H4",
+            "ESP32-P4",
+            "ESP32",
+        ] {
             if trimmed.contains(chip) {
                 return Some(chip.to_string());
             }
@@ -530,7 +620,9 @@ fn find_python_for_esptool(idf_path: &str) -> Option<String> {
         let mut cmd = std::process::Command::new(cmd_name);
         cmd.arg("--version");
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
+        {
+            cmd.creation_flags(0x08000000);
+        }
         if cmd.output().map(|o| o.status.success()).unwrap_or(false) {
             return Some(cmd_name.to_string());
         }

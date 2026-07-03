@@ -163,18 +163,27 @@ pub fn auto_recover_on_crash() -> bool {
 
 /// 取环形缓冲区最近 n 行
 pub fn ring_tail(n: usize) -> Vec<RingEntry> {
-    RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).tail(n)
+    RING_BUFFER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .tail(n)
 }
 
 /// 取 since_ms 之后的所有行
 pub fn ring_since(since_ms: u64) -> Vec<RingEntry> {
-    RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).since(since_ms)
+    RING_BUFFER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .since(since_ms)
 }
 
 /// 正则搜索历史日志
 pub fn ring_search(pattern: &str, limit: usize) -> Result<Vec<RingEntry>, String> {
     let re = regex::Regex::new(pattern).map_err(|e| format!("Invalid regex: {e}"))?;
-    Ok(RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).search(&re, limit))
+    Ok(RING_BUFFER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .search(&re, limit))
 }
 
 /// 缓冲区当前条目数
@@ -211,7 +220,10 @@ pub fn ring_wait_for_output(max_wait_ms: u64, enough_bytes: usize) -> WaitOutput
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
 
     loop {
-        let now_entries = RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).since(ts0);
+        let now_entries = RING_BUFFER
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .since(ts0);
         let total_bytes: usize = now_entries.iter().map(|e| e.line.len() + 1).sum();
 
         if total_bytes >= enough_bytes {
@@ -226,7 +238,10 @@ pub fn ring_wait_for_output(max_wait_ms: u64, enough_bytes: usize) -> WaitOutput
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    let entries = RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).since(ts0);
+    let entries = RING_BUFFER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .since(ts0);
     if entries.is_empty() {
         // 完全无新数据：返回最近 500 行兜底
         let tail = ring_tail(500);
@@ -259,22 +274,34 @@ pub fn ring_wait_for_output(max_wait_ms: u64, enough_bytes: usize) -> WaitOutput
 
 /// 最新行时间戳（无数据返回 0）
 pub fn ring_latest_ts() -> u64 {
-    RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).latest_ts()
+    RING_BUFFER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .latest_ts()
 }
 
 /// 是否有串口处于连接（读取中）状态
 pub fn is_serial_open() -> bool {
-    ACTIVE_PORT.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    ACTIVE_PORT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some()
 }
 
 /// 取走待消费的崩溃现场（取走后清空，避免重复投递给 AI）
 pub fn take_pending_crash() -> Option<PendingCrash> {
-    PENDING_CRASH.lock().unwrap_or_else(|e| e.into_inner()).take()
+    PENDING_CRASH
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
 }
 
 /// 是否存在未消费的崩溃现场
 pub fn has_pending_crash() -> bool {
-    PENDING_CRASH.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    PENDING_CRASH
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some()
 }
 
 // ===== 崩溃模式检测（与 mcp.rs 共用）=====
@@ -367,15 +394,25 @@ fn is_esp_serial_device(vid: u16, pid: u16) -> bool {
             || pid == 0x4004;
     }
     // CP210x family
-    if vid == 0x10C4 && pid == 0xEA60 { return true; }
+    if vid == 0x10C4 && pid == 0xEA60 {
+        return true;
+    }
     // FTDI
-    if vid == 0x0403 && (pid == 0x6001 || pid == 0x6010 || pid == 0x6014) { return true; }
+    if vid == 0x0403 && (pid == 0x6001 || pid == 0x6010 || pid == 0x6014) {
+        return true;
+    }
     // CH340/CH341
-    if vid == 0x1A86 && (pid == 0x7523 || pid == 0x5523) { return true; }
+    if vid == 0x1A86 && (pid == 0x7523 || pid == 0x5523) {
+        return true;
+    }
     // Arduino / Atmel
-    if vid == 0x2341 { return true; }
+    if vid == 0x2341 {
+        return true;
+    }
     // Raspberry Pi Pico
-    if vid == 0x2E8A { return true; }
+    if vid == 0x2E8A {
+        return true;
+    }
     // Any VID in ESP list
     ESPRESSIF_VIDS.contains(&vid)
 }
@@ -389,9 +426,11 @@ fn detect_chip_type(idf_path: &str, port: &str) -> Option<String> {
 
     let mut cmd = Command::new(&python);
     cmd.arg(&esptool)
-       .args(["--port", port, "--chip", "auto", "chip_id"]);
+        .args(["--port", port, "--chip", "auto", "chip_id"]);
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
+    {
+        cmd.creation_flags(0x08000000);
+    }
     let output = cmd.output().ok()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -404,7 +443,20 @@ fn detect_chip_type(idf_path: &str, port: &str) -> Option<String> {
     // "Chip ID: 0x09 (ESP32-S3)"
     for line in combined.lines() {
         let trimmed = line.trim();
-        for chip in &["ESP32-S3", "ESP32-S2", "ESP32-C3", "ESP32-C2", "ESP32-C5", "ESP32-C6", "ESP32-C61", "ESP32-H2", "ESP32-H21", "ESP32-H4", "ESP32-P4", "ESP32"] {
+        for chip in &[
+            "ESP32-S3",
+            "ESP32-S2",
+            "ESP32-C3",
+            "ESP32-C2",
+            "ESP32-C5",
+            "ESP32-C6",
+            "ESP32-C61",
+            "ESP32-H2",
+            "ESP32-H21",
+            "ESP32-H4",
+            "ESP32-P4",
+            "ESP32",
+        ] {
             if trimmed.contains(chip) {
                 return Some(chip.to_string());
             }
@@ -424,7 +476,9 @@ fn find_python_for_idf(idf_path: &str) -> Option<String> {
         let mut cmd = Command::new(cmd_name);
         cmd.arg("--version");
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
+        {
+            cmd.creation_flags(0x08000000);
+        }
         if cmd.output().map(|o| o.status.success()).unwrap_or(false) {
             return Some(cmd_name.to_string());
         }
@@ -439,22 +493,25 @@ pub async fn list_ports_with_idf(idf_path: Option<String>) -> Result<Vec<SerialP
     debug!("Listing serial ports (detect_chips={})", idf_path.is_some());
     let ports = serialport::available_ports().map_err(|e| e.to_string())?;
 
-    let mut result: Vec<SerialPortInfo> = ports.into_iter().map(|p| {
-        let (vid, pid) = match &p.port_type {
-            serialport::SerialPortType::UsbPort(info) => (
-                Some(format!("{:04X}", info.vid)),
-                Some(format!("{:04X}", info.pid)),
-            ),
-            _ => (None, None),
-        };
-        SerialPortInfo {
-            name: p.port_name.clone(),
-            path: p.port_name,
-            vid,
-            pid,
-            chip_type: None,
-        }
-    }).collect();
+    let mut result: Vec<SerialPortInfo> = ports
+        .into_iter()
+        .map(|p| {
+            let (vid, pid) = match &p.port_type {
+                serialport::SerialPortType::UsbPort(info) => (
+                    Some(format!("{:04X}", info.vid)),
+                    Some(format!("{:04X}", info.pid)),
+                ),
+                _ => (None, None),
+            };
+            SerialPortInfo {
+                name: p.port_name.clone(),
+                path: p.port_name,
+                vid,
+                pid,
+                chip_type: None,
+            }
+        })
+        .collect();
 
     // 可选：通过 esptool.py chip_id 检测芯片类型（参考官方扩展 processPorts）
     if let Some(ref idf) = idf_path {
@@ -487,9 +544,11 @@ pub fn detect_default_port(idf_path: &str, target: &str) -> Option<String> {
         let python = find_python_for_idf(idf_path)?;
         let mut cmd = Command::new(&python);
         cmd.arg(&esptool)
-           .args(["--port", port_name, "--chip", target, "chip_id"]);
+            .args(["--port", port_name, "--chip", target, "chip_id"]);
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
+        {
+            cmd.creation_flags(0x08000000);
+        }
         let output = cmd.output().ok()?;
         let combined = format!(
             "{}\n{}",
@@ -542,7 +601,10 @@ fn is_device_disconnect_error(e: &std::io::Error) -> bool {
     const ERROR_DEVICE_NOT_CONNECTED: i32 = 1167;
     const ERROR_NO_SUCH_DEVICE: i32 = 433;
     if let Some(code) = e.raw_os_error() {
-        matches!(code, ERROR_GEN_FAILURE | ERROR_DEVICE_NOT_CONNECTED | ERROR_NO_SUCH_DEVICE)
+        matches!(
+            code,
+            ERROR_GEN_FAILURE | ERROR_DEVICE_NOT_CONNECTED | ERROR_NO_SUCH_DEVICE
+        )
     } else {
         false
     }
@@ -570,10 +632,13 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
     loop {
         if check_disconnect_signal() {
             tracing::info!("Disconnect signal received, closing serial port");
-            let _ = app.emit("serial-disconnected", serde_json::json!({
-                "port": port_name,
-                "reason": "disconnect_requested"
-            }));
+            let _ = app.emit(
+                "serial-disconnected",
+                serde_json::json!({
+                    "port": port_name,
+                    "reason": "disconnect_requested"
+                }),
+            );
             break;
         }
 
@@ -589,10 +654,13 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
                 let data = String::from_utf8_lossy(&buf[..n]).to_string();
 
                 // 1) 前端：保留原始 chunk 推送（兼容现有 useSerialMonitor）
-                let _ = app.emit("serial-data", serde_json::json!({
-                    "port": &port_name,
-                    "data": data,
-                }));
+                let _ = app.emit(
+                    "serial-data",
+                    serde_json::json!({
+                        "port": &port_name,
+                        "data": data,
+                    }),
+                );
 
                 // 2) 行分割 + 写入共享环形缓冲 + 崩溃扫描
                 partial.push_str(&data);
@@ -602,7 +670,10 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
                     // `line` 现在是本行内容（含可能的 \r）
                     let trimmed = line.trim_end_matches('\r');
 
-                    let ts_ms = RING_BUFFER.write().unwrap_or_else(|e| e.into_inner()).push_line(trimmed.to_string());
+                    let ts_ms = RING_BUFFER
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push_line(trimmed.to_string());
 
                     // 崩溃模式扫描（去抖：距上次触发超过 3 秒才再次捕获）
                     let crash = detect_crash_patterns(trimmed);
@@ -613,11 +684,14 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
                         let is_new = capture_crash_context(crash, None);
                         if is_new {
                             warn!("Crash detected on {}: {}", port_name, summary);
-                            let _ = app.emit("crash-detected", serde_json::json!({
-                                "port": &port_name,
-                                "summary": summary,
-                                "ts_ms": ts_ms,
-                            }));
+                            let _ = app.emit(
+                                "crash-detected",
+                                serde_json::json!({
+                                    "port": &port_name,
+                                    "summary": summary,
+                                    "ts_ms": ts_ms,
+                                }),
+                            );
                         }
 
                         // 自动复位恢复（让崩溃转储写完后再复位）
@@ -626,9 +700,12 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
                             let port_clone = port_name.clone();
                             std::thread::spawn(move || {
                                 std::thread::sleep(std::time::Duration::from_millis(800));
-                                let _ = app_clone.emit("serial-auto-recover", serde_json::json!({
-                                    "port": &port_clone,
-                                }));
+                                let _ = app_clone.emit(
+                                    "serial-auto-recover",
+                                    serde_json::json!({
+                                        "port": &port_clone,
+                                    }),
+                                );
                                 match serial_reset_via_dtr_rts() {
                                     Ok(msg) => info!("Auto-recover reset: {}", msg),
                                     Err(e) => warn!("Auto-recover reset failed: {}", e),
@@ -643,8 +720,7 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
             }
             Err(e) => {
                 match e.kind() {
-                    std::io::ErrorKind::TimedOut
-                    | std::io::ErrorKind::WouldBlock => {
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
                         // 正常超时，继续读取
                     }
                     std::io::ErrorKind::BrokenPipe
@@ -652,29 +728,42 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
                     | std::io::ErrorKind::ConnectionAborted => {
                         tracing::warn!("Serial port {} disconnected: {}", port_name, e);
                         *guard = None;
-                        let _ = app.emit("serial-disconnected", serde_json::json!({
-                            "port": &port_name,
-                            "error": e.to_string(),
-                        }));
+                        let _ = app.emit(
+                            "serial-disconnected",
+                            serde_json::json!({
+                                "port": &port_name,
+                                "error": e.to_string(),
+                            }),
+                        );
                         break;
                     }
                     _ => {
                         // Windows 设备断开通常返回 Other(31/1167)
                         #[cfg(windows)]
                         if is_device_disconnect_error(&e) {
-                            tracing::warn!("Serial port {} device disconnected (Windows): {}", port_name, e);
+                            tracing::warn!(
+                                "Serial port {} device disconnected (Windows): {}",
+                                port_name,
+                                e
+                            );
                             *guard = None;
-                            let _ = app.emit("serial-disconnected", serde_json::json!({
-                                "port": &port_name,
-                                "error": format!("Device disconnected: {}", e),
-                            }));
+                            let _ = app.emit(
+                                "serial-disconnected",
+                                serde_json::json!({
+                                    "port": &port_name,
+                                    "error": format!("Device disconnected: {}", e),
+                                }),
+                            );
                             break;
                         }
 
                         consecutive_errors += 1;
                         tracing::warn!(
                             "Serial read error on {}: {} (consecutive: {}/{})",
-                            port_name, e, consecutive_errors, MAX_CONSECUTIVE_ERRORS
+                            port_name,
+                            e,
+                            consecutive_errors,
+                            MAX_CONSECUTIVE_ERRORS
                         );
                         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                             tracing::error!(
@@ -682,10 +771,13 @@ fn read_serial_loop(app: tauri::AppHandle, port_name: String) {
                                 port_name
                             );
                             *guard = None;
-                            let _ = app.emit("serial-disconnected", serde_json::json!({
-                                "port": &port_name,
-                                "error": format!("Too many consecutive errors: {}", e),
-                            }));
+                            let _ = app.emit(
+                                "serial-disconnected",
+                                serde_json::json!({
+                                    "port": &port_name,
+                                    "error": format!("Too many consecutive errors: {}", e),
+                                }),
+                            );
                             break;
                         }
                     }
@@ -770,9 +862,15 @@ pub fn probe_soft_reset() -> Result<String, String> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    let stream = TcpStream::connect(crate::adapters::OPENOCD_ADDR)
-        .map_err(|e| format!("Cannot connect to OpenOCD telnet ({}): {}", crate::adapters::OPENOCD_ADDR, e))?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(3)))
+    let stream = TcpStream::connect(crate::adapters::OPENOCD_ADDR).map_err(|e| {
+        format!(
+            "Cannot connect to OpenOCD telnet ({}): {}",
+            crate::adapters::OPENOCD_ADDR,
+            e
+        )
+    })?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
         .map_err(|e| e.to_string())?;
 
     let mut stream = stream;
@@ -781,16 +879,21 @@ pub fn probe_soft_reset() -> Result<String, String> {
     let _ = stream.read(&mut buf);
 
     // 发送 reset halt 命令
-    stream.write_all(b"reset halt\n")
+    stream
+        .write_all(b"reset halt\n")
         .map_err(|e| format!("Failed to send reset command: {}", e))?;
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    let n = stream.read(&mut buf)
+    let n = stream
+        .read(&mut buf)
         .map_err(|e| format!("Failed to read OpenOCD response: {}", e))?;
     let response = String::from_utf8_lossy(&buf[..n]);
     info!("OpenOCD reset response: {}", response.trim());
 
-    Ok(format!("Probe soft reset executed. Response: {}", response.trim()))
+    Ok(format!(
+        "Probe soft reset executed. Response: {}",
+        response.trim()
+    ))
 }
 
 /// 同步采样串口数据（CLI 模式使用）

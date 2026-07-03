@@ -23,17 +23,24 @@ pub fn resolve_recovery(
     if lower.starts_with("[fatal] ") {
         tracing::warn!(
             "FATAL error in step '{}': '{}'. Skipping recovery (fatal errors are not recoverable).",
-            failed_step.name, error_message
+            failed_step.name,
+            error_message
         );
         return None;
     }
-    if lower.contains("gdb") && (lower.contains("timeout") || lower.contains("timed out")
-        || lower.contains("connection refused") || lower.contains("cannot connect")
-        || lower.contains("not available") || lower.contains("not reachable")) {
+    if lower.contains("gdb")
+        && (lower.contains("timeout")
+            || lower.contains("timed out")
+            || lower.contains("connection refused")
+            || lower.contains("cannot connect")
+            || lower.contains("not available")
+            || lower.contains("not reachable"))
+    {
         return None;
     }
 
-    let (anchor, anchor_index) = classify_failure(failed_step, error_message, step_index, total_steps);
+    let (anchor, anchor_index) =
+        classify_failure(failed_step, error_message, step_index, total_steps);
 
     let action = pick_recovery_action(policy, failed_step, error_message);
 
@@ -59,27 +66,41 @@ fn classify_failure(
 ) -> (AnchorPoint, usize) {
     let lower = error.to_lowercase();
 
-    if lower.contains("gdb") && (lower.contains("timeout") || lower.contains("timed out")
-        || lower.contains("connection refused") || lower.contains("cannot connect")) {
+    if lower.contains("gdb")
+        && (lower.contains("timeout")
+            || lower.contains("timed out")
+            || lower.contains("connection refused")
+            || lower.contains("cannot connect"))
+    {
         return (AnchorPoint::Check, step_index);
     }
 
-    if lower.contains("flash") || lower.contains("openocd") || lower.contains("gdb")
-        || lower.contains("probe") || lower.contains("jtag") || lower.contains("swd")
+    if lower.contains("flash")
+        || lower.contains("openocd")
+        || lower.contains("gdb")
+        || lower.contains("probe")
+        || lower.contains("jtag")
+        || lower.contains("swd")
     {
         return (AnchorPoint::Load, step_index);
     }
 
     // Build errors: cannot recover, just rewind to build
-    if lower.contains("compile") || lower.contains("build") || lower.contains("cmake")
-        || lower.contains("undefined reference") || lower.contains("syntax error")
+    if lower.contains("compile")
+        || lower.contains("build")
+        || lower.contains("cmake")
+        || lower.contains("undefined reference")
+        || lower.contains("syntax error")
     {
         return (AnchorPoint::Build, step_index);
     }
 
     // Serial/verify errors: rewind to load (re-flash)
-    if lower.contains("serial") || lower.contains("uart") || lower.contains("timeout")
-        || lower.contains("no output") || lower.contains("verify")
+    if lower.contains("serial")
+        || lower.contains("uart")
+        || lower.contains("timeout")
+        || lower.contains("no output")
+        || lower.contains("verify")
     {
         return (AnchorPoint::Load, step_index);
     }
@@ -121,7 +142,10 @@ fn pick_recovery_action<'a>(
         || lower.contains("connection refused")
     {
         for action in &policy.allowed_actions {
-            if matches!(action, RecoveryAction::ProbeSoftReset | RecoveryAction::ProbeHardReset) {
+            if matches!(
+                action,
+                RecoveryAction::ProbeSoftReset | RecoveryAction::ProbeHardReset
+            ) {
                 return action;
             }
         }
@@ -148,7 +172,10 @@ fn pick_recovery_action<'a>(
     // Build-related errors (compile/cmake/linker) → fall through to default
 
     // Default: return the first allowed action, or None
-    policy.allowed_actions.first().unwrap_or(&RecoveryAction::None)
+    policy
+        .allowed_actions
+        .first()
+        .unwrap_or(&RecoveryAction::None)
 }
 
 /// GDB 会话恢复上下文（闭包保持期间使用的 ELF 路径和芯片信息）。
@@ -175,7 +202,11 @@ fn reconnect_gdb_after_recovery() -> Result<String, String> {
         Some((elf, chip)) => {
             crate::commands::gdb_session::disconnect_session_sync();
             std::thread::sleep(std::time::Duration::from_millis(500));
-            crate::commands::gdb_session::connect_session_sync(elf, crate::adapters::GDB_ADDR, chip)?;
+            crate::commands::gdb_session::connect_session_sync(
+                elf,
+                crate::adapters::GDB_ADDR,
+                chip,
+            )?;
             Ok(format!("GDB session reconnected for {chip}"))
         }
         None => Ok("No GDB recovery context; skipping GDB reconnect.".into()),
@@ -187,15 +218,9 @@ fn reconnect_gdb_after_recovery() -> Result<String, String> {
 pub fn execute_recovery(action: &RecoveryAction) -> Result<String, String> {
     let msg = match action {
         RecoveryAction::None => "No recovery action taken.".into(),
-        RecoveryAction::SerialReset => {
-            crate::commands::serial::serial_reset_via_dtr_rts()?
-        }
-        RecoveryAction::ProbeSoftReset => {
-            crate::commands::serial::probe_soft_reset()?
-        }
-        RecoveryAction::ProbeHardReset => {
-            probe_hard_reset_via_openocd()?
-        }
+        RecoveryAction::SerialReset => crate::commands::serial::serial_reset_via_dtr_rts()?,
+        RecoveryAction::ProbeSoftReset => crate::commands::serial::probe_soft_reset()?,
+        RecoveryAction::ProbeHardReset => probe_hard_reset_via_openocd()?,
         RecoveryAction::PowerCycle => {
             tracing::warn!("Power cycle requested but requires manual intervention");
             return Err("Power cycle requires manual intervention: please unplug and reconnect the device USB cable, then retry.".into());
@@ -206,7 +231,10 @@ pub fn execute_recovery(action: &RecoveryAction) -> Result<String, String> {
     };
 
     // 探针复位后自动重连 GDB 会话
-    if matches!(action, RecoveryAction::ProbeSoftReset | RecoveryAction::ProbeHardReset) {
+    if matches!(
+        action,
+        RecoveryAction::ProbeSoftReset | RecoveryAction::ProbeHardReset
+    ) {
         match reconnect_gdb_after_recovery() {
             Ok(gdb_msg) => return Ok(format!("{}. {}", msg, gdb_msg)),
             Err(e) => return Ok(format!("{}. GDB reconnect failed: {}", msg, e)),
@@ -224,7 +252,13 @@ fn probe_hard_reset_via_openocd() -> Result<String, String> {
     let mut stream = TcpStream::connect_timeout(
         &crate::adapters::openocd_addr(),
         std::time::Duration::from_secs(2),
-    ).map_err(|e| format!("Cannot connect to OpenOCD telnet (port 4444): {}. Is OpenOCD running?", e))?;
+    )
+    .map_err(|e| {
+        format!(
+            "Cannot connect to OpenOCD telnet (port 4444): {}. Is OpenOCD running?",
+            e
+        )
+    })?;
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(3)))
         .map_err(|e| e.to_string())?;

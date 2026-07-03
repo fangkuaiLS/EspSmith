@@ -88,7 +88,12 @@ pub fn gdb_verify(command: &str) -> Step {
 }
 
 /// Create a GDB session verify step — uses persistent GDB session.
-pub fn gdb_session_verify(expected_pc_mask: &str, expected_regs: Option<serde_json::Value>, min_stack_depth: u64, target_chip: &str) -> Step {
+pub fn gdb_session_verify(
+    expected_pc_mask: &str,
+    expected_regs: Option<serde_json::Value>,
+    min_stack_depth: u64,
+    target_chip: &str,
+) -> Step {
     let mut params = serde_json::json!({
         "expected_pc_mask": expected_pc_mask,
         "min_stack_depth": min_stack_depth,

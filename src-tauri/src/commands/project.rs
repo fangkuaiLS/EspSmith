@@ -50,13 +50,16 @@ fn active_project_root_cell() -> &'static Mutex<Option<PathBuf>> {
 
 #[tauri::command]
 pub async fn create_project(config: ProjectConfig) -> Result<String, String> {
-    info!("Creating project: {} at {} (chip: {}, flash: {:?})",
-          config.name, config.path, config.chip, config.flash_size);
+    info!(
+        "Creating project: {} at {} (chip: {}, flash: {:?})",
+        config.name, config.path, config.chip, config.flash_size
+    );
 
     // 确保父目录存在
     let parent_dir = PathBuf::from(&config.path);
     if !parent_dir.exists() {
-        std::fs::create_dir_all(&parent_dir).map_err(|e| format!("无法创建父目录 {}: {}", config.path, e))?;
+        std::fs::create_dir_all(&parent_dir)
+            .map_err(|e| format!("无法创建父目录 {}: {}", config.path, e))?;
     }
 
     let project_dir = parent_dir.join(&config.name);
@@ -77,7 +80,8 @@ pub async fn create_project(config: ProjectConfig) -> Result<String, String> {
 
     // 手动创建项目骨架文件（不依赖 idf.py create-project，更快更可靠）
     std::fs::create_dir_all(&project_dir).map_err(|e| format!("无法创建项目目录: {}", e))?;
-    std::fs::create_dir_all(project_dir.join("main")).map_err(|e| format!("无法创建 main 目录: {}", e))?;
+    std::fs::create_dir_all(project_dir.join("main"))
+        .map_err(|e| format!("无法创建 main 目录: {}", e))?;
 
     let target = chip_to_target(&config.chip);
 
@@ -93,9 +97,11 @@ project({})
         .map_err(|e| format!("无法写入 CMakeLists.txt: {}", e))?;
 
     // main/CMakeLists.txt
-    std::fs::write(project_dir.join("main").join("CMakeLists.txt"),
-        "idf_component_register(SRCS \"main.c\" INCLUDE_DIRS \".\")\n")
-        .map_err(|e| format!("无法写入 main/CMakeLists.txt: {}", e))?;
+    std::fs::write(
+        project_dir.join("main").join("CMakeLists.txt"),
+        "idf_component_register(SRCS \"main.c\" INCLUDE_DIRS \".\")\n",
+    )
+    .map_err(|e| format!("无法写入 main/CMakeLists.txt: {}", e))?;
 
     // main/main.c
     std::fs::write(project_dir.join("main").join("main.c"),
@@ -125,7 +131,8 @@ project({})
     std::fs::write(
         meta_dir.join("project.json"),
         serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     info!("Project created: {}", project_dir.display());
     Ok(project_dir.to_string_lossy().to_string())
@@ -139,16 +146,28 @@ pub async fn open_project(path: String) -> Result<ProjectInfo, String> {
         return Err(format!("Project directory does not exist: {}", path));
     }
 
-    let name = project_dir.file_name()
-        .and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
-    let has_hardware_config = project_dir.join(".espsmith").join("hardware_config.json").exists();
-    info!("Project name: {}, has_hw_config: {}", name, has_hardware_config);
+    let name = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let has_hardware_config = project_dir
+        .join(".espsmith")
+        .join("hardware_config.json")
+        .exists();
+    info!(
+        "Project name: {}, has_hw_config: {}",
+        name, has_hardware_config
+    );
 
     let (chip, idf_ver) = read_project_meta(&project_dir);
     info!("Project meta: chip={}, idf_ver={}", chip, idf_ver);
 
     let persisted = read_persisted_config(&project_dir);
-    info!("Persisted config: target={:?}, flash_port={:?}", persisted.target, persisted.flash_port);
+    info!(
+        "Persisted config: target={:?}, flash_port={:?}",
+        persisted.target, persisted.flash_port
+    );
 
     // Sync chip to AI backend using the display name (e.g. "ESP32-S3"),
     // NOT the IDF target format (e.g. "esp32s3"), because the frontend
@@ -162,7 +181,13 @@ pub async fn open_project(path: String) -> Result<ProjectInfo, String> {
         crate::ai_assistant::sync_flash_port(port.clone()).await;
     }
 
-    let result = ProjectInfo { name, path, chip, idf_version: idf_ver, has_hardware_config };
+    let result = ProjectInfo {
+        name,
+        path,
+        chip,
+        idf_version: idf_ver,
+        has_hardware_config,
+    };
     if let Ok(mut root) = active_project_root_cell().lock() {
         *root = project_dir.canonicalize().ok().or(Some(project_dir));
     }
@@ -177,7 +202,12 @@ pub async fn get_project_info(path: String) -> Result<ProjectInfo, String> {
 
 /// 保存项目级配置（芯片型号 + 串口）到 .espsmith/project.json
 #[tauri::command]
-pub async fn save_project_config(project_path: String, chip: Option<String>, target: Option<String>, flash_port: Option<String>) -> Result<(), String> {
+pub async fn save_project_config(
+    project_path: String,
+    chip: Option<String>,
+    target: Option<String>,
+    flash_port: Option<String>,
+) -> Result<(), String> {
     let project_dir = PathBuf::from(&project_path);
     let meta_path = project_dir.join(".espsmith").join("project.json");
 
@@ -203,8 +233,11 @@ pub async fn save_project_config(project_path: String, chip: Option<String>, tar
         meta["flash_port"] = serde_json::json!(p);
     }
 
-    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("Failed to write project.json: {}", e))?;
+    std::fs::write(
+        &meta_path,
+        serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("Failed to write project.json: {}", e))?;
 
     // 同步到 AI 后端 — 使用显示名称格式（与前端下拉框一致）
     if let Some(t) = target {
@@ -241,8 +274,16 @@ fn read_project_meta(project_dir: &Path) -> (String, String) {
     let meta_path = project_dir.join(".espsmith").join("project.json");
     if let Ok(content) = std::fs::read_to_string(&meta_path) {
         if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content) {
-            let chip = meta.get("chip").and_then(|v| v.as_str()).unwrap_or("ESP32").to_string();
-            let ver = meta.get("idf_version").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            let chip = meta
+                .get("chip")
+                .and_then(|v| v.as_str())
+                .unwrap_or("ESP32")
+                .to_string();
+            let ver = meta
+                .get("idf_version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
             return (chip, ver);
         }
     }
@@ -266,9 +307,19 @@ fn read_persisted_config(project_dir: &Path) -> ProjectPersistedConfig {
 
     if let Ok(content) = std::fs::read_to_string(&meta_path) {
         if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&content) {
-            config.chip = meta.get("chip").and_then(|v| v.as_str()).unwrap_or("ESP32").to_string();
-            config.target = meta.get("target").and_then(|v| v.as_str()).map(|s| s.to_string());
-            config.flash_port = meta.get("flash_port").and_then(|v| v.as_str()).map(|s| s.to_string());
+            config.chip = meta
+                .get("chip")
+                .and_then(|v| v.as_str())
+                .unwrap_or("ESP32")
+                .to_string();
+            config.target = meta
+                .get("target")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            config.flash_port = meta
+                .get("flash_port")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
         }
     }
 
@@ -290,7 +341,11 @@ fn detect_target_from_sdkconfig(project_dir: &Path) -> Option<String> {
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("CONFIG_IDF_TARGET=") {
-            let val = trimmed.strip_prefix("CONFIG_IDF_TARGET=").unwrap_or("").trim_matches('"').to_string();
+            let val = trimmed
+                .strip_prefix("CONFIG_IDF_TARGET=")
+                .unwrap_or("")
+                .trim_matches('"')
+                .to_string();
             if !val.is_empty() {
                 return Some(val);
             }
@@ -323,7 +378,8 @@ pub async fn create_project_from_template(
     // 验证父目录路径
     let parent = PathBuf::from(&parent_path);
     if !parent.exists() {
-        std::fs::create_dir_all(&parent).map_err(|e| format!("无法创建父目录 {}: {}", parent_path, e))?;
+        std::fs::create_dir_all(&parent)
+            .map_err(|e| format!("无法创建父目录 {}: {}", parent_path, e))?;
     }
 
     let project_dir = parent.join(&name);
@@ -363,11 +419,7 @@ pub async fn create_project_from_template(
 
     // Set target chip
     let target = chip_to_target(&chip);
-    crate::idf::set_target(
-        project_dir.to_str().unwrap_or("."),
-        &idf_path,
-        &target,
-    )?;
+    crate::idf::set_target(project_dir.to_str().unwrap_or("."), &idf_path, &target)?;
 
     // Create metadata
     let meta_dir = project_dir.join(".espsmith");
@@ -385,7 +437,8 @@ pub async fn create_project_from_template(
     std::fs::write(
         meta_dir.join("project.json"),
         serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     info!("Project created from template: {}", project_dir.display());
     Ok(project_dir.to_string_lossy().to_string())
@@ -407,7 +460,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn write_sdkconfig_defaults(project_dir: &Path, target: &str, flash_size: Option<&str>) -> Result<(), String> {
+fn write_sdkconfig_defaults(
+    project_dir: &Path,
+    target: &str,
+    flash_size: Option<&str>,
+) -> Result<(), String> {
     let defaults_path = project_dir.join("sdkconfig.defaults");
     let mut lines = vec![
         format!("# Auto-generated by espsmith"),
@@ -451,7 +508,10 @@ pub async fn get_startup_project() -> Result<Option<String>, String> {
 }
 
 pub fn get_active_project_root() -> Option<PathBuf> {
-    active_project_root_cell().lock().ok().and_then(|root| root.clone())
+    active_project_root_cell()
+        .lock()
+        .ok()
+        .and_then(|root| root.clone())
 }
 
 /// 在新进程中打开项目（启动新的 GUI 实例）
@@ -459,8 +519,7 @@ pub fn get_active_project_root() -> Option<PathBuf> {
 pub async fn open_project_new_instance(project_path: String) -> Result<(), String> {
     info!("Opening project in new instance: {}", project_path);
 
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
+    let exe = std::env::current_exe().map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
 
     #[cfg(windows)]
     {

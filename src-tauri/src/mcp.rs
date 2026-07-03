@@ -1,17 +1,18 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 use crate::adapters;
-use crate::experience;
-use crate::connection;
-use crate::self_healing::{self, runner, types::*};
 use crate::adapters::flash::find_elf_in_build_dir;
+use crate::connection;
+use crate::experience;
+use crate::self_healing::{self, runner, types::*};
 
 /// Safely block on an async future from a synchronous context.
 ///
@@ -92,7 +93,11 @@ impl MCPServer {
             .join("experience");
         experience::init(exp_dir);
 
-        Ok(Self { project_root, idf_path, progress_sink: None })
+        Ok(Self {
+            project_root,
+            idf_path,
+            progress_sink: None,
+        })
     }
 
     /// Attach (or replace) a runner-event sink. Used by the AI assistant
@@ -495,21 +500,17 @@ impl MCPServer {
         };
 
         if is_protected_hardware_file(&path) {
-            return err(
-                "hardware_pins.h 是自动生成的文件，禁止直接修改。\n\
+            return err("hardware_pins.h 是自动生成的文件，禁止直接修改。\n\
                  请通过修改 .espsmith/hardware_config.json 来更新硬件引脚配置。\n\
                  修改后 hardware_pins.h 会自动重新生成。"
-                    .to_string(),
-            );
+                .to_string());
         }
 
         if is_protected_toolchain_file(&path) {
-            return err(
-                "禁止修改工具链/OpenOCD 配置文件。\n\
+            return err("禁止修改工具链/OpenOCD 配置文件。\n\
                  这些文件属于 ESP-IDF 工具链，修改可能导致调试环境损坏。\n\
                  如果遇到 JTAG 连接问题，请检查芯片型号是否与项目配置一致。"
-                    .to_string(),
-            );
+                .to_string());
         }
 
         if let Some(parent) = path.parent() {
@@ -730,13 +731,15 @@ impl MCPServer {
             .or_else(|| find_elf_in_build_dir(&self.project_root.to_string_lossy()));
 
         let bp_args: Vec<String> = match args.get("breakpoints") {
-            Some(Value::Array(arr)) => arr.iter()
+            Some(Value::Array(arr)) => arr
+                .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect(),
             _ => vec![],
         };
         let watch_vars: Vec<String> = match args.get("watch_variables") {
-            Some(Value::Array(arr)) => arr.iter()
+            Some(Value::Array(arr)) => arr
+                .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect(),
             _ => vec![],
@@ -747,7 +750,11 @@ impl MCPServer {
 
         let elf = match &elf_path {
             Some(p) => p.clone(),
-            None => return err("No ELF file found. Specify elf_path or ensure build/ exists.".to_string()),
+            None => {
+                return err(
+                    "No ELF file found. Specify elf_path or ensure build/ exists.".to_string(),
+                )
+            }
         };
 
         if !Path::new(&elf).exists() {
@@ -760,11 +767,9 @@ impl MCPServer {
         }
 
         timeline.push(json!({"phase": "gdb_connect", "ms": start_total.elapsed().as_millis()}));
-        if let Err(e) = crate::commands::gdb_session::connect_session_sync(
-            &elf,
-            "localhost:3333",
-            chip,
-        ) {
+        if let Err(e) =
+            crate::commands::gdb_session::connect_session_sync(&elf, "localhost:3333", chip)
+        {
             // GDB 连接失败时收集 OpenOCD 状态诊断，帮助定位根因
             let diag = crate::commands::openocd::diagnose_on_gdb_connect_failure();
             crate::commands::openocd::kill_openocd_sync();
@@ -825,27 +830,30 @@ impl MCPServer {
         let skip_bp_wait = skip_continue || bp_args.is_empty();
 
         if skip_bp_wait {
-            timeline.push(json!({"phase": "skip_bp_wait", "ms": start_total.elapsed().as_millis()}));
+            timeline
+                .push(json!({"phase": "skip_bp_wait", "ms": start_total.elapsed().as_millis()}));
         } else {
-        match crate::commands::gdb_session::read_async_stopped_event(bp_probe_ms) {
-            Ok(Some(stopped_output)) => {
-                gdb_stopped_info = stopped_output.clone();
-                gdb_hit_breakpoint = true;
-                if let Ok(pc) = crate::commands::gdb_session::send_mi_command_sync(b"-data-evaluate-expression $pc") {
-                    gdb_stopped_pc = pc;
+            match crate::commands::gdb_session::read_async_stopped_event(bp_probe_ms) {
+                Ok(Some(stopped_output)) => {
+                    gdb_stopped_info = stopped_output.clone();
+                    gdb_hit_breakpoint = true;
+                    if let Ok(pc) = crate::commands::gdb_session::send_mi_command_sync(
+                        b"-data-evaluate-expression $pc",
+                    ) {
+                        gdb_stopped_pc = pc;
+                    }
+                }
+                Ok(None) => {
+                    // 断点未命中（程序仍在运行）。跳过状态查询。
+                }
+                Err(e) => {
+                    timeline.push(json!({
+                        "phase": "async_read_error",
+                        "error": e,
+                        "ms": start_total.elapsed().as_millis()
+                    }));
                 }
             }
-            Ok(None) => {
-                // 断点未命中（程序仍在运行）。跳过状态查询。
-            }
-            Err(e) => {
-                timeline.push(json!({
-                    "phase": "async_read_error",
-                    "error": e,
-                    "ms": start_total.elapsed().as_millis()
-                }));
-            }
-        }
         } // end if !skip_bp_wait
 
         if gdb_hit_breakpoint {
@@ -885,7 +893,8 @@ impl MCPServer {
             let mut reg_values = serde_json::Map::new();
             for reg_name in reg_names {
                 let cmd = format!("-data-evaluate-expression ${}", reg_name);
-                if let Ok(val) = crate::commands::gdb_session::send_mi_command_sync(cmd.as_bytes()) {
+                if let Ok(val) = crate::commands::gdb_session::send_mi_command_sync(cmd.as_bytes())
+                {
                     reg_values.insert(reg_name.to_string(), json!(val));
                 }
             }
@@ -895,11 +904,15 @@ impl MCPServer {
                 "ms": start_total.elapsed().as_millis()
             }));
 
-            timeline.push(json!({"phase": "continue_after_bp", "ms": start_total.elapsed().as_millis()}));
+            timeline.push(
+                json!({"phase": "continue_after_bp", "ms": start_total.elapsed().as_millis()}),
+            );
             let _ = crate::commands::gdb_session::send_mi_command_sync(b"-exec-continue");
         }
 
-        timeline.push(json!({"phase": "serial_monitor_start", "ms": start_total.elapsed().as_millis()}));
+        timeline.push(
+            json!({"phase": "serial_monitor_start", "ms": start_total.elapsed().as_millis()}),
+        );
         // 优先从共享 ring buffer 读取（避免与 GUI 监视器端口竞争）
         let serial_source: &'static str;
         let serial_output = if crate::commands::serial::is_serial_open() {
@@ -1112,7 +1125,10 @@ impl MCPServer {
     }
 
     fn get_hardware_config(&self) -> ToolResult {
-        let path = self.project_root.join(".espsmith").join("hardware_config.json");
+        let path = self
+            .project_root
+            .join(".espsmith")
+            .join("hardware_config.json");
         if !path.exists() {
             return ok(json!({ "peripherals": {} }));
         }
@@ -1168,7 +1184,9 @@ impl MCPServer {
         cmd.args(["-batch", "-nx", "-ex", &target_remote, "-ex", command])
             .current_dir(&self.project_root);
         #[cfg(windows)]
-        { cmd.creation_flags(0x08000000); }
+        {
+            cmd.creation_flags(0x08000000);
+        }
         let output = cmd.output();
         match output {
             Ok(out) => ok(json!({
@@ -1193,7 +1211,9 @@ impl MCPServer {
             let hint = h.to_ascii_lowercase().replace('-', "");
             hint != "esp32usbjtag" && hint != configured_chip.to_ascii_lowercase().replace('-', "")
         });
-        let detected_port = conn_info.port.clone()
+        let detected_port = conn_info
+            .port
+            .clone()
             .unwrap_or_else(|| crate::adapters::default_port_hint().to_string());
 
         let mut workflow = vec![
@@ -1218,7 +1238,9 @@ impl MCPServer {
         }
 
         workflow.push("Connection mode is already detected & cached. Use get_connection_mode if you need to verify — NO need to call detect_connection unless the device just changed.");
-        workflow.push("NEVER use exec_shell, run_command, dir, type, echo, cat, ls. Use MCP tools only.");
+        workflow.push(
+            "NEVER use exec_shell, run_command, dir, type, echo, cat, ls. Use MCP tools only.",
+        );
         workflow.push("NEVER run openocd.exe directly (it blocks forever). Use openocd_start tool or espsmith.exe openocd-start instead.");
         workflow.push("JTAG DIAGNOSTIC: If OpenOCD fails with 'TAP ID mismatch' or 'Unsupported DTM version', the physical chip does NOT match the project target. DO NOT modify OpenOCD config files — instead, verify the actual chip model on the board and update project config if needed.");
         workflow.push("KNOWN JTAG IDs: ESP32 (Xtensa) = 0x120034e5, ESP32-S3 (Xtensa) = 0x120034e5, ESP32-C3 (RISC-V) = 0x00005c25. If you see a Tensilica/Xtensa ID on a RISC-V project, the connected chip is NOT a RISC-V chip.");
@@ -1319,7 +1341,8 @@ impl MCPServer {
 
         let force_jtag = bool_arg(args, "force_jtag").unwrap_or(false);
         let force_uart = bool_arg(args, "force_uart").unwrap_or(false);
-        let elf_path = str_arg(args, "elf_path").map(|s| adapters::normalize_path_for_gdb(s).to_string());
+        let elf_path =
+            str_arg(args, "elf_path").map(|s| adapters::normalize_path_for_gdb(s).to_string());
         let expected_pc_mask = str_arg(args, "expected_pc_mask").unwrap_or("0x40000000");
 
         let flash_port_for_conn = crate::ai_assistant::get_cached_flash_port();
@@ -1339,12 +1362,20 @@ impl MCPServer {
             );
             detected.mode.is_jtag()
         };
-        let connection_label = if is_jtag { "JTAG (USB-JTAG)" } else { "UART (Serial)" };
+        let connection_label = if is_jtag {
+            "JTAG (USB-JTAG)"
+        } else {
+            "UART (Serial)"
+        };
 
         let chip_mismatch = if is_jtag {
-            let hint = conn_info.chip_hint.as_ref()
+            let hint = conn_info
+                .chip_hint
+                .as_ref()
                 .map(|h| h.to_ascii_lowercase().replace('-', ""));
-            hint.is_some_and(|h| h != "esp32usbjtag" && h != board.to_ascii_lowercase().replace('-', ""))
+            hint.is_some_and(|h| {
+                h != "esp32usbjtag" && h != board.to_ascii_lowercase().replace('-', "")
+            })
         } else {
             false
         };
@@ -1366,11 +1397,20 @@ impl MCPServer {
 
         if is_jtag {
             steps.push(self_healing::stages::openocd_flash(&board, port));
-            steps.push(self_healing::stages::serial_verify(port, baudrate, expected));
-            steps.push(self_healing::stages::gdb_session_verify(expected_pc_mask, None, 1, &board));
+            steps.push(self_healing::stages::serial_verify(
+                port, baudrate, expected,
+            ));
+            steps.push(self_healing::stages::gdb_session_verify(
+                expected_pc_mask,
+                None,
+                1,
+                &board,
+            ));
         } else {
             steps.push(self_healing::stages::flash(&board, port));
-            steps.push(self_healing::stages::serial_verify(port, baudrate, expected));
+            steps.push(self_healing::stages::serial_verify(
+                port, baudrate, expected,
+            ));
         }
 
         let gdb_verify_enabled = is_jtag;
@@ -1391,7 +1431,10 @@ impl MCPServer {
 
         if gdb_verify_enabled {
             if let Some(ref elf) = elf_path {
-                self_healing::recovery::set_gdb_recovery_context((*elf).to_string(), board.to_string());
+                self_healing::recovery::set_gdb_recovery_context(
+                    (*elf).to_string(),
+                    board.to_string(),
+                );
             }
         }
 
@@ -1402,43 +1445,68 @@ impl MCPServer {
         let port_clone = port.to_string();
 
         #[allow(clippy::type_complexity)]
-        let sink_arc: Option<Arc<dyn Fn(&crate::self_healing::types::RunnerEvent) + Send + Sync>> = self.progress_sink.as_ref().map(|s| s.clone());        let collected_events: std::sync::Arc<std::sync::Mutex<Vec<RunnerEvent>>> =             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));        let collected_events_clone = collected_events.clone();        let result = runner::run_plan_with_progress(&plan, &|step, ctx| {
-            let start = Instant::now();
+        let sink_arc: Option<
+            Arc<dyn Fn(&crate::self_healing::types::RunnerEvent) + Send + Sync>,
+        > = self.progress_sink.as_ref().map(|s| s.clone());
+        let collected_events: std::sync::Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collected_events_clone = collected_events.clone();
+        let result = runner::run_plan_with_progress(
+            &plan,
+            &|step, ctx| {
+                let start = Instant::now();
 
-            if step.adapter.starts_with("verify.serial") {
-                // 空输出保护阈值
-                const MIN_VERIFY_BYTES: usize = 10;
+                if step.adapter.starts_with("verify.serial") {
+                    // 空输出保护阈值
+                    const MIN_VERIFY_BYTES: usize = 10;
 
-                // 从 step.params 读取执行参数（优先），闭包捕获值作兜底
-                let sp = &step.params;
-                let verify_port = sp.get("port").and_then(|v| v.as_str()).unwrap_or(&port_clone);
-                let verify_baud = sp.get("baudrate").and_then(|v| v.as_u64()).unwrap_or(baudrate as u64) as u32;
-                let verify_monitor = sp.get("monitor_ms").and_then(|v| v.as_u64()).unwrap_or(monitor_ms);
-                let verify_expected = sp.get("expected_pattern").and_then(|v| v.as_str()).unwrap_or(expected);
+                    // 从 step.params 读取执行参数（优先），闭包捕获值作兜底
+                    let sp = &step.params;
+                    let verify_port = sp
+                        .get("port")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&port_clone);
+                    let verify_baud = sp
+                        .get("baudrate")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(baudrate as u64) as u32;
+                    let verify_monitor = sp
+                        .get("monitor_ms")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(monitor_ms);
+                    let verify_expected = sp
+                        .get("expected_pattern")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(expected);
 
-                // 优先从共享 ring buffer 读取（GUI 监视器已连接时零延迟、无端口竞争）
-                let out = if crate::commands::serial::is_serial_open() {
-                    // 智能轮询：收到足够字节后仍短暂等待收齐一批，避免截断 boot 序列，
-                    // 同时允许 AI 传入更大的 monitor_ms（上限 30s）以适配复杂固件启动。
-                    crate::commands::serial::ring_wait_for_output(verify_monitor.min(30_000), MIN_VERIFY_BYTES * 4).text
-                } else {
-                    // 回退：无 GUI 连接，直接开端口采样（兼容 CLI 场景）
-                    match read_serial_once(verify_port, verify_baud, verify_monitor) {
-                        Ok(o) => o,
-                        Err(e) => {
-                            return Ok(StepResult::failed(
-                                &step.name, 1,
-                                format!("Serial error: {}", e),
-                                start.elapsed().as_millis() as u64,
-                            ));
+                    // 优先从共享 ring buffer 读取（GUI 监视器已连接时零延迟、无端口竞争）
+                    let out = if crate::commands::serial::is_serial_open() {
+                        // 智能轮询：收到足够字节后仍短暂等待收齐一批，避免截断 boot 序列，
+                        // 同时允许 AI 传入更大的 monitor_ms（上限 30s）以适配复杂固件启动。
+                        crate::commands::serial::ring_wait_for_output(
+                            verify_monitor.min(30_000),
+                            MIN_VERIFY_BYTES * 4,
+                        )
+                        .text
+                    } else {
+                        // 回退：无 GUI 连接，直接开端口采样（兼容 CLI 场景）
+                        match read_serial_once(verify_port, verify_baud, verify_monitor) {
+                            Ok(o) => o,
+                            Err(e) => {
+                                return Ok(StepResult::failed(
+                                    &step.name,
+                                    1,
+                                    format!("Serial error: {}", e),
+                                    start.elapsed().as_millis() as u64,
+                                ));
+                            }
                         }
-                    }
-                };
+                    };
 
-                // 空输出保护：串口至少要有一些数据才算通过
-                // （设备未上电、波特率错误、TX 线断线都会导致完全无输出）
-                if out.len() < MIN_VERIFY_BYTES {
-                    return Ok(StepResult::failed(
+                    // 空输出保护：串口至少要有一些数据才算通过
+                    // （设备未上电、波特率错误、TX 线断线都会导致完全无输出）
+                    if out.len() < MIN_VERIFY_BYTES {
+                        return Ok(StepResult::failed(
                         &step.name, 1,
                         format!(
                             "Serial output too sparse ({} bytes, minimum {}). Device may not be booting. Check power, TX connection, and baud rate.",
@@ -1446,88 +1514,69 @@ impl MCPServer {
                         ),
                         start.elapsed().as_millis() as u64,
                     ));
-                }
+                    }
 
-                let crash = detect_crash_patterns(&out);
-                if !crash.is_empty() {
-                    let mut report = format!(
-                        "CRASH DETECTED [{} mode]\nCrash type: {}\n\nSerial output:\n{}\n",
-                        connection_label, crash, out
-                    );
+                    let crash = detect_crash_patterns(&out);
+                    if !crash.is_empty() {
+                        let mut report = format!(
+                            "CRASH DETECTED [{} mode]\nCrash type: {}\n\nSerial output:\n{}\n",
+                            connection_label, crash, out
+                        );
 
-                    if gdb_verify_enabled && ctx.get("flash_ok").map(|v| v.as_str()) == Some("true") {
-                        let _ = crate::commands::openocd::ensure_openocd_running(&board_clone, None);
-                        if let Some(ref elf) = elf_path_clone {
-                            if crate::commands::gdb_session::connect_session_sync(
-                                elf,
-                                "localhost:3333",
+                        if gdb_verify_enabled
+                            && ctx.get("flash_ok").map(|v| v.as_str()) == Some("true")
+                        {
+                            let _ = crate::commands::openocd::ensure_openocd_running(
                                 &board_clone,
-                            ).is_ok() {
-                                report.push_str("\n--- GDB Crash State (auto-captured) ---\n");
-                                // read_gdb_crash_state 会重连 GDB，先 disconnect 当前会话避免泄漏
-                                crate::commands::gdb_session::disconnect_session_sync();
-                                match read_gdb_crash_state(elf, &board_clone) {
-                                    Ok(state) => report.push_str(&state),
-                                    Err(e) => report.push_str(&format!("GDB state read failed: {}\n", e)),
+                                None,
+                            );
+                            if let Some(ref elf) = elf_path_clone {
+                                if crate::commands::gdb_session::connect_session_sync(
+                                    elf,
+                                    "localhost:3333",
+                                    &board_clone,
+                                )
+                                .is_ok()
+                                {
+                                    report.push_str("\n--- GDB Crash State (auto-captured) ---\n");
+                                    // read_gdb_crash_state 会重连 GDB，先 disconnect 当前会话避免泄漏
+                                    crate::commands::gdb_session::disconnect_session_sync();
+                                    match read_gdb_crash_state(elf, &board_clone) {
+                                        Ok(state) => report.push_str(&state),
+                                        Err(e) => report
+                                            .push_str(&format!("GDB state read failed: {}\n", e)),
+                                    }
+                                    // read_gdb_crash_state 内部已 disconnect
                                 }
-                                // read_gdb_crash_state 内部已 disconnect
                             }
                         }
+                        Ok(StepResult::failed(
+                            &step.name,
+                            1,
+                            report,
+                            start.elapsed().as_millis() as u64,
+                        ))
+                    } else if verify_expected.is_empty() || out.contains(verify_expected) {
+                        Ok(StepResult::passed(
+                            &step.name,
+                            1,
+                            start.elapsed().as_millis() as u64,
+                        ))
+                    } else {
+                        Ok(StepResult::failed(
+                            &step.name,
+                            1,
+                            format!("Pattern '{}' not found in: {}", verify_expected, out),
+                            start.elapsed().as_millis() as u64,
+                        ))
                     }
-                    Ok(StepResult::failed(&step.name, 1, report, start.elapsed().as_millis() as u64))
-                } else if verify_expected.is_empty() || out.contains(verify_expected) {
-                    Ok(StepResult::passed(&step.name, 1, start.elapsed().as_millis() as u64))
-                } else {
-                    Ok(StepResult::failed(&step.name, 1,
-                        format!("Pattern '{}' not found in: {}", verify_expected, out),
-                        start.elapsed().as_millis() as u64))
-                }
-            } else if step.adapter == "verify.gdb_session" {
-                let _ = crate::commands::openocd::ensure_openocd_running(&board_clone, None);
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if crate::commands::gdb_session::GDB_SESSION.lock().map_or(true, |g| g.is_none()) {
-                    if let Some(ref elf) = elf_path_clone {
-                        match crate::commands::gdb_session::connect_session_sync(
-                            elf,
-                            "localhost:3333",
-                            &board_clone,
-                        ) {
-                            Ok(()) => {
-                                tracing::info!("GDB session re-connected for verify.gdb_session");
-                            }
-                            Err(e) => {
-                                tracing::warn!("GDB session connect failed for verify: {}", e);
-                            }
-                        }
-                    }
-                }
-                let ar = adapters::resolve_and_execute(
-                    &registry,
-                    &step.adapter,
-                    &step.params,
-                    &project_root,
-                    &idf_path,
-                );
-                Ok(if ar.success {
-                    StepResult::passed(&step.name, 1, ar.duration_ms)
-                } else {
-                    let msg = ar.error.unwrap_or_else(|| "Unknown error".into());
-                    StepResult::failed(&step.name, 1, msg, ar.duration_ms)
-                })
-            } else if step.adapter.starts_with("flash.") {
-                let ar = adapters::resolve_and_execute(
-                    &registry,
-                    &step.adapter,
-                    &step.params,
-                    &project_root,
-                    &idf_path,
-                );
-
-                if ar.success {
-                    ctx.insert("flash_ok".into(), "true".into());
-
-                    if gdb_verify_enabled {
-                        let _ = crate::commands::openocd::ensure_openocd_running(&board_clone, None);
+                } else if step.adapter == "verify.gdb_session" {
+                    let _ = crate::commands::openocd::ensure_openocd_running(&board_clone, None);
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if crate::commands::gdb_session::GDB_SESSION
+                        .lock()
+                        .map_or(true, |g| g.is_none())
+                    {
                         if let Some(ref elf) = elf_path_clone {
                             match crate::commands::gdb_session::connect_session_sync(
                                 elf,
@@ -1535,43 +1584,95 @@ impl MCPServer {
                                 &board_clone,
                             ) {
                                 Ok(()) => {
-                                    tracing::info!("GDB session connected for verify step");
+                                    tracing::info!(
+                                        "GDB session re-connected for verify.gdb_session"
+                                    );
                                 }
                                 Err(e) => {
-                                    tracing::error!("GDB session connect failed: {}", e);
+                                    tracing::warn!("GDB session connect failed for verify: {}", e);
                                 }
                             }
                         }
                     }
-                }
+                    let ar = adapters::resolve_and_execute(
+                        &registry,
+                        &step.adapter,
+                        &step.params,
+                        &project_root,
+                        &idf_path,
+                    );
+                    Ok(if ar.success {
+                        StepResult::passed(&step.name, 1, ar.duration_ms)
+                    } else {
+                        let msg = ar.error.unwrap_or_else(|| "Unknown error".into());
+                        StepResult::failed(&step.name, 1, msg, ar.duration_ms)
+                    })
+                } else if step.adapter.starts_with("flash.") {
+                    let ar = adapters::resolve_and_execute(
+                        &registry,
+                        &step.adapter,
+                        &step.params,
+                        &project_root,
+                        &idf_path,
+                    );
 
-                Ok(if ar.success {
-                    StepResult::passed(&step.name, 1, ar.duration_ms)
+                    if ar.success {
+                        ctx.insert("flash_ok".into(), "true".into());
+
+                        if gdb_verify_enabled {
+                            let _ = crate::commands::openocd::ensure_openocd_running(
+                                &board_clone,
+                                None,
+                            );
+                            if let Some(ref elf) = elf_path_clone {
+                                match crate::commands::gdb_session::connect_session_sync(
+                                    elf,
+                                    "localhost:3333",
+                                    &board_clone,
+                                ) {
+                                    Ok(()) => {
+                                        tracing::info!("GDB session connected for verify step");
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("GDB session connect failed: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(if ar.success {
+                        StepResult::passed(&step.name, 1, ar.duration_ms)
+                    } else {
+                        let msg = ar.error.unwrap_or_else(|| "Unknown error".into());
+                        StepResult::failed(&step.name, 1, msg, ar.duration_ms)
+                    })
                 } else {
-                    let msg = ar.error.unwrap_or_else(|| "Unknown error".into());
-                    StepResult::failed(&step.name, 1, msg, ar.duration_ms)
-                })
-            } else {
-                let ar = adapters::resolve_and_execute(
-                    &registry,
-                    &step.adapter,
-                    &step.params,
-                    &project_root,
-                    &idf_path,
-                );
-                Ok(if ar.success {
-                    StepResult::passed(&step.name, 1, ar.duration_ms)
-                } else {
-                    let msg = ar.error.unwrap_or_else(|| "Unknown error".into());
-                    StepResult::failed(&step.name, 1, msg, ar.duration_ms)
-                })
-            }
-        }, &move |event| {
-            collected_events_clone.lock().unwrap_or_else(|e| e.into_inner()).push(event.clone());
-            if let Some(sink) = sink_arc.as_ref() {
-                sink(event);
-            }
-        });
+                    let ar = adapters::resolve_and_execute(
+                        &registry,
+                        &step.adapter,
+                        &step.params,
+                        &project_root,
+                        &idf_path,
+                    );
+                    Ok(if ar.success {
+                        StepResult::passed(&step.name, 1, ar.duration_ms)
+                    } else {
+                        let msg = ar.error.unwrap_or_else(|| "Unknown error".into());
+                        StepResult::failed(&step.name, 1, msg, ar.duration_ms)
+                    })
+                }
+            },
+            &move |event| {
+                collected_events_clone
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(event.clone());
+                if let Some(sink) = sink_arc.as_ref() {
+                    sink(event);
+                }
+            },
+        );
 
         if gdb_verify_enabled {
             crate::commands::gdb_session::disconnect_session_sync();
@@ -1585,15 +1686,25 @@ impl MCPServer {
         // 成功的运行只更新 stats，不生成无价值的流水账记录。
         // 使用稳定语义化 ID（trigger+board），同一问题迭代更新而非重复创建。
         if !result.passed && !result.recovery_applied.is_empty() {
-            let trigger = format!("closed_loop_{}_failed", if is_jtag { "jtag" } else { "uart" });
+            let trigger = format!(
+                "closed_loop_{}_failed",
+                if is_jtag { "jtag" } else { "uart" }
+            );
             let now = chrono::Utc::now().to_rfc3339();
             let record = experience::ExperienceRecord {
                 id: experience::stable_skill_id(&trigger, &board),
                 trigger,
-                fix: format!("Self-healing applied on {} ({}: {:?})", board, connection_label, conn_info.mode),
-                lesson: format!("{} steps: {} pass / {} fail. Recovery: {}",
-                    result.total_steps, result.passed_steps, result.total_steps - result.passed_steps,
-                    result.recovery_applied.join("; ")),
+                fix: format!(
+                    "Self-healing applied on {} ({}: {:?})",
+                    board, connection_label, conn_info.mode
+                ),
+                lesson: format!(
+                    "{} steps: {} pass / {} fail. Recovery: {}",
+                    result.total_steps,
+                    result.passed_steps,
+                    result.total_steps - result.passed_steps,
+                    result.recovery_applied.join("; ")
+                ),
                 scope: board.clone(),
                 board_id: None,
                 source_ref: None,
@@ -1704,10 +1815,15 @@ impl MCPServer {
                 // 自动从缓存端口推断芯片（与 CLI cmd_openocd_start 保持一致）
                 let flash_port = crate::ai_assistant::get_cached_flash_port();
                 crate::connection::detect_connection_mode(flash_port.as_deref())
-                    .chip_hint.as_ref()
+                    .chip_hint
+                    .as_ref()
                     .and_then(|h| {
                         let lower = h.to_ascii_lowercase().replace('-', "");
-                        if lower == "esp32" { None } else { Some(lower) }
+                        if lower == "esp32" {
+                            None
+                        } else {
+                            Some(lower)
+                        }
                     })
                     .unwrap_or_else(|| "esp32".to_string())
             }
@@ -1729,9 +1845,7 @@ impl MCPServer {
     }
 
     fn openocd_stop_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::openocd::openocd_stop().await
-        });
+        let result = safe_block_on(async { crate::commands::openocd::openocd_stop().await });
         match result {
             Ok(msg) => ok(json!({ "stopped": true, "message": msg })),
             Err(e) => err(e),
@@ -1739,9 +1853,7 @@ impl MCPServer {
     }
 
     fn openocd_is_running_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::openocd::openocd_is_running().await
-        });
+        let result = safe_block_on(async { crate::commands::openocd::openocd_is_running().await });
         match result {
             Ok(running) => ok(json!({ "running": running })),
             Err(e) => err(e),
@@ -1757,7 +1869,8 @@ impl MCPServer {
                 elf.map(|s| s.to_string()),
                 target.map(|s| s.to_string()),
                 chip.map(|s| s.to_string()),
-            ).await
+            )
+            .await
         });
         match result {
             Ok(state) => ok(serde_json::to_value(&state).unwrap_or(json!({}))),
@@ -1766,9 +1879,7 @@ impl MCPServer {
     }
 
     fn debug_stop_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::gdb_session::debug_stop().await
-        });
+        let result = safe_block_on(async { crate::commands::gdb_session::debug_stop().await });
         match result {
             Ok(_) => ok(json!({ "stopped": true })),
             Err(e) => err(e),
@@ -1776,7 +1887,10 @@ impl MCPServer {
     }
 
     fn debug_set_breakpoint_mcp(&self, args: &Value) -> ToolResult {
-        let file = match required_str_arg(args, "file") { Ok(v) => v, Err(e) => return err(e), };
+        let file = match required_str_arg(args, "file") {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
         let line = match args.get("line").and_then(|v| v.as_u64()) {
             Some(v) => v as u32,
             None => return err("Missing required parameter 'line'".into()),
@@ -1791,9 +1905,7 @@ impl MCPServer {
     }
 
     fn debug_continue_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::gdb_session::debug_continue().await
-        });
+        let result = safe_block_on(async { crate::commands::gdb_session::debug_continue().await });
         match result {
             Ok(state) => ok(serde_json::to_value(&state).unwrap_or(json!({}))),
             Err(e) => err(e),
@@ -1801,9 +1913,7 @@ impl MCPServer {
     }
 
     fn debug_step_over_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::gdb_session::debug_step_over().await
-        });
+        let result = safe_block_on(async { crate::commands::gdb_session::debug_step_over().await });
         match result {
             Ok(state) => ok(serde_json::to_value(&state).unwrap_or(json!({}))),
             Err(e) => err(e),
@@ -1811,9 +1921,7 @@ impl MCPServer {
     }
 
     fn debug_get_state_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::gdb_session::debug_get_state().await
-        });
+        let result = safe_block_on(async { crate::commands::gdb_session::debug_get_state().await });
         match result {
             Ok(state) => ok(serde_json::to_value(&state).unwrap_or(json!({}))),
             Err(e) => err(e),
@@ -1821,7 +1929,10 @@ impl MCPServer {
     }
 
     fn debug_read_variable_mcp(&self, args: &Value) -> ToolResult {
-        let name = match required_str_arg(args, "name") { Ok(v) => v, Err(e) => return err(e), };
+        let name = match required_str_arg(args, "name") {
+            Ok(v) => v,
+            Err(e) => return err(e),
+        };
         let result = safe_block_on(async {
             crate::commands::gdb_session::debug_read_variable(name.to_string()).await
         });
@@ -1832,9 +1943,8 @@ impl MCPServer {
     }
 
     fn debug_get_registers_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::gdb_session::debug_get_registers().await
-        });
+        let result =
+            safe_block_on(async { crate::commands::gdb_session::debug_get_registers().await });
         match result {
             Ok(regs) => ok(json!({ "registers": regs })),
             Err(e) => err(e),
@@ -1842,16 +1952,14 @@ impl MCPServer {
     }
 
     fn debug_get_backtrace_mcp(&self) -> ToolResult {
-        let result = safe_block_on(async {
-            crate::commands::gdb_session::debug_get_backtrace().await
-        });
+        let result =
+            safe_block_on(async { crate::commands::gdb_session::debug_get_backtrace().await });
         match result {
             Ok(frames) => ok(serde_json::to_value(&frames).unwrap_or(json!([]))),
             Err(e) => err(e),
         }
     }
 }
-
 
 /// Back-compat wrapper for callers that do not care about runner events.
 pub fn call_tool_direct(
@@ -1884,10 +1992,13 @@ pub fn call_tool_direct_with_progress(
             };
             server.call_tool(tool_name, args)
         }
-        Err(e) => ToolResult { success: false, data: None, error: Some(e) },
+        Err(e) => ToolResult {
+            success: false,
+            data: None,
+            error: Some(e),
+        },
     }
 }
-
 
 pub fn run_stdio_server() -> Result<(), String> {
     let server = MCPServer::from_env()?;
@@ -1921,7 +2032,10 @@ fn handle_jsonrpc_request(server: &MCPServer, request: Value) -> Option<Value> {
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
             let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             let result = server.call_tool(name, &args);
             json!({
                 "content": [{
@@ -1957,7 +2071,10 @@ fn read_mcp_message<R: BufRead>(reader: &mut R) -> Result<Option<Value>, String>
         }
         if let Some(value) = trimmed.strip_prefix("Content-Length:") {
             content_length = Some(
-                value.trim().parse::<usize>().map_err(|e| format!("Bad Content-Length: {e}"))?,
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|e| format!("Bad Content-Length: {e}"))?,
             );
         } else if trimmed.starts_with('{') {
             return serde_json::from_str(trimmed)
@@ -2016,7 +2133,9 @@ fn read_serial_once(port: &str, baudrate: u32, duration_ms: u64) -> Result<Strin
 fn parse_compile_errors(output: &str) -> Vec<Value> {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(r"([^:\r\n]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap());
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"([^:\r\n]+):(\d+):(\d+):\s+(error|warning):\s+(.+)").unwrap()
+    });
     output
         .lines()
         .filter_map(|line| {
@@ -2082,7 +2201,9 @@ fn required_str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 fn u32_arg(args: &Value, key: &str) -> Option<u32> {
-    args.get(key).and_then(|v| v.as_u64()).and_then(|v| u32::try_from(v).ok())
+    args.get(key)
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u32::try_from(v).ok())
 }
 
 fn u64_arg(args: &Value, key: &str) -> Option<u64> {
@@ -2101,11 +2222,9 @@ fn detect_crash_patterns(serial_output: &str) -> String {
 fn read_gdb_crash_state(elf_path: &str, board: &str) -> Result<String, String> {
     let mut report = String::new();
 
-    if let Err(e) = crate::commands::gdb_session::connect_session_sync(
-        elf_path,
-        "localhost:3333",
-        board,
-    ) {
+    if let Err(e) =
+        crate::commands::gdb_session::connect_session_sync(elf_path, "localhost:3333", board)
+    {
         return Err(format!("Failed to connect GDB for crash state: {}", e));
     }
 
@@ -2122,18 +2241,30 @@ fn read_gdb_crash_state(elf_path: &str, board: &str) -> Result<String, String> {
             for line in raw.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with("^done") {
-                    if let Some(stack) = crate::commands::gdb_session::extract_mi_list(trimmed, "stack") {
+                    if let Some(stack) =
+                        crate::commands::gdb_session::extract_mi_list(trimmed, "stack")
+                    {
                         for frame_str in crate::commands::gdb_session::split_mi_values(&stack) {
-                            let level = crate::commands::gdb_session::extract_mi_field(frame_str, "level")
-                                .unwrap_or_else(|| "?".into());
-                            let func = crate::commands::gdb_session::extract_mi_field(frame_str, "func")
-                                .unwrap_or_else(|| "?".into());
-                            let file = crate::commands::gdb_session::extract_mi_field(frame_str, "fullname")
-                                .or_else(|| crate::commands::gdb_session::extract_mi_field(frame_str, "file"))
-                                .unwrap_or_else(|| "?".into());
-                            let line_num = crate::commands::gdb_session::extract_mi_field(frame_str, "line")
-                                .unwrap_or_else(|| "?".into());
-                            report.push_str(&format!("  #{} {} at {}:{}\n", level, func, file, line_num));
+                            let level =
+                                crate::commands::gdb_session::extract_mi_field(frame_str, "level")
+                                    .unwrap_or_else(|| "?".into());
+                            let func =
+                                crate::commands::gdb_session::extract_mi_field(frame_str, "func")
+                                    .unwrap_or_else(|| "?".into());
+                            let file = crate::commands::gdb_session::extract_mi_field(
+                                frame_str, "fullname",
+                            )
+                            .or_else(|| {
+                                crate::commands::gdb_session::extract_mi_field(frame_str, "file")
+                            })
+                            .unwrap_or_else(|| "?".into());
+                            let line_num =
+                                crate::commands::gdb_session::extract_mi_field(frame_str, "line")
+                                    .unwrap_or_else(|| "?".into());
+                            report.push_str(&format!(
+                                "  #{} {} at {}:{}\n",
+                                level, func, file, line_num
+                            ));
                         }
                     }
                 }
@@ -2161,11 +2292,17 @@ fn read_gdb_crash_state(elf_path: &str, board: &str) -> Result<String, String> {
             for line in raw.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with("^done") {
-                    if let Some(values) = crate::commands::gdb_session::extract_mi_list(trimmed, "register-values") {
+                    if let Some(values) =
+                        crate::commands::gdb_session::extract_mi_list(trimmed, "register-values")
+                    {
                         let mut reg_strs = Vec::new();
                         for reg_str in crate::commands::gdb_session::split_mi_values(&values) {
-                            let number = crate::commands::gdb_session::extract_mi_field(reg_str, "number").unwrap_or_else(|| "?".into());
-                            let value = crate::commands::gdb_session::extract_mi_field(reg_str, "value").unwrap_or_else(|| "?".into());
+                            let number =
+                                crate::commands::gdb_session::extract_mi_field(reg_str, "number")
+                                    .unwrap_or_else(|| "?".into());
+                            let value =
+                                crate::commands::gdb_session::extract_mi_field(reg_str, "value")
+                                    .unwrap_or_else(|| "?".into());
                             reg_strs.push(format!("  r{}={}", number, value));
                         }
                         report.push_str(&reg_strs.join("\n"));
@@ -2185,33 +2322,27 @@ fn read_gdb_crash_state(elf_path: &str, board: &str) -> Result<String, String> {
 }
 
 fn is_protected_hardware_file(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     name.eq_ignore_ascii_case("hardware_pins.h")
 }
 
 fn is_protected_toolchain_file(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let path_str = path.to_string_lossy().to_ascii_lowercase();
     if name.ends_with(".cfg") && path_str.contains("openocd") {
         return true;
     }
-    if path_str.contains("esp-idf") || path_str.contains("espressif") || path_str.contains(".espressif") {
+    if path_str.contains("esp-idf")
+        || path_str.contains("espressif")
+        || path_str.contains(".espressif")
+    {
         return true;
     }
     false
 }
 
 fn is_hardware_config_json(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     name == "hardware_config.json"
         && path
             .parent()
@@ -2221,9 +2352,7 @@ fn is_hardware_config_json(path: &Path) -> bool {
 }
 
 fn regenerate_hardware_pins(project_root: &Path) {
-    let config_path = project_root
-        .join(".espsmith")
-        .join("hardware_config.json");
+    let config_path = project_root.join(".espsmith").join("hardware_config.json");
     let config: serde_json::Value = match std::fs::read_to_string(&config_path) {
         Ok(s) => match serde_json::from_str(&s) {
             Ok(v) => v,
@@ -2275,12 +2404,8 @@ fn regenerate_hardware_pins(project_root: &Path) {
             pin_names.sort();
             for pin_name in pin_names {
                 if let Some(pin_value) = pins[pin_name].as_u64() {
-                    let macro_name =
-                        format!("{}_{}", safe_name, pin_name.to_uppercase());
-                    header.push_str(&format!(
-                        "#define {:<40} {}\n",
-                        macro_name, pin_value
-                    ));
+                    let macro_name = format!("{}_{}", safe_name, pin_name.to_uppercase());
+                    header.push_str(&format!("#define {:<40} {}\n", macro_name, pin_value));
                 }
             }
         }

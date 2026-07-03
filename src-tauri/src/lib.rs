@@ -12,19 +12,19 @@
 //! - idf.rs                 - ESP-IDF 工具封装
 //! - ai_assistant.rs        - codewhale 集成
 
-pub mod commands;
-mod connection;
-mod mcp;
-mod idf;
-mod sdkconfig;
-mod sdkconfig_loader;
+mod adapters;
 mod ai_assistant;
 mod ai_provider;
-mod self_healing;
-mod instruments;
-mod experience;
-mod adapters;
+pub mod commands;
 mod confserver;
+mod connection;
+mod experience;
+mod idf;
+mod instruments;
+mod mcp;
+mod sdkconfig;
+mod sdkconfig_loader;
+mod self_healing;
 
 use std::io::Write;
 use std::sync::Mutex;
@@ -32,8 +32,12 @@ use std::sync::Mutex;
 /// Commands that need the global lock (long-running operations that must not
 /// run concurrently — build, flash, set-target, closed-loop, etc.)
 const LOCKED_COMMANDS: &[&str] = &[
-    "build", "flash", "monitor", "build-flash-monitor",
-    "closed-loop", "jtag-runtime-check",
+    "build",
+    "flash",
+    "monitor",
+    "build-flash-monitor",
+    "closed-loop",
+    "jtag-runtime-check",
 ];
 
 /// RAII global command lock: prevents concurrent espsmith.exe long-running commands.
@@ -60,7 +64,9 @@ impl GlobalCommandLock {
                         // Re-entrant: same process already holds the lock (e.g. run_cli → cmd_closed_loop → call_tool)
                         if old_pid == my_pid {
                             // Return a no-op lock that won't delete the file on drop
-                            return Ok(Self { lock_path: std::path::PathBuf::new() });
+                            return Ok(Self {
+                                lock_path: std::path::PathBuf::new(),
+                            });
                         }
                         if is_pid_alive(old_pid) {
                             return Err(format!(
@@ -174,7 +180,9 @@ pub fn run() {
             }));
             // 注册自动更新插件（GitHub Releases + ghproxy CDN 加速）
             #[cfg(desktop)]
-            let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
+            let _ = app
+                .handle()
+                .plugin(tauri_plugin_updater::Builder::new().build());
             Ok(())
         })
         .plugin(tauri_plugin_fs::init())
@@ -351,7 +359,9 @@ fn mcp_call_tool(
     // 基于当前 flash_port 检测连接模式，确保多设备场景下判断正确
     let is_jtag = {
         let flash_port = crate::ai_assistant::get_cached_flash_port();
-        crate::connection::detect_connection_mode(flash_port.as_deref()).mode.is_jtag()
+        crate::connection::detect_connection_mode(flash_port.as_deref())
+            .mode
+            .is_jtag()
     };
     if let Some(op) = crate::ai_assistant::detect_jtag_operation_for_delegate(&tool_name, is_jtag) {
         if crate::ai_assistant::try_set_active_operation(op) {
@@ -372,17 +382,14 @@ fn mcp_call_tool(
             // 辅助：emit ai-runner-event 供前端直接使用
             let _ = ah.emit("ai-runner-event", event);
         });
-    let result = mcp::call_tool_direct_with_progress(
-        project_root,
-        idf_path,
-        &tool_name,
-        &args,
-        Some(sink),
-    );
+    let result =
+        mcp::call_tool_direct_with_progress(project_root, idf_path, &tool_name, &args, Some(sink));
     if result.success {
         Ok(result.data.unwrap_or_else(|| serde_json::json!({})))
     } else {
-        Err(result.error.unwrap_or_else(|| "MCP tool call failed".to_string()))
+        Err(result
+            .error
+            .unwrap_or_else(|| "MCP tool call failed".to_string()))
     }
 }
 
@@ -392,7 +399,8 @@ fn mcp_call_tool(
 pub fn run_cli() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     // 找到第一个非 flag 的参数作为命令名
-    let cmd = args.iter()
+    let cmd = args
+        .iter()
         .skip(1)
         .find(|a| !a.starts_with('-'))
         .map(|a| a.as_str());
@@ -441,13 +449,20 @@ pub fn run_cli() -> Result<(), String> {
 
     match result {
         Ok(val) => {
-            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string())
+            );
             let _ = std::io::stdout().flush();
             Ok(())
         }
         Err(err) => {
             let output = serde_json::json!({"success": false, "error": err});
-            println!("{}", serde_json::to_string_pretty(&output).unwrap_or_else(|_| format!("{{\"success\":false,\"error\":\"{}\"}}", err)));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output)
+                    .unwrap_or_else(|_| format!("{{\"success\":false,\"error\":\"{}\"}}", err))
+            );
             let _ = std::io::stdout().flush();
             Err(err)
         }
@@ -464,7 +479,7 @@ fn parse_named_arg(args: &[String], name: &str) -> Option<String> {
             let stripped = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
                 || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
             {
-                trimmed[1..trimmed.len()-1].to_string()
+                trimmed[1..trimmed.len() - 1].to_string()
             } else {
                 trimmed.to_string()
             };
@@ -538,7 +553,8 @@ fn cmd_flash(args: &[String]) -> Result<serde_json::Value, String> {
     let baud_str = baud.to_string();
     // Use -b for esptool baud rate. Lower baud (e.g. 115200) often
     // fixes "Write timeout" on ESP32-S3 USB Serial/JTAG.
-    let result = crate::idf::run_idf_command_live(&project, &idf, &["-p", &port, "-b", &baud_str, "flash"]);
+    let result =
+        crate::idf::run_idf_command_live(&project, &idf, &["-p", &port, "-b", &baud_str, "flash"]);
     let (success, output) = match &result {
         Ok(o) => (true, o.clone()),
         Err(o) => (false, o.clone()),
@@ -604,7 +620,9 @@ fn cmd_list_ports(args: &[String]) -> Result<serde_json::Value, String> {
             .into_iter()
             .map(|mut p| {
                 if let Some(port_name) = p["port_name"].as_str() {
-                    if let Some(chip) = crate::commands::serial::detect_chip_type_cli(idf_path, port_name) {
+                    if let Some(chip) =
+                        crate::commands::serial::detect_chip_type_cli(idf_path, port_name)
+                    {
                         p["chip_type"] = serde_json::json!(chip);
                     }
                 }
@@ -705,7 +723,8 @@ fn cmd_build_flash_monitor(args: &[String]) -> Result<serde_json::Value, String>
     serial::disconnect_serial_sync();
     eprintln!("[espsmith] === Flash ({} @ {}baud) ===", port, baudrate);
     let baud_str = baudrate.to_string();
-    let flash = crate::idf::run_idf_command_live(&project, &idf, &["-p", &port, "-b", &baud_str, "flash"]);
+    let flash =
+        crate::idf::run_idf_command_live(&project, &idf, &["-p", &port, "-b", &baud_str, "flash"]);
     let (flash_ok, flash_out) = match &flash {
         Ok(o) => (true, o.clone()),
         Err(o) => (false, o.clone()),
@@ -733,7 +752,11 @@ fn tail_str(s: &str, max_chars: usize) -> String {
     if s.len() <= max_chars {
         s.to_string()
     } else {
-        format!("...(truncated {} chars)\n{}", s.len() - max_chars, &s[s.len() - max_chars..])
+        format!(
+            "...(truncated {} chars)\n{}",
+            s.len() - max_chars,
+            &s[s.len() - max_chars..]
+        )
     }
 }
 
@@ -741,7 +764,10 @@ fn tail_str(s: &str, max_chars: usize) -> String {
 ///
 /// 核心设计：sink 直接调用 handle_runner_event_for_progress 更新进度并 emit，
 /// 不再通过 broadcast_event → 全局监听器这条间接路径，避免时序竞争导致事件丢失。
-fn run_delegate_command(command: &str, args: &serde_json::Value) -> self_healing::ipc::DelegateResult {
+fn run_delegate_command(
+    command: &str,
+    args: &serde_json::Value,
+) -> self_healing::ipc::DelegateResult {
     let project = args["project"].as_str().unwrap_or("").to_string();
     let idf = args["idf"].as_str().map(|s| s.to_string());
 
@@ -770,14 +796,28 @@ fn run_delegate_command(command: &str, args: &serde_json::Value) -> self_healing
         } else {
             // Unknown 模式下重新检测，使用 CLI 传递的端口
             let port = args["port"].as_str();
-            crate::connection::detect_connection_mode(port).mode.is_jtag()
+            crate::connection::detect_connection_mode(port)
+                .mode
+                .is_jtag()
         }
     };
-    tracing::info!("[Delegate] command={}, is_jtag={}, cached_mode={:?}", command, is_jtag, crate::connection::get_cached_connection_info().mode);
+    tracing::info!(
+        "[Delegate] command={}, is_jtag={}, cached_mode={:?}",
+        command,
+        is_jtag,
+        crate::connection::get_cached_connection_info().mode
+    );
     if let Some(op) = crate::ai_assistant::detect_jtag_operation_for_delegate(command, is_jtag) {
-        tracing::info!("[Delegate] Detected operation: type={}, steps={}", op.operation_type, op.steps.len());
+        tracing::info!(
+            "[Delegate] Detected operation: type={}, steps={}",
+            op.operation_type,
+            op.steps.len()
+        );
         if crate::ai_assistant::try_set_active_operation(op) {
-            tracing::info!("[Delegate] Pre-set ACTIVE_JTAG_OPERATION for command={}", command);
+            tracing::info!(
+                "[Delegate] Pre-set ACTIVE_JTAG_OPERATION for command={}",
+                command
+            );
             // 立即 emit 初始进度（所有步骤 pending），让前端尽早显示进度卡片
             if let Some(ah) = crate::ai_assistant::app_handle() {
                 let active = crate::ai_assistant::lock_active_operation();
@@ -795,9 +835,7 @@ fn run_delegate_command(command: &str, args: &serde_json::Value) -> self_healing
             crate::ai_assistant::handle_runner_event_for_progress(event);
         });
 
-    let result = mcp::call_tool_direct_with_progress(
-        project, idf, tool_name, args, Some(sink),
-    );
+    let result = mcp::call_tool_direct_with_progress(project, idf, tool_name, args, Some(sink));
 
     self_healing::ipc::DelegateResult {
         success: result.success,
@@ -850,7 +888,11 @@ fn cmd_closed_loop(args: &[String]) -> Result<serde_json::Value, String> {
     let ipc_addr = parse_named_arg(args, "ipc-addr");
 
     // 优先委托主进程执行（RunnerEvent 实时广播到前端），回退到本地执行
-    if let Some(result) = self_healing::ipc::send_delegate_and_wait_with_addr("closed_loop", &tool_args, ipc_addr.as_deref()) {
+    if let Some(result) = self_healing::ipc::send_delegate_and_wait_with_addr(
+        "closed_loop",
+        &tool_args,
+        ipc_addr.as_deref(),
+    ) {
         if result.success {
             Ok(result.data)
         } else {
@@ -864,7 +906,11 @@ fn cmd_closed_loop(args: &[String]) -> Result<serde_json::Value, String> {
                 crate::self_healing::ipc::send_event_to_parent(event);
             });
         let result = mcp::call_tool_direct_with_progress(
-            project, Some(idf), "closed_loop", &tool_args, Some(sink),
+            project,
+            Some(idf),
+            "closed_loop",
+            &tool_args,
+            Some(sink),
         );
         if result.success {
             Ok(result.data.unwrap_or_else(|| serde_json::json!({})))
@@ -908,11 +954,13 @@ fn cmd_jtag_runtime_check(args: &[String]) -> Result<serde_json::Value, String> 
         tool_args["elf_path"] = serde_json::json!(v);
     }
     if let Some(v) = parse_named_arg(args, "breakpoints") {
-        let bps: Vec<serde_json::Value> = v.split(',').map(|s| serde_json::json!(s.trim())).collect();
+        let bps: Vec<serde_json::Value> =
+            v.split(',').map(|s| serde_json::json!(s.trim())).collect();
         tool_args["breakpoints"] = serde_json::json!(bps);
     }
     if let Some(v) = parse_named_arg(args, "watch-variables") {
-        let vars: Vec<serde_json::Value> = v.split(',').map(|s| serde_json::json!(s.trim())).collect();
+        let vars: Vec<serde_json::Value> =
+            v.split(',').map(|s| serde_json::json!(s.trim())).collect();
         tool_args["watch_variables"] = serde_json::json!(vars);
     }
 
@@ -920,11 +968,17 @@ fn cmd_jtag_runtime_check(args: &[String]) -> Result<serde_json::Value, String> 
     let ipc_addr = parse_named_arg(args, "ipc-addr");
 
     // 优先委托主进程执行（RunnerEvent 实时广播到前端），回退到本地执行
-    if let Some(result) = self_healing::ipc::send_delegate_and_wait_with_addr("jtag_runtime_check", &tool_args, ipc_addr.as_deref()) {
+    if let Some(result) = self_healing::ipc::send_delegate_and_wait_with_addr(
+        "jtag_runtime_check",
+        &tool_args,
+        ipc_addr.as_deref(),
+    ) {
         if result.success {
             Ok(result.data)
         } else {
-            Err(result.error.unwrap_or_else(|| "jtag_runtime_check failed".into()))
+            Err(result
+                .error
+                .unwrap_or_else(|| "jtag_runtime_check failed".into()))
         }
     } else {
         tracing::warn!("[CLI] IPC delegate unavailable, running jtag_runtime_check locally");
@@ -934,12 +988,18 @@ fn cmd_jtag_runtime_check(args: &[String]) -> Result<serde_json::Value, String> 
                 crate::self_healing::ipc::send_event_to_parent(event);
             });
         let result = mcp::call_tool_direct_with_progress(
-            project, Some(idf), "jtag_runtime_check", &tool_args, Some(sink),
+            project,
+            Some(idf),
+            "jtag_runtime_check",
+            &tool_args,
+            Some(sink),
         );
         if result.success {
             Ok(result.data.unwrap_or_else(|| serde_json::json!({})))
         } else {
-            Err(result.error.unwrap_or_else(|| "jtag_runtime_check failed".into()))
+            Err(result
+                .error
+                .unwrap_or_else(|| "jtag_runtime_check failed".into()))
         }
     }
 }
@@ -949,15 +1009,20 @@ fn cmd_openocd_start(args: &[String]) -> Result<serde_json::Value, String> {
         .or_else(|| {
             let flash_port = crate::ai_assistant::get_cached_flash_port();
             crate::connection::detect_connection_mode(flash_port.as_deref())
-                .chip_hint.as_ref().and_then(|h| {
+                .chip_hint
+                .as_ref()
+                .and_then(|h| {
                     let lower = h.to_ascii_lowercase().replace('-', "");
-                    if lower == "esp32" { None } else { Some(lower) }
+                    if lower == "esp32" {
+                        None
+                    } else {
+                        Some(lower)
+                    }
                 })
         })
         .unwrap_or_else(|| "esp32".to_string());
     // --speed 参数：降低 JTAG 时钟频率可避免 ESP32-S3 USB-JTAG IN buffer overflow
-    let speed_khz = parse_named_arg(args, "speed")
-        .and_then(|s| s.parse::<u32>().ok());
+    let speed_khz = parse_named_arg(args, "speed").and_then(|s| s.parse::<u32>().ok());
     commands::openocd::ensure_openocd_running(&chip, speed_khz)?;
     Ok(serde_json::json!({
         "success": true,
@@ -1006,13 +1071,14 @@ fn cmd_get_hardware_config(args: &[String]) -> Result<serde_json::Value, String>
     if result.success {
         Ok(result.data.unwrap_or_else(|| serde_json::json!({})))
     } else {
-        Err(result.error.unwrap_or_else(|| "get_hardware_config failed".into()))
+        Err(result
+            .error
+            .unwrap_or_else(|| "get_hardware_config failed".into()))
     }
 }
 
 fn cmd_get_idf_path(args: &[String]) -> Result<serde_json::Value, String> {
-    let project = parse_named_arg(args, "project")
-        .or_else(|| parse_named_arg(args, "p"));
+    let project = parse_named_arg(args, "project").or_else(|| parse_named_arg(args, "p"));
 
     if let Some(project) = project {
         let config_path = std::path::Path::new(&project)

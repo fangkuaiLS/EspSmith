@@ -163,7 +163,10 @@ pub struct ExperienceStore {
 impl ExperienceStore {
     pub fn new(base_dir: PathBuf) -> Self {
         if let Err(e) = fs::create_dir_all(&base_dir) {
-            warn!("Experience: failed to create base dir {:?}: {}", base_dir, e);
+            warn!(
+                "Experience: failed to create base dir {:?}: {}",
+                base_dir, e
+            );
         }
         Self { base_dir }
     }
@@ -181,8 +184,11 @@ impl ExperienceStore {
     }
 
     fn stats_path(&self, board: &str, test: &str) -> PathBuf {
-        self.stats_dir()
-            .join(format!("{}__{}.json", sanitize_id(board), sanitize_id(test)))
+        self.stats_dir().join(format!(
+            "{}__{}.json",
+            sanitize_id(board),
+            sanitize_id(test)
+        ))
     }
 
     /// Get run statistics for a board:test pair.
@@ -211,7 +217,11 @@ impl ExperienceStore {
         match serde_json::to_string_pretty(&stats) {
             Ok(content) => {
                 if let Err(e) = fs::write(&path, content) {
-                    warn!("Experience: failed to write stats {}: {}", path.display(), e);
+                    warn!(
+                        "Experience: failed to write stats {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
             Err(e) => {
@@ -358,10 +368,7 @@ impl ExperienceStore {
                 if !record.lesson.is_empty() {
                     existing.lesson = record.lesson.clone();
                 }
-                existing.source_ref = record
-                    .source_ref
-                    .clone()
-                    .or(existing.source_ref.take());
+                existing.source_ref = record.source_ref.clone().or(existing.source_ref.take());
                 existing.last_updated = if record.last_updated.is_empty() {
                     chrono::Utc::now().to_rfc3339()
                 } else {
@@ -386,8 +393,7 @@ impl ExperienceStore {
                     Err(e) => {
                         warn!(
                             "Experience: failed to serialize updated skill {}: {}",
-                            record.id,
-                            e
+                            record.id, e
                         );
                         SaveOutcome::Failed
                     }
@@ -417,8 +423,7 @@ impl ExperienceStore {
             Err(e) => {
                 warn!(
                     "Experience: failed to serialize new skill {}: {}",
-                    record.id,
-                    e
+                    record.id, e
                 );
                 SaveOutcome::Failed
             }
@@ -495,11 +500,7 @@ impl ExperienceStore {
                     }
                 },
                 Err(e) => {
-                    warn!(
-                        "Experience: failed to read skill {:?}: {}",
-                        entry.path(),
-                        e
-                    );
+                    warn!("Experience: failed to read skill {:?}: {}", entry.path(), e);
                 }
             }
         }

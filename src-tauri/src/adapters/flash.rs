@@ -15,21 +15,32 @@ use std::time::Instant;
 pub struct IdfEsptoolFlashAdapter;
 
 impl Adapter for IdfEsptoolFlashAdapter {
-    fn name(&self) -> &str { "flash.idf_esptool" }
-    fn description(&self) -> &str { "Flash via idf.py flash (esptool)" }
+    fn name(&self) -> &str {
+        "flash.idf_esptool"
+    }
+    fn description(&self) -> &str {
+        "Flash via idf.py flash (esptool)"
+    }
 
     fn execute(&self, params: &serde_json::Value, work_dir: &str) -> AdapterResult {
-        let _port = params.get("port").and_then(|v| v.as_str()).unwrap_or("auto");
+        let _port = params
+            .get("port")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto");
 
         // This delegates to the IDF flash function, which needs idf_path
         // For now, use the params if provided, otherwise fall back to environment
-        let idf_path = params.get("idf_path")
-            .and_then(|v| v.as_str()).unwrap_or("");
+        let idf_path = params
+            .get("idf_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         let start = Instant::now();
         // Use port from params or platform-appropriate default
-        let port = params.get("port")
-            .and_then(|v| v.as_str()).unwrap_or(super::default_port_hint());
+        let port = params
+            .get("port")
+            .and_then(|v| v.as_str())
+            .unwrap_or(super::default_port_hint());
 
         if idf_path.is_empty() {
             return AdapterResult::fail(
@@ -40,10 +51,7 @@ impl Adapter for IdfEsptoolFlashAdapter {
         }
 
         match crate::idf::flash(work_dir, idf_path, port) {
-            Ok(output) => AdapterResult::ok(
-                Some(output),
-                start.elapsed().as_millis() as u64,
-            ),
+            Ok(output) => AdapterResult::ok(Some(output), start.elapsed().as_millis() as u64),
             Err(output) => AdapterResult::fail(
                 format!("Flash failed:\n{}", output),
                 Some(output),
@@ -62,8 +70,12 @@ impl Adapter for IdfEsptoolFlashAdapter {
 pub struct OpenOcdFlashAdapter;
 
 impl Adapter for OpenOcdFlashAdapter {
-    fn name(&self) -> &str { "flash.openocd" }
-    fn description(&self) -> &str { "Flash via OpenOCD JTAG/SWD (program + verify)" }
+    fn name(&self) -> &str {
+        "flash.openocd"
+    }
+    fn description(&self) -> &str {
+        "Flash via OpenOCD JTAG/SWD (program + verify)"
+    }
 
     fn execute(&self, params: &serde_json::Value, work_dir: &str) -> AdapterResult {
         let start = Instant::now();
@@ -125,7 +137,11 @@ impl Adapter for OpenOcdFlashAdapter {
             );
         }
 
-        let port = params.get("port").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let port = params
+            .get("port")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let full_flash_result = flash_full_firmware_via_openocd(&elf, work_dir, &port);
         match full_flash_result {
             Ok(output) => AdapterResult::ok(
@@ -158,7 +174,9 @@ pub fn find_elf_in_build_dir(work_dir: &str) -> Option<String> {
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
                 if name_str.ends_with(".elf") && !name_str.contains("bootloader") {
-                    return Some(super::normalize_path_for_gdb(&entry.path().to_string_lossy()));
+                    return Some(super::normalize_path_for_gdb(
+                        &entry.path().to_string_lossy(),
+                    ));
                 }
             }
         }
@@ -166,7 +184,11 @@ pub fn find_elf_in_build_dir(work_dir: &str) -> Option<String> {
     None
 }
 
-fn flash_full_firmware_via_openocd(elf_path: &str, work_dir: &str, _port: &str) -> Result<String, String> {
+fn flash_full_firmware_via_openocd(
+    elf_path: &str,
+    work_dir: &str,
+    _port: &str,
+) -> Result<String, String> {
     let build_dir = Path::new(work_dir).join("build");
     let project_name = Path::new(work_dir)
         .file_name()
@@ -174,7 +196,9 @@ fn flash_full_firmware_via_openocd(elf_path: &str, work_dir: &str, _port: &str) 
         .to_string_lossy();
 
     let bootloader = build_dir.join("bootloader").join("bootloader.bin");
-    let partition_table = build_dir.join("partition_table").join("partition-table.bin");
+    let partition_table = build_dir
+        .join("partition_table")
+        .join("partition-table.bin");
     let app_bin = build_dir.join(format!("{}.bin", project_name));
 
     if !bootloader.exists() || !partition_table.exists() || !app_bin.exists() {
@@ -182,10 +206,14 @@ fn flash_full_firmware_via_openocd(elf_path: &str, work_dir: &str, _port: &str) 
         return flash_via_openocd_telnet(elf_path);
     }
 
-    let mut stream = TcpStream::connect_timeout(
-        &super::openocd_addr(),
-        std::time::Duration::from_secs(2),
-    ).map_err(|e| format!("Cannot connect to OpenOCD telnet: {}. Is OpenOCD running?", e))?;
+    let mut stream =
+        TcpStream::connect_timeout(&super::openocd_addr(), std::time::Duration::from_secs(2))
+            .map_err(|e| {
+                format!(
+                    "Cannot connect to OpenOCD telnet: {}. Is OpenOCD running?",
+                    e
+                )
+            })?;
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(2)))
         .map_err(|e| e.to_string())?;
@@ -238,7 +266,9 @@ fn wait_for_openocd_telnet(max_retries: u32) -> Result<(), String> {
         if TcpStream::connect_timeout(
             &super::openocd_addr(),
             std::time::Duration::from_millis(500),
-        ).is_ok() {
+        )
+        .is_ok()
+        {
             tracing::info!("OpenOCD telnet ready after {} attempts", i + 1);
             return Ok(());
         }
@@ -248,12 +278,19 @@ fn wait_for_openocd_telnet(max_retries: u32) -> Result<(), String> {
 }
 
 fn flash_via_openocd_telnet(elf_path: &str) -> Result<String, String> {
-    tracing::info!("flash_via_openocd_telnet: connecting to {}...", super::OPENOCD_ADDR);
+    tracing::info!(
+        "flash_via_openocd_telnet: connecting to {}...",
+        super::OPENOCD_ADDR
+    );
 
-    let mut stream = TcpStream::connect_timeout(
-        &super::openocd_addr(),
-        std::time::Duration::from_secs(2),
-    ).map_err(|e| format!("Cannot connect to OpenOCD telnet (port 4444): {}. Is OpenOCD running?", e))?;
+    let mut stream =
+        TcpStream::connect_timeout(&super::openocd_addr(), std::time::Duration::from_secs(2))
+            .map_err(|e| {
+                format!(
+                    "Cannot connect to OpenOCD telnet (port 4444): {}. Is OpenOCD running?",
+                    e
+                )
+            })?;
     tracing::info!("flash_via_openocd_telnet: connected to telnet");
 
     stream
@@ -268,10 +305,19 @@ fn flash_via_openocd_telnet(elf_path: &str) -> Result<String, String> {
         .write_all(b"reset halt\n")
         .map_err(|e| format!("Failed to send reset halt command: {}", e))?;
     let halt_output = read_until_prompt(&mut stream, &mut buf, 10);
-    tracing::info!("flash_via_openocd_telnet: reset halt response: {} bytes", halt_output.len());
+    tracing::info!(
+        "flash_via_openocd_telnet: reset halt response: {} bytes",
+        halt_output.len()
+    );
 
-    let cmd = format!("program {} reset\n", super::normalize_path_for_gdb(elf_path));
-    tracing::info!("flash_via_openocd_telnet: sending program command: {}", cmd.trim());
+    let cmd = format!(
+        "program {} reset\n",
+        super::normalize_path_for_gdb(elf_path)
+    );
+    tracing::info!(
+        "flash_via_openocd_telnet: sending program command: {}",
+        cmd.trim()
+    );
     stream
         .write_all(cmd.as_bytes())
         .map_err(|e| format!("Failed to send program command: {}", e))?;
@@ -296,9 +342,7 @@ fn flash_via_openocd_telnet(elf_path: &str) -> Result<String, String> {
                     tracing::info!("OpenOCD flash completed");
                     break;
                 }
-                if lower.contains("programming failed")
-                    || lower.contains("auto erase failed")
-                {
+                if lower.contains("programming failed") || lower.contains("auto erase failed") {
                     tracing::warn!("OpenOCD flash error detected");
                     break;
                 }
@@ -318,9 +362,8 @@ fn flash_via_openocd_telnet(elf_path: &str) -> Result<String, String> {
     }
 
     let combined = output.to_lowercase();
-    let has_error = combined.contains("error")
-        || combined.contains("failed")
-        || combined.contains("cannot");
+    let has_error =
+        combined.contains("error") || combined.contains("failed") || combined.contains("cannot");
     let has_success = combined.contains("verified ok")
         || combined.contains("** verified ok **")
         || combined.contains("wrote");
@@ -330,7 +373,10 @@ fn flash_via_openocd_telnet(elf_path: &str) -> Result<String, String> {
     } else if has_success || output.contains("> ") {
         Ok(output)
     } else {
-        Err(format!("OpenOCD flash timed out. Output so far:\n{}", output))
+        Err(format!(
+            "OpenOCD flash timed out. Output so far:\n{}",
+            output
+        ))
     }
 }
 
@@ -374,12 +420,22 @@ fn drain_telnet_output(stream: &mut TcpStream, buf: &mut [u8]) -> std::io::Resul
 pub struct UF2CopyAdapter;
 
 impl Adapter for UF2CopyAdapter {
-    fn name(&self) -> &str { "flash.uf2_copy" }
-    fn description(&self) -> &str { "Copy UF2 binary to RP2040 mass storage" }
+    fn name(&self) -> &str {
+        "flash.uf2_copy"
+    }
+    fn description(&self) -> &str {
+        "Copy UF2 binary to RP2040 mass storage"
+    }
 
     fn execute(&self, params: &serde_json::Value, work_dir: &str) -> AdapterResult {
-        let uf2_file = params.get("uf2_file").and_then(|v| v.as_str()).unwrap_or("firmware.uf2");
-        let mount_point = params.get("mount_point").and_then(|v| v.as_str()).unwrap_or("");
+        let uf2_file = params
+            .get("uf2_file")
+            .and_then(|v| v.as_str())
+            .unwrap_or("firmware.uf2");
+        let mount_point = params
+            .get("mount_point")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         let start = Instant::now();
         let src = std::path::Path::new(work_dir).join("build").join(uf2_file);
@@ -400,11 +456,13 @@ impl Adapter for UF2CopyAdapter {
             let rp2 = drives.iter().find(|d| d.contains("RPI-RP2"));
             match rp2 {
                 Some(d) => std::path::PathBuf::from(d).join(uf2_file),
-                None => return AdapterResult::fail(
-                    "RP2040 not found in BOOTSEL mode".into(),
-                    None,
-                    start.elapsed().as_millis() as u64,
-                ),
+                None => {
+                    return AdapterResult::fail(
+                        "RP2040 not found in BOOTSEL mode".into(),
+                        None,
+                        start.elapsed().as_millis() as u64,
+                    )
+                }
             }
         };
 
@@ -436,7 +494,11 @@ fn drive_mounts() -> Vec<String> {
         for entry in std::fs::read_dir("/media").into_iter().flatten().flatten() {
             mounts.push(entry.path().to_string_lossy().to_string());
         }
-        for entry in std::fs::read_dir("/Volumes").into_iter().flatten().flatten() {
+        for entry in std::fs::read_dir("/Volumes")
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             mounts.push(entry.path().to_string_lossy().to_string());
         }
     }

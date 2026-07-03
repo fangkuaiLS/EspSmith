@@ -51,13 +51,12 @@ fn main() {
     // Note: For CodeWhale's exec_shell, use espsmith-cli.exe (console subsystem)
     // instead of espsmith.exe (GUI subsystem), because GUI apps can't output to pipes.
     // This path is kept for backwards compatibility and direct CLI usage.
-    let is_cli = args.iter()
-        .skip(1)
-        .any(|a| {
-            !a.starts_with('-')
-                && a.chars().all(|c| c.is_ascii_lowercase() || c == '-' || c == '_')
-                && a.len() >= 3
-        });
+    let is_cli = args.iter().skip(1).any(|a| {
+        !a.starts_with('-')
+            && a.chars()
+                .all(|c| c.is_ascii_lowercase() || c == '-' || c == '_')
+            && a.len() >= 3
+    });
 
     if is_cli {
         let _ = esp_smith_lib::run_cli();

@@ -151,7 +151,10 @@ fn build_header_content(config: &HardwareConfig) -> String {
     for (id, p) in &instances {
         let safe_name = id.to_uppercase().replace('-', "_");
 
-        header.push_str(&format!("/* ── {} ({}) ──────── */\n", p.name, p.definition_id));
+        header.push_str(&format!(
+            "/* ── {} ({}) ──────── */\n",
+            p.name, p.definition_id
+        ));
         header.push_str(&format!("/* 驱动库: {} */\n", p.library_choice));
         if !p.notes.is_empty() {
             header.push_str(&format!("/* 备注: {} */\n", p.notes));
@@ -177,7 +180,8 @@ fn write_hardware_header(project_path: &str, config: &HardwareConfig) -> Result<
 
     let header_path = main_dir.join("hardware_pins.h");
     let content = build_header_content(config);
-    fs::write(&header_path, content).map_err(|e| format!("写入 {} 失败: {}", header_path.display(), e))?;
+    fs::write(&header_path, content)
+        .map_err(|e| format!("写入 {} 失败: {}", header_path.display(), e))?;
 
     info!("Generated hardware_pins.h at {}", header_path.display());
     Ok(())
@@ -236,7 +240,10 @@ pub async fn hw_config_add_peripheral(
     project_path: String,
     peripheral: PeripheralInstance,
 ) -> Result<HardwareConfig, String> {
-    info!("Adding peripheral: {} (id: {})", peripheral.name, peripheral.id);
+    info!(
+        "Adding peripheral: {} (id: {})",
+        peripheral.name, peripheral.id
+    );
 
     let mut config = get_hw_config(project_path.clone()).await?;
 

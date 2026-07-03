@@ -10,8 +10,8 @@
 //! Reference: vscode-esp-idf-extension-master/src/espIdf/menuconfig/
 
 use crate::confserver::ConfserverProcess;
-use crate::SdkConfigState;
 use crate::sdkconfig_loader::menu_from_kconfig;
+use crate::SdkConfigState;
 use tauri::Emitter;
 use tracing::info;
 
@@ -44,8 +44,13 @@ pub async fn sdkconfig_load(
     .await
     .map_err(|e| format!("Confserver task panicked: {}", e))?
     .map_err(|e| format!("Failed to start confserver: {}", e))?;
-    info!("[sdkconfig_load] Confserver started successfully, got {} values", 
-        confserver_values.get("values").and_then(|v| v.as_object()).map_or(0, |o| o.len()));
+    info!(
+        "[sdkconfig_load] Confserver started successfully, got {} values",
+        confserver_values
+            .get("values")
+            .and_then(|v| v.as_object())
+            .map_or(0, |o| o.len())
+    );
 
     // Store process for later use
     {
@@ -55,18 +60,23 @@ pub async fn sdkconfig_load(
 
     // Load menu tree from kconfig (same kconfig_dump.py approach)
     info!("[sdkconfig_load] Loading menu tree from kconfig...");
-    let menus = tokio::task::spawn_blocking(move || {
-        menu_from_kconfig(&project_path, &idf_path)
-    })
-    .await
-    .map_err(|e| format!("Kconfig menu task panicked: {}", e))?
-    .map_err(|e| format!("Failed to load menu tree: {}", e))?;
+    let menus = tokio::task::spawn_blocking(move || menu_from_kconfig(&project_path, &idf_path))
+        .await
+        .map_err(|e| format!("Kconfig menu task panicked: {}", e))?
+        .map_err(|e| format!("Failed to load menu tree: {}", e))?;
     info!("[sdkconfig_load] Menu tree loaded");
 
     // Merge: use confserver for values/visible/ranges/defaults, kconfig_dump for structure
     let result = merge_menu_with_confserver(menus, &confserver_values);
 
-    info!("[sdkconfig_load] Done, menus: {} items", result.get("menus").and_then(|m| m.as_array()).map(|a| a.len()).unwrap_or(0));
+    info!(
+        "[sdkconfig_load] Done, menus: {} items",
+        result
+            .get("menus")
+            .and_then(|m| m.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    );
 
     Ok(result)
 }
@@ -122,9 +132,7 @@ pub async fn sdkconfig_save(
 
 /// Close the confserver process.
 #[tauri::command]
-pub async fn sdkconfig_close(
-    state: tauri::State<'_, SdkConfigState>,
-) -> Result<(), String> {
+pub async fn sdkconfig_close(state: tauri::State<'_, SdkConfigState>) -> Result<(), String> {
     info!("[sdkconfig_close] Closing confserver");
     let mut guard = state.0.lock().map_err(|e| format!("Lock error: {}", e))?;
     if let Some(process) = guard.take() {
@@ -144,11 +152,14 @@ fn merge_menu_with_confserver(menus: Value, confserver_values: &Value) -> Value 
     let cs_values = confserver_values.get("values").and_then(|v| v.as_object());
     let cs_visible = confserver_values.get("visible").and_then(|v| v.as_object());
     let cs_ranges = confserver_values.get("ranges").and_then(|v| v.as_object());
-    let cs_defaults = confserver_values.get("defaults").and_then(|v| v.as_object());
+    let cs_defaults = confserver_values
+        .get("defaults")
+        .and_then(|v| v.as_object());
 
     if let Some(menu_array) = merged.get_mut("menus").and_then(|m| m.as_array_mut()) {
         let menus_clone = menu_array.clone();
-        let merged_array: Vec<Value> = menus_clone.into_iter()
+        let merged_array: Vec<Value> = menus_clone
+            .into_iter()
             .map(|m| merge_menu_item(m, cs_values, cs_visible, cs_ranges, cs_defaults))
             .collect();
         *menu_array = merged_array;
@@ -165,8 +176,16 @@ fn merge_menu_item(
     cs_defaults: Option<&serde_json::Map<String, Value>>,
 ) -> Value {
     // Extract owned strings early to avoid borrow conflicts
-    let item_type: String = item.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let item_name: String = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let item_type: String = item
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let item_name: String = item
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     // Apply visibility from confserver
     if let Some(vs) = cs_visible {
@@ -203,7 +222,11 @@ fn merge_menu_item(
         if let Some(choices) = item.get_mut("choices").and_then(|c| c.as_array_mut()) {
             let mut selected: Option<String> = None;
             for choice in choices.iter_mut() {
-                let cname: String = choice.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let cname: String = choice
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if let Some(vs) = cs_values {
                     if let Some(val) = vs.get(&cname) {
                         choice["value"] = val.clone();
@@ -222,7 +245,8 @@ fn merge_menu_item(
     // Recurse into items
     if let Some(sub_items) = item.get_mut("items").and_then(|i| i.as_array_mut()) {
         let items_clone = sub_items.clone();
-        let merged: Vec<Value> = items_clone.into_iter()
+        let merged: Vec<Value> = items_clone
+            .into_iter()
             .map(|i| merge_menu_item(i, cs_values, cs_visible, cs_ranges, cs_defaults))
             .collect();
         *sub_items = merged;

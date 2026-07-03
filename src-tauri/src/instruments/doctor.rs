@@ -11,16 +11,15 @@ pub fn check_tcp_reachable(host: &str, port: u16, timeout_ms: u64) -> SubsystemC
     let addr_str = format!("{host}:{port}");
     let addr: std::net::SocketAddr = match addr_str.parse() {
         Ok(a) => a,
-        Err(e) => return SubsystemCheck {
-            name: format!("TCP {host}:{port}"),
-            passed: false,
-            message: format!("Invalid address '{}': {}", addr_str, e),
-        },
+        Err(e) => {
+            return SubsystemCheck {
+                name: format!("TCP {host}:{port}"),
+                passed: false,
+                message: format!("Invalid address '{}': {}", addr_str, e),
+            }
+        }
     };
-    match TcpStream::connect_timeout(
-        &addr,
-        Duration::from_millis(timeout_ms),
-    ) {
+    match TcpStream::connect_timeout(&addr, Duration::from_millis(timeout_ms)) {
         Ok(_) => SubsystemCheck {
             name: format!("TCP {host}:{port}"),
             passed: true,
@@ -73,7 +72,11 @@ pub fn summarize(checks: &[SubsystemCheck]) -> HealthStatus {
     if passed == total {
         HealthStatus::Healthy
     } else if passed == 0 {
-        HealthStatus::Unhealthy(format!("All {} checks failed: {}", failed.len(), failed.join(", ")))
+        HealthStatus::Unhealthy(format!(
+            "All {} checks failed: {}",
+            failed.len(),
+            failed.join(", ")
+        ))
     } else {
         HealthStatus::Degraded(format!(
             "{}/{} checks failed: {}",

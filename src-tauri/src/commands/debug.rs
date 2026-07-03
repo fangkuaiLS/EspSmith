@@ -48,8 +48,11 @@ fn gdb_command(script: &str, target_chip: Option<&str>) -> Result<String, String
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
-    let child = cmd.spawn()
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    let child = cmd
+        .spawn()
         .map_err(|e| format!("GDB not found ({gdb_binary}): {}", e))?;
 
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
@@ -62,7 +65,8 @@ pub async fn get_debug_state(target_chip: Option<String>) -> Result<DebugState, 
     info!("Getting debug state");
     let bt = gdb_command("bt", target_chip.as_deref()).unwrap_or_default();
 
-    let stack: Vec<String> = bt.lines()
+    let stack: Vec<String> = bt
+        .lines()
         .filter(|l| l.starts_with('#'))
         .map(|l| l.to_string())
         .collect();
@@ -77,7 +81,11 @@ pub async fn get_debug_state(target_chip: Option<String>) -> Result<DebugState, 
 
 /// 设置断点
 #[tauri::command]
-pub async fn set_breakpoint(file: String, line: u32, target_chip: Option<String>) -> Result<Breakpoint, String> {
+pub async fn set_breakpoint(
+    file: String,
+    line: u32,
+    target_chip: Option<String>,
+) -> Result<Breakpoint, String> {
     info!("Setting breakpoint at {}:{}", file, line);
     let cmd = format!("break {}:{}", file, line);
     let result = gdb_command(&cmd, target_chip.as_deref())?;
@@ -124,13 +132,17 @@ pub async fn step_out(target_chip: Option<String>) -> Result<(), String> {
 
 /// 读取变量值
 #[tauri::command]
-pub async fn read_variable(name: String, target_chip: Option<String>) -> Result<VariableInfo, String> {
+pub async fn read_variable(
+    name: String,
+    target_chip: Option<String>,
+) -> Result<VariableInfo, String> {
     info!("Reading variable: {}", name);
     let cmd = format!("print {}", name);
     let result = gdb_command(&cmd, target_chip.as_deref())?;
 
     // 解析 GDB 输出 "$1 = (type) value"
-    let value = result.lines()
+    let value = result
+        .lines()
         .find(|l| l.contains('='))
         .map(|l| l.split('=').nth(1).unwrap_or("?").trim())
         .unwrap_or("?");
@@ -163,8 +175,11 @@ pub async fn analyze_coredump(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
-    { cmd.creation_flags(0x08000000); }
-    let output = cmd.spawn()
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    let output = cmd
+        .spawn()
         .map_err(|e| format!("GDB not found ({gdb_binary}): {}", e))?
         .wait_with_output()
         .map_err(|e| e.to_string())?;

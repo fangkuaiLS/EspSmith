@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// 编译错误
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +48,11 @@ pub async fn build_project(project_path: String, idf_path: String) -> Result<Bui
 
     let output = ar.stdout.clone().or(ar.stderr.clone()).unwrap_or_default();
     let errors = parse_compile_errors(&output);
-    Ok(BuildResult { success: ar.success, output, errors })
+    Ok(BuildResult {
+        success: ar.success,
+        output,
+        errors,
+    })
 }
 
 /// 写入文件并编译（AI 自动修复用）
@@ -78,7 +82,10 @@ pub async fn flash_project(
     port: String,
     idf_path: String,
 ) -> Result<FlashResult, String> {
-    info!("Flashing project: {} to port {} (idf: {})", project_path, port, idf_path);
+    info!(
+        "Flashing project: {} to port {} (idf: {})",
+        project_path, port, idf_path
+    );
 
     let registry = crate::adapters::create_idf_registry(&idf_path);
     let ar = crate::adapters::resolve_and_execute(
@@ -90,12 +97,18 @@ pub async fn flash_project(
     );
 
     let output = ar.stdout.clone().or(ar.stderr.clone()).unwrap_or_default();
-    Ok(FlashResult { success: ar.success, output })
+    Ok(FlashResult {
+        success: ar.success,
+        output,
+    })
 }
 
 /// 获取编译错误（AI 可解析）
 #[tauri::command]
-pub async fn get_build_errors(project_path: String, idf_path: String) -> Result<Vec<CompileError>, String> {
+pub async fn get_build_errors(
+    project_path: String,
+    idf_path: String,
+) -> Result<Vec<CompileError>, String> {
     info!("Getting build errors for: {}", project_path);
 
     let result = build_project(project_path, idf_path).await?;
@@ -125,7 +138,10 @@ fn find_project_dir(file_path: &str) -> Result<String, String> {
         .parent()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| file_path.to_string());
-    Err(format!("Cannot find project root (no CMakeLists.txt found). File is in: {}", fallback))
+    Err(format!(
+        "Cannot find project root (no CMakeLists.txt found). File is in: {}",
+        fallback
+    ))
 }
 
 /// 解析编译输出中的错误
@@ -145,13 +161,19 @@ fn parse_compile_errors(output: &str) -> Vec<CompileError> {
         if let Some(caps) = re.captures(line) {
             if caps.len() >= 6 {
                 let file = caps.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
-                let line_num: u32 = caps.get(2)
+                let line_num: u32 = caps
+                    .get(2)
                     .and_then(|m| m.as_str().parse().ok())
                     .unwrap_or(0);
-                let column: u32 = caps.get(3)
+                let column: u32 = caps
+                    .get(3)
                     .and_then(|m| m.as_str().parse().ok())
                     .unwrap_or(0);
-                let error_type = caps.get(4).map(|m| m.as_str()).unwrap_or("error").to_string();
+                let error_type = caps
+                    .get(4)
+                    .map(|m| m.as_str())
+                    .unwrap_or("error")
+                    .to_string();
                 let message = caps.get(5).map(|m| m.as_str()).unwrap_or("").to_string();
 
                 errors.push(CompileError {

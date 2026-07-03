@@ -26,12 +26,13 @@ pub async fn get_status(project_path: String) -> Result<Vec<FileStatus>, String>
     cmd.args(["status", "--porcelain"])
         .current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let output = cmd.output()
-        .map_err(|e| {
-            warn!("Git not available or not a git repository: {}", e);
-            e.to_string()
-        })?;
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().map_err(|e| {
+        warn!("Git not available or not a git repository: {}", e);
+        e.to_string()
+    })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let mut files = Vec::new();
@@ -68,9 +69,10 @@ pub async fn get_current_branch(project_path: String) -> Result<String, String> 
     cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let output = cmd.output()
-        .map_err(|e| e.to_string())?;
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -90,7 +92,34 @@ pub async fn create_branch(project_path: String, name: String) -> Result<String,
     if trimmed.is_empty() {
         return Err("Branch name cannot be empty".to_string());
     }
-    if trimmed.chars().any(|c| matches!(c, '\0' | '\n' | '\r' | '"' | '\'' | '`' | '$' | ';' | '|' | '&' | '<' | '>' | '(' | ')' | '{' | '}' | '*' | '?' | '[' | ']' | '~' | '#' | '!' | ' ')) {
+    if trimmed.chars().any(|c| {
+        matches!(
+            c,
+            '\0' | '\n'
+                | '\r'
+                | '"'
+                | '\''
+                | '`'
+                | '$'
+                | ';'
+                | '|'
+                | '&'
+                | '<'
+                | '>'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '*'
+                | '?'
+                | '['
+                | ']'
+                | '~'
+                | '#'
+                | '!'
+                | ' '
+        )
+    }) {
         return Err("Branch name contains invalid characters".to_string());
     }
 
@@ -98,9 +127,10 @@ pub async fn create_branch(project_path: String, name: String) -> Result<String,
     cmd.args(["checkout", "-b", trimmed])
         .current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let output = cmd.output()
-        .map_err(|e| e.to_string())?;
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -122,9 +152,10 @@ pub async fn start_ai_session(project_path: String) -> Result<String, String> {
     cmd.args(["checkout", "-b", &branch_name])
         .current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let output = cmd.output()
-        .map_err(|e| e.to_string())?;
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -135,26 +166,27 @@ pub async fn start_ai_session(project_path: String) -> Result<String, String> {
 
 /// 提交 AI 修改
 #[tauri::command]
-pub async fn commit_ai_changes(
-    project_path: String,
-    message: String,
-) -> Result<(), String> {
+pub async fn commit_ai_changes(project_path: String, message: String) -> Result<(), String> {
     info!("Committing AI changes: {}", message);
 
     // 添加所有变更
     let mut cmd = Command::new("git");
     cmd.args(["add", "-A"]).current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let _ = cmd.output();
 
     // 提交
     let mut cmd = Command::new("git");
-    cmd.args(["commit", "-m", &message]).current_dir(&project_path);
+    cmd.args(["commit", "-m", &message])
+        .current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let output = cmd.output()
-        .map_err(|e| e.to_string())?;
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -164,15 +196,19 @@ pub async fn commit_ai_changes(
     let mut cmd = Command::new("git");
     cmd.args(["checkout", "main"]).current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let _ = cmd.output();
 
     let mut cmd = Command::new("git");
-    cmd.args(["merge", "--no-ff", "-m", &message]).current_dir(&project_path);
+    cmd.args(["merge", "--no-ff", "-m", &message])
+        .current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let output = cmd.output()
-        .map_err(|e| e.to_string())?;
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
@@ -190,26 +226,30 @@ pub async fn revert_ai_changes(project_path: String) -> Result<(), String> {
     let mut cmd = Command::new("git");
     cmd.args(["branch", "--current"]).current_dir(&project_path);
     #[cfg(windows)]
-    { cmd.creation_flags(CREATE_NO_WINDOW); }
-    let output = cmd.output()
-        .map_err(|e| e.to_string())?;
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().map_err(|e| e.to_string())?;
 
-    let current_branch = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_string();
+    let current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // 如果是 AI 分支，切回主分支并删除
     if current_branch.starts_with("ai-review-") {
         let mut cmd = Command::new("git");
         cmd.args(["checkout", "main"]).current_dir(&project_path);
         #[cfg(windows)]
-        { cmd.creation_flags(CREATE_NO_WINDOW); }
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         let _ = cmd.output();
 
         let mut cmd = Command::new("git");
-        cmd.args(["branch", "-D", &current_branch]).current_dir(&project_path);
+        cmd.args(["branch", "-D", &current_branch])
+            .current_dir(&project_path);
         #[cfg(windows)]
-        { cmd.creation_flags(CREATE_NO_WINDOW); }
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         let _ = cmd.output();
     }
 
