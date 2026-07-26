@@ -29,7 +29,13 @@
     "eraseFlash": "Erase Flash",
     "buildFlashMonitor": "Build+Flash+Monitor",
     "newProject": "New Project",
-    "settings": "Settings"
+    "settings": "Settings",
+    "showLeftPanel": "Show left panel",
+    "hideLeftPanel": "Hide left panel",
+    "showBottomPanel": "Show bottom panel",
+    "hideBottomPanel": "Hide bottom panel",
+    "showRightPanel": "Show right panel",
+    "hideRightPanel": "Hide right panel"
   },
   "statusBar": {
     "building": "Building...",
@@ -147,11 +153,11 @@
   "chat": {
     "aiAssistant": "AI Assistant",
     "ready": "Ready",
-    "thinking": "Thinking",
+    "thinkingLabel": "Thinking",
     "building": "Building",
     "flashing": "Flashing",
     "toolCall": "Tool Call",
-    "error": "Error",
+    "errorLabel": "Error",
     "stop": "Stop",
     "start": "Start",
     "send": "Send",

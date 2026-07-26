@@ -12,7 +12,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Cpu, FolderOpen, FilePlus, Save, Hammer, Zap, Radio,
-  Settings, ChevronDown, PanelLeft,
+  Settings, ChevronDown, PanelLeft, PanelBottom, PanelRight,
   Bug, Terminal, GitBranch, Loader2, FolderPlus,
   Minus, Square, Copy, X, SlidersHorizontal, Trash2, BarChart3,
   Eraser, Play, HeartPulse, Usb, Download
@@ -150,8 +150,20 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
   const bottomPanelRef = useRef<ImperativePanelHandle>(null);
 
   const [bottomCollapsed, setBottomCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   const [autoHardwareCollapsed, setAutoHardwareCollapsed] = useState(false);
   const autoHardwarePanelRef = useRef<ImperativePanelHandle>(null);
+
+  // 面板显隐切换（Code 模式）
+  const toggleLeft = useCallback(() => {
+    if (leftCollapsed) leftPanelRef.current?.expand();
+    else leftPanelRef.current?.collapse();
+  }, [leftCollapsed]);
+  const toggleRight = useCallback(() => {
+    if (rightCollapsed) rightPanelRef.current?.expand();
+    else rightPanelRef.current?.collapse();
+  }, [rightCollapsed]);
 
   // 窗口控制状态（自定义标题栏）
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
@@ -834,6 +846,48 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           )}
         </div>
 
+        {/* 面板显隐切换（Code 模式 - VSCode 风格） */}
+        {!isAutoMode && (
+          <>
+            <div className="w-px h-5 bg-border-default mx-1.5" />
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={toggleLeft}
+                className={`flex items-center px-1.5 py-1.5 rounded-sm transition-all duration-150 ${
+                  leftCollapsed
+                    ? 'text-text-disabled hover:text-text-secondary hover:bg-surface-hover'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                }`}
+                title={leftCollapsed ? t('toolbar.showLeftPanel') : t('toolbar.hideLeftPanel')}
+              >
+                <PanelLeft size={15} />
+              </button>
+              <button
+                onClick={toggleBottom}
+                className={`flex items-center px-1.5 py-1.5 rounded-sm transition-all duration-150 ${
+                  bottomCollapsed
+                    ? 'text-text-disabled hover:text-text-secondary hover:bg-surface-hover'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                }`}
+                title={bottomCollapsed ? t('toolbar.showBottomPanel') : t('toolbar.hideBottomPanel')}
+              >
+                <PanelBottom size={15} />
+              </button>
+              <button
+                onClick={toggleRight}
+                className={`flex items-center px-1.5 py-1.5 rounded-sm transition-all duration-150 ${
+                  rightCollapsed
+                    ? 'text-text-disabled hover:text-text-secondary hover:bg-surface-hover'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                }`}
+                title={rightCollapsed ? t('toolbar.showRightPanel') : t('toolbar.hideRightPanel')}
+              >
+                <PanelRight size={15} />
+              </button>
+            </div>
+          </>
+        )}
+
         {isAutoMode && (
           <>
             <div className="w-px h-5 bg-border-default mx-1.5" />
@@ -869,9 +923,11 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
 
       {/* ===== 主内容区 ===== */}
       {isAutoMode ? (
-        <PanelGroup key="auto" direction="horizontal" className="flex-1 min-h-0">
+        <PanelGroup key="auto" direction="horizontal" className="flex-1 min-h-0" autoSaveId="auto-horizontal">
           {/* ===== 左侧：硬件配置 ===== */}
           <Panel
+            id="auto-hardware"
+            order={1}
             ref={autoHardwarePanelRef}
             defaultSize={28}
             minSize={20}
@@ -893,7 +949,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           <PanelResizeHandle className="w-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
 
           {/* ===== 右侧：AI 聊天 ===== */}
-          <Panel defaultSize={72} minSize={35} className="bg-surface-base">
+          <Panel id="auto-chat" order={2} defaultSize={72} minSize={35} className="bg-surface-base">
             <div className="h-full border-l border-border-default">
               <ErrorBoundary name="ChatPanel" inline>
                 <ChatPanel />
@@ -902,17 +958,19 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           </Panel>
         </PanelGroup>
       ) : (
-        <PanelGroup key="code" direction="horizontal" className="flex-1 min-h-0">
+        <PanelGroup key="code" direction="horizontal" className="flex-1 min-h-0" autoSaveId="code-horizontal">
           {/* ===== 左侧栏 ===== */}
           <Panel
+            id="code-left-sidebar"
+            order={1}
             ref={leftPanelRef}
             defaultSize={19}
             minSize={12}
             maxSize={35}
             collapsible
             collapsedSize={0}
-            onCollapse={() => {}}
-            onExpand={() => {}}
+            onCollapse={() => setLeftCollapsed(true)}
+            onExpand={() => setLeftCollapsed(false)}
             className="bg-surface-base"
           >
             <div className="h-full flex flex-col border-r border-border-default">
@@ -933,8 +991,8 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
               </div>
 
               {/* 内容区 + Git 面板 */}
-              <PanelGroup direction="vertical" className="flex-1">
-                <Panel defaultSize={62} minSize={30}>
+              <PanelGroup direction="vertical" className="flex-1" autoSaveId="code-left-vertical">
+                <Panel id="code-left-tree" order={1} defaultSize={62} minSize={30}>
                   <div className="h-full overflow-hidden">
                     <ErrorBoundary name={leftPanel === 'files' ? 'FileTree' : 'HardwareStore'} inline>
                       {leftPanel === 'files' ? <FileTree /> : <HardwareStore />}
@@ -942,7 +1000,7 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
                   </div>
                 </Panel>
                 <PanelResizeHandle className="h-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
-                <Panel defaultSize={38} minSize={15}>
+                <Panel id="code-left-git" order={2} defaultSize={38} minSize={15}>
                   <div className="h-full">
                     <ErrorBoundary name="GitPanel" inline>
                       <GitPanel />
@@ -957,11 +1015,11 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
           <PanelResizeHandle className="w-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
 
           {/* ===== 中部区域 ===== */}
-          <Panel defaultSize={55} minSize={25}>
+          <Panel id="code-center" order={2} defaultSize={55} minSize={25}>
             <div className="h-full flex flex-col">
               {/* 编辑器 + 底部面板垂直分割 */}
-              <PanelGroup direction="vertical">
-                <Panel defaultSize={70} minSize={30}>
+              <PanelGroup direction="vertical" autoSaveId="code-center-vertical">
+                <Panel id="code-editor" order={1} defaultSize={70} minSize={30}>
                   <div className="h-full bg-surface-root">
                     <ErrorBoundary name="CodeEditor" inline>
                       <CodeEditor />
@@ -972,6 +1030,8 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
                 <PanelResizeHandle className="h-1 bg-border-default hover:bg-accent/40 transition-colors data-[resize-handle-active]:bg-accent" />
 
                 <Panel
+                  id="code-bottom"
+                  order={2}
                   ref={bottomPanelRef}
                   defaultSize={30}
                   minSize={10}
@@ -1047,14 +1107,16 @@ const { idfStatus, settings, detectIDF } = useSettingsStore();
 
           {/* ===== 右侧面板 - 聊天 ===== */}
           <Panel
+            id="code-right-chat"
+            order={3}
             ref={rightPanelRef}
             defaultSize={26}
             minSize={15}
             maxSize={45}
             collapsible
             collapsedSize={0}
-            onCollapse={() => {}}
-            onExpand={() => {}}
+            onCollapse={() => setRightCollapsed(true)}
+            onExpand={() => setRightCollapsed(false)}
             className="bg-surface-base"
           >
             <div className="h-full border-l border-border-default">

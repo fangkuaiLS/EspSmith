@@ -125,6 +125,20 @@ impl AIProvider for CodeWhaleProvider {
         {
             cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
+
+        // codewhale 主二进制运行时会寻找 companion codewhale-tui 二进制。
+        // 我们的二进制文件名带平台后缀（codewhale-tui-windows-x64.exe），
+        // 需要通过 DEEPSEEK_TUI_BIN 环境变量显式指向它。
+        let tui_name = if cfg!(windows) {
+            "codewhale-tui-windows-x64.exe"
+        } else {
+            "codewhale-tui"
+        };
+        let tui_path = binary.with_file_name(tui_name);
+        if tui_path.exists() {
+            cmd.env("DEEPSEEK_TUI_BIN", &tui_path);
+        }
+
         cmd.args([
             "--model",
             &config.model,

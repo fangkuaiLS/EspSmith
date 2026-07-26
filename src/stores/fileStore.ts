@@ -35,6 +35,8 @@ interface FileState {
   /** 关闭并重新打开指定路径的文件（用于外部修改后刷新） */
   reloadFileByPath: (filePath: string) => Promise<void>;
   setActiveTab: (id: string) => void;
+  /** 拖拽排序：将 fromId 标签移动到 toId 标签的位置 */
+  moveTab: (fromId: string, toId: string) => void;
   updateTabContent: (id: string, content: string) => void;
   saveFile: (id: string, safeMode?: boolean) => Promise<void>;
   refreshOpenTabs: () => Promise<void>;
@@ -126,6 +128,19 @@ export const useFileStore = create<FileState>((set, get) => ({
 
   setActiveTab: (id) => {
     set({ activeTabId: id });
+  },
+
+  moveTab: (fromId, toId) => {
+    if (fromId === toId) return;
+    set((state) => {
+      const fromIdx = state.tabs.findIndex((t) => t.id === fromId);
+      const toIdx = state.tabs.findIndex((t) => t.id === toId);
+      if (fromIdx === -1 || toIdx === -1) return state;
+      const newTabs = [...state.tabs];
+      const [moved] = newTabs.splice(fromIdx, 1);
+      newTabs.splice(toIdx, 0, moved);
+      return { tabs: newTabs };
+    });
   },
 
   updateTabContent: (id, content) => {

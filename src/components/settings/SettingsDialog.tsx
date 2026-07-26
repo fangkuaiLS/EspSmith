@@ -457,7 +457,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   {mimoStatus === 'missing' && (
                     <div className="mt-3">
                       <p className="text-[12px] text-text-tertiary mb-2">
-                        {t('settings.mimoInstallHint')} <code className="px-1 py-0.5 bg-surface-overlay rounded text-[11px] font-mono">npm install -g @xiaomi/mimocode</code>
+                        {t('settings.mimoInstallHint')} <code className="px-1 py-0.5 bg-surface-overlay rounded text-[11px] font-mono">npm install -g @mimo-ai/cli</code>
                       </p>
                     </div>
                   )}

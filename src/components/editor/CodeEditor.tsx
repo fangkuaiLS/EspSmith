@@ -8,7 +8,7 @@
  * - 文件修改状态指示
  */
 
-import { useRef, useCallback, useEffect, memo } from 'react';
+import { useRef, useCallback, useEffect, memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Editor, { OnMount, Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
@@ -46,6 +46,16 @@ const ESP32_THEME = {
     'editor.inactiveSelectionBackground': '#3e3e4a',
     'editorWidget.background': '#1a1a1e',
     'editorWidget.border': '#2e2e38',
+    // 查找高亮 — 当前匹配项（醒目橙色）
+    'editor.findMatchBackground': '#ea580c80',
+    'editor.findMatchHighlightBackground': '#ea580c40',
+    'editor.currentFindMatchBackground': '#ea580c',
+    // 查找范围高亮
+    'editor.findRangeHighlightBackground': '#3b82f630',
+    // 查找控件边框，使查找框在深色背景上更清晰
+    'editorWidget.resizeBorder': '#3e3e4a',
+    // 概览标尺中的查找匹配标记
+    'editorOverviewRuler.findMatchForeground': '#ea580cc0',
   },
 };
 
@@ -111,17 +121,56 @@ interface TabBarProps {
   activeTabId: string | null;
   onTabClick: (id: string) => void;
   onTabClose: (id: string) => void;
+  onTabReorder?: (fromId: string, toId: string) => void;
 }
 
-function TabBar({ tabs, activeTabId, onTabClick, onTabClose }: TabBarProps) {
+function TabBar({ tabs, activeTabId, onTabClick, onTabClose, onTabReorder }: TabBarProps) {
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+
   return (
     <div className="flex h-9 bg-surface-elevated border-b border-border-default overflow-x-auto scrollbar-hidden">
       {tabs.map((tab) => {
         const Icon = getTabIcon(tab.name);
         const isActive = tab.id === activeTabId;
+        const isDragOver = dragOverTabId === tab.id && draggedTabId !== tab.id;
         return (
           <div
             key={tab.id}
+            draggable={!!onTabReorder}
+            onDragStart={(e) => {
+              if (!onTabReorder) return;
+              setDraggedTabId(tab.id);
+              e.dataTransfer.effectAllowed = 'move';
+              // 透明拖拽影像，避免默认元素闪烁
+              const empty = document.createElement('div');
+              e.dataTransfer.setDragImage(empty, 0, 0);
+            }}
+            onDragEnd={() => {
+              setDraggedTabId(null);
+              setDragOverTabId(null);
+            }}
+            onDragOver={(e) => {
+              if (!onTabReorder || !draggedTabId) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              if (dragOverTabId !== tab.id) setDragOverTabId(tab.id);
+            }}
+            onDragLeave={(e) => {
+              // 仅当离开整个 tab 元素时清除，避免子元素切换闪烁
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                if (dragOverTabId === tab.id) setDragOverTabId(null);
+              }
+            }}
+            onDrop={(e) => {
+              if (!onTabReorder || !draggedTabId) return;
+              e.preventDefault();
+              if (draggedTabId !== tab.id) {
+                onTabReorder(draggedTabId, tab.id);
+              }
+              setDraggedTabId(null);
+              setDragOverTabId(null);
+            }}
             className={`
               group flex items-center gap-1.5 pl-3 pr-2 h-full cursor-pointer border-r border-border-subtle shrink-0
               transition-all duration-150 select-none
@@ -131,6 +180,8 @@ function TabBar({ tabs, activeTabId, onTabClick, onTabClose }: TabBarProps) {
                   ? 'bg-surface-elevated text-error border-t-2 border-t-transparent'
                   : 'bg-surface-elevated text-text-tertiary hover:bg-surface-hover hover:text-text-secondary border-t-2 border-t-transparent'
               }
+              ${draggedTabId === tab.id ? 'opacity-40' : ''}
+              ${isDragOver ? 'border-l-2 border-l-accent' : ''}
             `}
             onClick={() => onTabClick(tab.id)}
           >
@@ -160,7 +211,7 @@ function TabBar({ tabs, activeTabId, onTabClick, onTabClose }: TabBarProps) {
 function CodeEditor() {
   const { t } = useTranslation();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
-  const { tabs, activeTabId, setActiveTab, closeTab, updateTabContent, saveFile, updateCursorPosition, updateEditorLanguage } = useFileStore();
+  const { tabs, activeTabId, setActiveTab, closeTab, moveTab, updateTabContent, saveFile, updateCursorPosition, updateEditorLanguage } = useFileStore();
 
   const handleBeforeMount = (monaco: Monaco) => {
     // 主题已在模块级别注册，此处注册补全提供者
@@ -259,6 +310,7 @@ function CodeEditor() {
         activeTabId={activeTabId}
         onTabClick={setActiveTab}
         onTabClose={handleCloseTab}
+        onTabReorder={moveTab}
       />
 
       {/* Editor */}
@@ -277,10 +329,15 @@ function CodeEditor() {
               fontSize: 13,
               lineHeight: 20,
               fontFamily: 'JetBrains Mono, Cascadia Code, Fira Code, Consolas, monospace',
-              minimap: { enabled: true, scale: 1, showSlider: 'mouseover' },
+              fontLigatures: true,
+              letterSpacing: 0,
+              minimap: { enabled: true, scale: 1, showSlider: 'mouseover', renderCharacters: false },
               lineNumbers: 'on',
               renderWhitespace: 'selection',
+              renderLineHighlight: 'all',
+              roundedSelection: true,
               bracketPairColorization: { enabled: true },
+              guides: { indentation: true, bracketPairs: true, highlightActiveIndentation: true },
               automaticLayout: true,
               scrollBeyondLastLine: false,
               wordWrap: 'off',
@@ -289,10 +346,34 @@ function CodeEditor() {
               smoothScrolling: true,
               cursorBlinking: 'smooth',
               cursorSmoothCaretAnimation: 'on',
-              padding: { top: 8, bottom: 8 },
+              cursorWidth: 2,
+              padding: { top: 12, bottom: 12 },
               glyphMargin: false,
               folding: true,
-              lineDecorationsWidth: 8,
+              lineDecorationsWidth: 12,
+              lineNumbersMinChars: 3,
+              scrollbar: {
+                verticalScrollbarSize: 12,
+                horizontalScrollbarSize: 12,
+                useShadows: false,
+                vertical: 'auto',
+                horizontal: 'auto',
+              },
+              stickyScroll: { enabled: true, maxLineCount: 5 },
+              contextmenu: true,
+              mouseWheelZoom: true,
+              multiCursorModifier: 'ctrlCmd',
+              matchBrackets: 'always',
+              autoClosingBrackets: 'always',
+              autoClosingQuotes: 'always',
+              autoSurround: 'languageDefined',
+              linkedEditing: true,
+              formatOnPaste: true,
+              suggestOnTriggerCharacters: true,
+              acceptSuggestionOnEnter: 'on',
+              tabCompletion: 'on',
+              wordBasedSuggestions: 'currentDocument',
+              renderControlCharacters: false,
             }}
             loading={
               <div className="h-full flex items-center justify-center bg-surface-root">

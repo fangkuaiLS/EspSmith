@@ -278,3 +278,35 @@ select option {
   color: var(--color-text-primary);
   padding: 4px 8px;
 }
+
+/* ============================================
+   Monaco Editor — 恢复被 Tailwind preflight 重置的样式
+   ============================================
+   Tailwind v4 preflight 对所有 button/input 施加 background-image:none、
+   border-width:0、background-color:transparent，导致 Monaco 内置查找控件
+   (find-widget) 的按钮图标和边框消失、输入框样式异常。
+   Monaco 的按钮图标通过 ::before/::after 伪元素的 background-image（sprite）渲染，
+   preflight 也会重置伪元素。需要全面恢复。
+   */
+
+.monaco-editor button,
+.monaco-editor button::before,
+.monaco-editor button::after {
+  background-image: initial;
+  background-color: initial;
+  border-width: initial;
+  border-style: initial;
+  margin: initial;
+  padding: initial;
+  cursor: initial;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.monaco-editor input,
+.monaco-editor textarea {
+  background-image: initial;
+  border-width: initial;
+  border-style: initial;
+}

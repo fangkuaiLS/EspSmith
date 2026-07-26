@@ -29,7 +29,13 @@
     "eraseFlash": "擦除 Flash",
     "buildFlashMonitor": "一键编译烧录监视",
     "newProject": "新建项目",
-    "settings": "设置"
+    "settings": "设置",
+    "showLeftPanel": "显示左侧栏",
+    "hideLeftPanel": "隐藏左侧栏",
+    "showBottomPanel": "显示底部面板",
+    "hideBottomPanel": "隐藏底部面板",
+    "showRightPanel": "显示右侧面板",
+    "hideRightPanel": "隐藏右侧面板"
   },
   "statusBar": {
     "building": "编译中...",
@@ -147,11 +153,11 @@
   "chat": {
     "aiAssistant": "AI 助手",
     "ready": "就绪",
-    "thinking": "思考中",
+    "thinkingLabel": "思考中",
     "building": "构建中",
     "flashing": "烧录中",
     "toolCall": "工具调用",
-    "error": "错误",
+    "errorLabel": "错误",
     "stop": "停止",
     "start": "启动",
     "send": "发送",

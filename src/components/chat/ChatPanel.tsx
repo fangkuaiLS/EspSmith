@@ -43,11 +43,11 @@ function resolveFilePath(input: Record<string, unknown> | undefined): string | n
 
 const STATUS_CONFIG: Record<AIStatus, { labelKey: string; dotClass: string }> = {
   idle: { labelKey: 'chat.ready', dotClass: 'bg-success' },
-  thinking: { labelKey: 'chat.thinking', dotClass: 'bg-warning animate-pulse-dot' },
+  thinking: { labelKey: 'chat.thinkingLabel', dotClass: 'bg-warning animate-pulse-dot' },
   building: { labelKey: 'chat.building', dotClass: 'bg-info animate-pulse-dot' },
   flashing: { labelKey: 'chat.flashing', dotClass: 'bg-warning animate-pulse-dot' },
   tool_call: { labelKey: 'chat.toolCall', dotClass: 'bg-accent animate-pulse-dot' },
-  error: { labelKey: 'chat.error', dotClass: 'bg-error' },
+  error: { labelKey: 'chat.errorLabel', dotClass: 'bg-error' },
 };
 
 
@@ -1178,12 +1178,9 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
   const [localCopied, setLocalCopied] = useState(false);
   const [userCopied, setUserCopied] = useState(false);
   const [toolMsgCopied, setToolMsgCopied] = useState(false);
-  const [thinkingExpanded, setThinkingExpanded] = useState(false);
-  const [thinkingCopied, setThinkingCopied] = useState(false);
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isTool = !!message.toolData;
-  const hasThinking = !!message.thinkingContent;
 
   // 工具调用消息 - 可折叠
   if (isTool) {
@@ -1346,37 +1343,6 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
 
         {/* 内容区 */}
         <div className={`min-w-0 ${isUser ? 'items-end' : 'items-start'}`}>
-        {/* Thinking / Reasoning Block — 可折叠展示 AI 推理过程 */}
-        {hasThinking && !isUser && (
-          <div className="mb-2">
-            <button
-              onClick={() => setThinkingExpanded(!thinkingExpanded)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-text-tertiary hover:text-text-secondary hover:bg-surface-hover transition-all group/think w-full"
-            >
-              <Brain size={12} className="text-accent/70 shrink-0" />
-              <span className="font-medium">{t('chat.thinking.process')}</span>
-              <span className="text-text-disabled ml-1">{t('chat.thinking.charCount', { n: message.thinkingContent!.length > 0 ? Math.round(message.thinkingContent!.length / 2) : '...' })}</span>
-              {thinkingExpanded
-                ? <ChevronDown size={12} className="ml-auto shrink-0" />
-                : <ChevronRight size={12} className="ml-auto shrink-0" />
-              }
-              <button
-                onClick={(e) => { e.stopPropagation(); doCopy(message.thinkingContent!, setThinkingCopied); }}
-                className="opacity-0 group-hover/think:opacity-100 transition-opacity shrink-0"
-                title={t('chat.thinking.copy')}
-              >
-                {thinkingCopied ? <Check size={10} className="text-success" /> : <Copy size={10} />}
-              </button>
-            </button>
-            {thinkingExpanded && (
-              <div className="mt-1 mx-3 px-3 py-2.5 bg-[var(--color-thinking-bg,#1a1625)] border border-border-subtle rounded-lg text-[12px] text-text-tertiary leading-relaxed max-h-[300px] overflow-y-auto">
-                <div className="[&_p]:mb-2 [&_p:last-of-type]:mb-0 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 whitespace-pre-wrap">
-                  {message.thinkingContent}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
         <div className={`px-4 py-2.5 text-[13px] leading-relaxed ${
           isUser
             ? 'bg-accent text-white rounded-2xl rounded-tr-sm'
@@ -1446,18 +1412,18 @@ function CodeBlock({ language, code, content, onApply }: { language: string; cod
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-subtle">
         <div className="flex items-center gap-1.5">
           <Code size={11} className="text-text-tertiary" />
-          <span className="text-[10px] text-text-tertiary uppercase">{language}</span>
+          <span className="text-[11px] text-text-tertiary uppercase tracking-wider">{language}</span>
         </div>
         <div className="flex items-center gap-1">
           <button
-            className="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-primary transition-colors"
+            className="flex items-center gap-1 text-[11px] text-text-tertiary hover:text-text-primary transition-colors"
             onClick={handleCopy}
           >
             {copyOk ? <Check size={12} className="text-success" /> : <Copy size={12} />}
             <span>{copyOk ? t('common.copied') : t('common.copy')}</span>
           </button>
           <button
-            className="flex items-center gap-1 px-2 py-0.5 text-[10px] bg-accent text-white rounded hover:bg-accent-hover transition-colors"
+            className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-accent text-white rounded hover:bg-accent-hover transition-colors"
             onClick={handleApply}
           >
             {t('chat.codeBlock.apply')}
@@ -1468,7 +1434,41 @@ function CodeBlock({ language, code, content, onApply }: { language: string; cod
         style={oneDark}
         language={language}
         PreTag="div"
-        customStyle={{ margin: 0, background: 'transparent', padding: '0.75rem', fontSize: '12px', lineHeight: '1.6' }}
+        showLineNumbers
+        startingLineNumber={1}
+        wrapLongLines={false}
+        lineNumberStyle={{
+          color: '#52525b',
+          fontSize: '12px',
+          paddingRight: '1.25em',
+          minWidth: '2.5em',
+          userSelect: 'none',
+          float: 'left',
+        }}
+        customStyle={{
+          margin: 0,
+          background: 'transparent',
+          padding: '12px 16px',
+          fontSize: '13px',
+          lineHeight: '1.65',
+          fontFamily: 'var(--font-mono)',
+          letterSpacing: '0.1px',
+          tabSize: 4,
+          MozTabSize: 4,
+          overflowX: 'auto',
+        }}
+        codeTagProps={{
+          style: {
+            fontFamily: 'var(--font-mono)',
+            fontSize: '13px',
+            lineHeight: '1.65',
+            letterSpacing: '0.1px',
+            tabSize: 4,
+            MozTabSize: 4,
+            display: 'inline-block',
+            whiteSpace: 'pre',
+          },
+        }}
       >
         {code}
       </SyntaxHighlighter>

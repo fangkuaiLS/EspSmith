@@ -233,11 +233,42 @@ pub async fn save_project_config(
         meta["flash_port"] = serde_json::json!(p);
     }
 
-    std::fs::write(
-        &meta_path,
-        serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("Failed to write project.json: {}", e))?;
+    let content = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
+
+    // 原子写入：先写临时文件，再重命名，避免杀毒软件/编辑器占用导致的 os error 5
+    // 参考 ai_assistant.rs 中 AGENTS.md 的写入策略
+    let tmp_path = meta_path.with_extension("json.tmp");
+    match std::fs::write(&tmp_path, &content) {
+        Ok(()) => {
+            if let Err(e) = std::fs::rename(&tmp_path, &meta_path) {
+                let _ = std::fs::remove_file(&tmp_path);
+                info!("[project.json] rename failed ({}), trying direct write", e);
+                if let Err(e2) = std::fs::write(&meta_path, &content) {
+                    return Err(format!(
+                        "Failed to write project.json to {} (rename err: {}, direct write err: {})",
+                        meta_path.display(),
+                        e,
+                        e2
+                    ));
+                }
+            }
+        }
+        Err(e) => {
+            info!(
+                "[project.json] tmp write failed ({}), trying direct write to {}",
+                e,
+                meta_path.display()
+            );
+            if let Err(e2) = std::fs::write(&meta_path, &content) {
+                return Err(format!(
+                    "Failed to write project.json to {} (tmp err: {}, direct err: {})",
+                    meta_path.display(),
+                    e,
+                    e2
+                ));
+            }
+        }
+    }
 
     // 同步到 AI 后端 — 使用显示名称格式（与前端下拉框一致）
     if let Some(t) = target {

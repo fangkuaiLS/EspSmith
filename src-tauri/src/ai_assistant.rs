@@ -582,11 +582,13 @@ pub async fn ai_send_message(
     let provider_name = provider.display_name();
 
     if enable_tool_use {
-        ensure_project_agent_instructions(
+        if let Err(e) = ensure_project_agent_instructions(
             project_path.as_deref(),
             idf_path.as_deref(),
             &provider_kind,
-        )?;
+        ) {
+            info!("[ai_send_message] AGENTS.md regeneration failed (non-fatal): {}", e);
+        }
     }
 
     // 初始化经验库
@@ -1694,7 +1696,7 @@ fn build_short_agent_prompt(
             chip = resolved_chip
         );
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
+            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n\n重要: 以下命令仅在用户明确要求编译/烧录/验证，或你修改了代码需要验证时才使用。对于问候、提问、咨询等简单对话，直接回复即可，不要执行任何命令。\n\n[可用命令 - 按需使用]\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
             shell=shell_cmd, cli=cli_exe, msg=user_message,
             build_cmd=build_cmd, closed_loop_cmd=closed_loop_cmd, jtag_check_cmd=jtag_check_cmd,
             openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd,
@@ -1709,7 +1711,7 @@ fn build_short_agent_prompt(
             ipc = ipc_addr_arg
         );
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
+            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n\n重要: 以下命令仅在用户明确要求编译/烧录/验证，或你修改了代码需要验证时才使用。对于问候、提问、咨询等简单对话，直接回复即可，不要执行任何命令。\n\n[可用命令 - 按需使用]\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
             shell=shell_cmd, cli=cli_exe, msg=user_message,
             build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, closed_loop_cmd=uart_closed_loop_cmd,
         ))
@@ -2127,9 +2129,11 @@ fn ensure_project_agent_instructions(
 - {file_tools} 仅限项目目录内使用
 {edit_desc}
 
-## 构建/烧录/监控命令（通过 {shell_tool} 执行）
+## 构建/烧录/监控命令（通过 {shell_tool} 执行，按需使用）
 
-**工作流**：直接执行 `espsmith-cli.exe build` 编译项目。不要携带 `--target` 参数，因为 set-target 会触发完全重配置非常慢。仅在用户明确要求切换芯片型号时才使用 `--target`。**必须使用 `espsmith-cli.exe`（控制台版本），不要使用 `espsmith.exe`（GUI版本无法输出到管道）。**
+**重要: 以下命令仅在需要编译/烧录/验证时使用。对于问候、提问、咨询等简单对话，直接回复，不要执行任何命令。**
+
+**编译说明**：需要编译时执行 `espsmith-cli.exe build`。不要携带 `--target` 参数，因为 set-target 会触发完全重配置非常慢。仅在用户明确要求切换芯片型号时才使用 `--target`。**必须使用 `espsmith-cli.exe`（控制台版本），不要使用 `espsmith.exe`（GUI版本无法输出到管道）。**
 
 | 命令 | 说明 |
 |------|------|
@@ -2146,7 +2150,9 @@ fn ensure_project_agent_instructions(
 | `espsmith-cli.exe detect-connection [--port <串口>]` | 检测JTAG vs UART连接模式 |
 | `espsmith-cli.exe get-connection-mode` | 获取缓存的连接模式 |
 
-## 闭环工作流（必须按此顺序执行）
+## 闭环工作流（仅在用户要求修改代码或验证时执行）
+
+**重要: 对于问候、提问、咨询等简单对话，直接回复即可，不要执行编译/烧录/验证命令。只有当用户明确要求修改代码、编译、烧录或验证时，才按以下工作流执行。**
 
 1. **检查项目** — 用 {file_tools} 了解现有代码
 2. **编辑代码** — 用 {edit_tool} 修改源文件
@@ -2318,17 +2324,46 @@ fn ensure_project_agent_instructions(
     // 仅在内容变更时写入，避免不必要的文件 I/O
     if updated != existing {
         info!(
-            "[AGENTS.md] content changed, writing to {}",
-            agents_path.display()
+            "[AGENTS.md] content changed, writing to {} (content len={})",
+            agents_path.display(),
+            updated.len()
         );
         // 原子写入：先写临时文件，再重命名，避免编辑器标签页打开时的文件锁定问题
         let tmp_path = agents_path.with_extension("md.tmp");
-        std::fs::write(&tmp_path, &updated).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp_path, &agents_path).map_err(|e| {
-            // 如果 rename 失败，尝试清理临时文件
-            let _ = std::fs::remove_file(&tmp_path);
-            format!("Failed to atomically replace AGENTS.md: {}", e)
-        })?;
+        match std::fs::write(&tmp_path, &updated) {
+            Ok(()) => {
+                if let Err(e) = std::fs::rename(&tmp_path, &agents_path) {
+                    // rename 失败，尝试清理临时文件
+                    let _ = std::fs::remove_file(&tmp_path);
+                    // 后备：直接写入目标文件
+                    info!("[AGENTS.md] rename failed ({}), trying direct write", e);
+                    if let Err(e2) = std::fs::write(&agents_path, &updated) {
+                        return Err(format!(
+                            "Failed to write AGENTS.md to {} (rename err: {}, direct write err: {})",
+                            agents_path.display(),
+                            e,
+                            e2
+                        ));
+                    }
+                }
+            }
+            Err(e) => {
+                // 临时文件写入失败，尝试直接写入目标文件
+                info!(
+                    "[AGENTS.md] tmp write failed ({}), trying direct write to {}",
+                    e,
+                    agents_path.display()
+                );
+                if let Err(e2) = std::fs::write(&agents_path, &updated) {
+                    return Err(format!(
+                        "Failed to write AGENTS.md to {} (tmp err: {}, direct err: {})",
+                        agents_path.display(),
+                        e,
+                        e2
+                    ));
+                }
+            }
+        }
     } else {
         info!(
             "[AGENTS.md] content unchanged, skipping write (shell_tool='{}')",
@@ -2502,13 +2537,13 @@ pub fn init_bundled_codewhale(resource_dir: &Path) {
     let candidates: Vec<PathBuf> = vec![
         // 开发模式：源码目录下的 binaries/
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"),
-        // 生产模式：Tauri 资源目录（MSI/NSIS 都将 codewhale.exe 平铺到根目录）
+        // 生产模式：Tauri 资源目录（MSI/NSIS 都将 codewhale-windows-x64.exe 平铺到根目录）
         resource_dir.to_path_buf(),
     ];
 
     for dir in &candidates {
         let exe = if cfg!(windows) {
-            dir.join("codewhale.exe")
+            dir.join("codewhale-windows-x64.exe")
         } else {
             dir.join("codewhale")
         };
@@ -2542,7 +2577,7 @@ pub fn get_local_codewhale_binary() -> PathBuf {
 pub fn get_bundled_codewhale_binary() -> Option<PathBuf> {
     BUNDLED_CODEWHALE_DIR.get().map(|dir| {
         if cfg!(windows) {
-            dir.join("codewhale.exe")
+            dir.join("codewhale-windows-x64.exe")
         } else {
             dir.join("codewhale")
         }
@@ -2572,32 +2607,92 @@ pub fn which_cmd(cmd: &str) -> Option<PathBuf> {
 
     let result = _which_cmd_uncached(cmd);
 
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(cmd.to_string(), result.clone());
+    // 仅缓存命中结果，失败时不缓存
+    // 原因：用户可能在应用启动后安装新工具（如 npm install -g @mimo-ai/cli），
+    // 若失败也缓存，会永久返回 None 直到应用重启，影响用户体验。
+    if let Some(ref path) = result {
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(cmd.to_string(), Some(path.clone()));
+        }
     }
 
     result
 }
 
+/// 清除 which_cmd 的缓存（用于用户手动触发重新检测）
+pub fn invalidate_which_cache() {
+    use std::sync::Mutex;
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, Option<PathBuf>>>> =
+        OnceLock::new();
+    if let Some(cache) = CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            guard.clear();
+        }
+    }
+}
+
 fn _which_cmd_uncached(cmd: &str) -> Option<PathBuf> {
     if cfg!(windows) {
+        // 1) 先用 `where` 命令按 PATH 查找（覆盖标准安装路径）
         let mut c = std::process::Command::new("where");
         c.arg(cmd);
         #[cfg(windows)]
         {
             c.creation_flags(CREATE_NO_WINDOW);
         }
-        let output = c.output().ok()?;
-        if output.status.success() {
-            let paths: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(|s| PathBuf::from(s.trim()))
-                .filter(|p| p.is_file() && has_executable_extension(p))
-                .collect();
-            paths.into_iter().next()
-        } else {
-            None
+        if let Ok(output) = c.output() {
+            if output.status.success() {
+                let paths: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(|s| PathBuf::from(s.trim()))
+                    .filter(|p| p.is_file() && has_executable_extension(p))
+                    .collect();
+                if let Some(p) = paths.into_iter().next() {
+                    return Some(p);
+                }
+            }
         }
+
+        // 2) 回退：在常见 Node.js 安装目录中直接探测
+        // 应对 Tauri GUI 进程 PATH 未继承用户级 PATH 的情况
+        let candidates: Vec<PathBuf> = {
+            let mut v = Vec::new();
+            if let Ok(p) = std::env::var("ProgramFiles") {
+                v.push(PathBuf::from(&p).join("nodejs"));
+            }
+            if let Ok(p) = std::env::var("APPDATA") {
+                v.push(PathBuf::from(&p).join("npm"));
+            }
+            if let Ok(p) = std::env::var("LOCALAPPDATA") {
+                v.push(PathBuf::from(&p).join("npm"));
+            }
+            // 直接读 PATH 并查找包含 nodejs 的目录
+            if let Ok(path_var) = std::env::var("PATH") {
+                for entry in path_var.split(';') {
+                    let entry = entry.trim();
+                    if entry.is_empty() { continue; }
+                    let pb = PathBuf::from(entry);
+                    // 显式加入 PATH 中所有目录（避免 where 命令的行为差异）
+                    v.push(pb);
+                }
+            }
+            v
+        };
+
+        for dir in candidates {
+            for ext in &["cmd", "bat", "exe", "ps1"] {
+                let full = dir.join(format!("{}.{}", cmd, ext));
+                if full.is_file() {
+                    return Some(full);
+                }
+            }
+            // 不带扩展名
+            let bare = dir.join(cmd);
+            if bare.is_file() && has_executable_extension(&bare) {
+                return Some(bare);
+            }
+        }
+        None
     } else {
         let mut c = std::process::Command::new("which");
         c.arg(cmd);
@@ -2640,6 +2735,8 @@ pub async fn check_codewhale_status() -> Result<String, String> {
 /// 检查 MiMo-Code 安装状态
 #[tauri::command]
 pub async fn check_mimo_status() -> Result<String, String> {
+    // 用户可能在应用启动后才安装 mimo，每次查询状态都先清除缓存强制重新查找
+    invalidate_which_cache();
     let provider = crate::ai_provider::MiMoCodeProvider;
     Ok(provider.check_status())
 }
@@ -2647,6 +2744,8 @@ pub async fn check_mimo_status() -> Result<String, String> {
 /// 根据 ai_provider 检查对应 AI 后端的安装状态
 #[tauri::command]
 pub async fn check_ai_backend_status(ai_provider: String) -> Result<serde_json::Value, String> {
+    // 同 check_mimo_status，清除缓存以反映最新安装状态
+    invalidate_which_cache();
     let kind = crate::ai_provider::ProviderKind::from_str(&ai_provider);
     let (codewhale, mimo) = match kind {
         crate::ai_provider::ProviderKind::CodeWhale => {
