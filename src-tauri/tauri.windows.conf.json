@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "scripts/kconfig_dump.py": "scripts/",
+      "binaries/codewhale-windows-x64.exe": "binaries/",
+      "binaries/codewhale-tui-windows-x64.exe": "binaries/"
+    }
+  }
+}
