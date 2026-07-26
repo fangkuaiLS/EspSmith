@@ -69,6 +69,9 @@ jobs:
             src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
 
+      - name: Setup bundled binaries
+        run: npm run setup:binaries
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:

@@ -91,6 +91,9 @@ jobs:
             src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
 
+      - name: Setup bundled binaries
+        run: npm run setup:binaries
+
       - name: Check Rust compilation
         run: cargo check --manifest-path src-tauri/Cargo.toml --lib --bins
 
