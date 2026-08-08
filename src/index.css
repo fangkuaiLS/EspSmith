@@ -257,6 +257,26 @@ html, body, #root {
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* 块级流式渲染：每个 Markdown 块独立进场，营造"一段一段长出来"的节奏感 */
+@keyframes blockIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@utility animate-block-in {
+  animation: blockIn 0.3s var(--ease-out-expo);
+}
+
+/* 流式光标：进行中的尾块末尾闪烁竖线，表示"正在生成" */
+@keyframes caretBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@utility animate-caret-blink {
+  animation: caretBlink 1s steps(1) infinite;
+}
+
 /* ============================================
    Focus & Selection
    ============================================ */

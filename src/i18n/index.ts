@@ -41,7 +41,8 @@ export function translateBackendString(str: string): string {
   const content = str.slice(5);
   const pipeIdx = content.indexOf("|");
   if (pipeIdx < 0) {
-    return i18n.t(content);
+    const result = i18n.t(content, { returnObjects: true });
+    return typeof result === "string" ? result : str;
   }
   const key = content.slice(0, pipeIdx);
   const params: Record<string, string> = {};
@@ -60,7 +61,8 @@ export function translateBackendString(str: string): string {
       remaining = remaining.slice(nextPipe + 1);
     }
   }
-  return i18n.t(key, params);
+  const result = i18n.t(key, { returnObjects: true, ...params });
+  return typeof result === "string" ? result : str;
 }
 
 export default i18n;

@@ -85,6 +85,8 @@ export interface ChatMessage {
     usage?: { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number; costRmb: number };
     /** AI 推理/思考过程内容（独立于正式回复，可折叠展示） */
     thinkingContent?: string;
+    /** 标记为工具调用间的过程叙述（淡色步骤流渲染，非正文回复） */
+    isNarration?: boolean;
 }
 
 export interface RollbackInfo {
@@ -327,6 +329,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             unlistenToolUse = await listen<{ name: string; id: string; input: unknown }>('ai-tool-use', (event) => {
                 if (signal.aborted) return;
                 const toolName = normalizeToolName(event.payload.name);
+                // 把当前 main assistant 的 content 截断为 narration 段（淡色步骤流渲染）。
+                // 这样工具调用间的过程叙述不会和最终回复混成一坨，渲染时穿插在工具卡片之间。
+                set((state) => {
+                    const msgs = [...state.messages];
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                        if (msgs[i].role === 'assistant' && !msgs[i].isNarration) {
+                            if (msgs[i].content.trim()) {
+                                msgs[i] = { ...msgs[i], isNarration: true };
+                            }
+                            break;
+                        }
+                    }
+                    return { messages: msgs };
+                });
                 // 根据工具类型设置不同状态，显示内联 UI 提示
                 if (toolName === 'build_project' || toolName === 'build_flash_monitor' || toolName === 'closed_loop') {
                     updateStatus('building');
@@ -649,10 +665,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             // Search backwards — tool messages may be inserted after the assistant message
             for (let i = messages.length - 1; i >= 0; i--) {
                 if (messages[i].role === 'assistant') {
-                    messages[i] = {
-                        ...messages[i],
-                        content: messages[i].content + chunk,
-                    };
+                    // 当前最后一条 assistant 是已完成的 narration 段（工具调用前截断的）
+                    // 创建新的 main assistant 容纳下一段叙述/最终回复，避免混入 narration
+                    if (messages[i].isNarration) {
+                        messages.push({
+                            id: `asst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                            role: 'assistant',
+                            content: chunk,
+                            timestamp: Date.now(),
+                        });
+                    } else {
+                        messages[i] = {
+                            ...messages[i],
+                            content: messages[i].content + chunk,
+                        };
+                    }
                     break;
                 }
             }

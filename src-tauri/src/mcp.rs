@@ -644,7 +644,7 @@ impl MCPServer {
             let wait = crate::commands::serial::ring_wait_for_output(monitor_ms.min(30_000), 40);
             wait.text
         } else {
-            match read_serial_once(port, baudrate, monitor_ms) {
+            match read_serial_once(port, baudrate, monitor_ms, true) {
                 Ok(o) => o,
                 Err(e) => return err(e),
             }
@@ -921,7 +921,7 @@ impl MCPServer {
             wait.text
         } else {
             serial_source = "direct_sample";
-            read_serial_once(port, baudrate, monitor_ms).unwrap_or_default()
+            read_serial_once(port, baudrate, monitor_ms, true).unwrap_or_default()
         };
         timeline.push(json!({
             "phase": "serial_captured",
@@ -1002,7 +1002,16 @@ impl MCPServer {
             Err(e) => return err(e),
         };
         let duration_ms = u64_arg(args, "duration_ms").unwrap_or(3000);
-        match read_serial_once(port, baudrate, duration_ms) {
+
+        // JTAG 模式下 OpenOCD 可能仍在运行，占用 USB-JTAG 复合设备端口。
+        // 检测并 kill OpenOCD 释放端口，同时跳过 USB-JTAG 下无效的 DTR/RTS 复位。
+        let openocd_was_running = crate::commands::openocd::is_openocd_running_sync();
+        if openocd_was_running {
+            crate::commands::openocd::kill_openocd_sync();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+
+        match read_serial_once(port, baudrate, duration_ms, !openocd_was_running) {
             Ok(output) => ok(json!({
                 "source": "sample",
                 "port": port,
@@ -1479,6 +1488,21 @@ impl MCPServer {
                         .and_then(|v| v.as_str())
                         .unwrap_or(expected);
 
+                    // JTAG 模式下，OpenOCD 在 flash 后持续运行，仍通过 JTAG 与 CPU 通信，
+                    // 导致 CPU 频繁停顿、UART 输出中断。必须先 kill OpenOCD 让 CPU 自由运行，
+                    // 才能采到 boot 日志。后续的 gdb_session_verify 步骤会通过
+                    // ensure_openocd_running 重启 OpenOCD。
+                    //
+                    // 无论 GUI 串口监视器是否连接都需要 kill：
+                    // - GUI 已连接：kill 后 GUI 读线程才能从 CDC-ACM 串口读到数据（OpenOCD
+                    //   通过 libusb 占用 USB 设备时会阻塞 CDC-ACM 串口读取）
+                    // - GUI 未连接：kill 后才能 serialport::open() 打开端口
+                    if gdb_verify_enabled {
+                        crate::commands::openocd::kill_openocd_sync();
+                        // 等待 USB 设备释放 + CPU 恢复正常运行
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+
                     // 优先从共享 ring buffer 读取（GUI 监视器已连接时零延迟、无端口竞争）
                     let out = if crate::commands::serial::is_serial_open() {
                         // 智能轮询：收到足够字节后仍短暂等待收齐一批，避免截断 boot 序列，
@@ -1490,7 +1514,15 @@ impl MCPServer {
                         .text
                     } else {
                         // 回退：无 GUI 连接，直接开端口采样（兼容 CLI 场景）
-                        match read_serial_once(verify_port, verify_baud, verify_monitor) {
+                        //
+                        // JTAG 模式下不做 DTR/RTS 复位：ESP32-S3 USB-JTAG 的 DTR/RTS
+                        // 不控制 EN 引脚，复位无效。OpenOCD 已通过 `reset run` 复位设备。
+                        match read_serial_once(
+                            verify_port,
+                            verify_baud,
+                            verify_monitor,
+                            !gdb_verify_enabled,
+                        ) {
                             Ok(o) => o,
                             Err(e) => {
                                 return Ok(StepResult::failed(
@@ -2101,7 +2133,12 @@ fn write_mcp_message<W: Write>(writer: &mut W, response: &Value) -> Result<(), S
     writer.flush().map_err(|e| e.to_string())
 }
 
-fn read_serial_once(port: &str, baudrate: u32, duration_ms: u64) -> Result<String, String> {
+fn read_serial_once(
+    port: &str,
+    baudrate: u32,
+    duration_ms: u64,
+    do_reset: bool,
+) -> Result<String, String> {
     let mut serial = serialport::new(port, baudrate)
         .timeout(Duration::from_millis(100))
         .open()
@@ -2111,10 +2148,16 @@ fn read_serial_once(port: &str, baudrate: u32, duration_ms: u64) -> Result<Strin
     // esptool flash 完成后虽会自动复位，但从 flash 结束到此处打开串口之间存在延迟，
     // 可能错过 boot 日志头部。这里再复位一次，保证完整捕获。
     // 序列与 serial_reset_via_dtr_rts 一致：DTR=Low, RTS=High(EN拉低) → 等100ms → RTS=Low(EN拉高)
-    let _ = serial.write_data_terminal_ready(false);
-    let _ = serial.write_request_to_send(true);
-    std::thread::sleep(Duration::from_millis(100));
-    let _ = serial.write_request_to_send(false);
+    //
+    // 注意：仅 UART 模式（CP210x/CH340/FTDI）的 DTR/RTS 控制 EN/BOOT 引脚。
+    // ESP32-S3 USB-JTAG 的 DTR/RTS 不控制 EN 引脚，复位无效——此时 do_reset 应为 false，
+    // 由 OpenOCD 的 reset run 负责复位。
+    if do_reset {
+        let _ = serial.write_data_terminal_ready(false);
+        let _ = serial.write_request_to_send(true);
+        std::thread::sleep(Duration::from_millis(100));
+        let _ = serial.write_request_to_send(false);
+    }
 
     let deadline = Instant::now() + Duration::from_millis(duration_ms);
     let mut output = Vec::new();
@@ -2127,7 +2170,13 @@ fn read_serial_once(port: &str, baudrate: u32, duration_ms: u64) -> Result<Strin
             Err(e) => return Err(e.to_string()),
         }
     }
-    Ok(String::from_utf8_lossy(&output).to_string())
+    let text = String::from_utf8_lossy(&output).to_string();
+    // 将 fallback 采样结果同步到共享 ring buffer（供 AI 后续 serial_tail 读取，
+    // 修复此前 fallback 路径对 ring buffer 不可见的不一致），
+    // 并 emit serial-data 事件让前端（AUTO 模式串口面板）实时看到 AI 采样的设备输出。
+    crate::commands::serial::push_sampled_lines(&text);
+    crate::commands::serial::emit_serial_data(port, &text);
+    Ok(text)
 }
 
 fn parse_compile_errors(output: &str) -> Vec<Value> {

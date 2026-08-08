@@ -79,7 +79,7 @@ const MODELS_BY_TOOLCHAIN: Record<string, ModelOption[]> = {
     { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', model: 'deepseek-v4-flash' },
   ],
   mimo: [
-    { id: 'mimo/mimo-auto', label: '', labelKey: 'chat.model.mimoAuto', model: 'mimo/mimo-auto' },
+    { id: 'xiaomi/mimo-v2.5', label: '', labelKey: 'chat.model.mimoAuto', model: 'xiaomi/mimo-v2.5' },
   ],
   ollama: [
     { id: 'ollama', label: 'Ollama (Local)', model: 'ollama' },
@@ -96,7 +96,7 @@ function getCurrentToolchainId(): string {
 function getCurrentModelId(): string {
   const s = useSettingsStore.getState().settings;
   if (s.aiModel === 'ollama') return 'ollama';
-  if (s.aiModel === 'mimo') return s.mimoModel || 'mimo/mimo-auto';
+  if (s.aiModel === 'mimo') return s.mimoModel || 'xiaomi/mimo-v2.5';
   return s.deepseekModel || 'deepseek-v4-pro';
 }
 
@@ -608,10 +608,15 @@ function ChatPanel() {
           group.type === 'tool_group' ? (
             <ToolCallsGroup key={group.messages[0].id} messages={group.messages} />
           ) : (
-            <MessageItem key={group.message.id} message={group.message} onApply={(code, suggested) => {
-              setApplyDialog({ code, suggested });
-              setApplyFilePath(suggested);
-            }} />
+            <MessageItem
+              key={group.message.id}
+              message={group.message}
+              isStreaming={isBusy && group.message.role === 'assistant' && group.message === lastAssistantMsg}
+              onApply={(code, suggested) => {
+                setApplyDialog({ code, suggested });
+                setApplyFilePath(suggested);
+              }}
+            />
           )
         )}
         {activeOperation && (
@@ -869,6 +874,8 @@ function ChatPanel() {
 
 function OperationTimeline({ operation }: { operation: OperationProgress }) {
   const [elapsed, setElapsed] = useState(0);
+  const [serialLines, setSerialLines] = useState<string[]>([]);
+  const serialBoxRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
   const isDone = operation.steps.every(s => s.status === 'done' || s.status === 'error');
   const hasError = operation.steps.some(s => s.status === 'error');
@@ -885,6 +892,33 @@ function OperationTimeline({ operation }: { operation: OperationProgress }) {
     if (s < 60) return `${s}s`;
     return `${Math.floor(s / 60)}m ${s % 60}s`;
   };
+
+  // 捕获操作期间的串口输出（AI 的 read_serial_once 采样会 emit serial-data 事件）。
+  // 不主动连接端口，仅被动接收事件，避免与 AI 上传/烧录产生端口冲突。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const un = await listen<{ port: string; data: string }>('serial-data', (event) => {
+          const lines = event.payload.data.split('\n').map(l => l.trimEnd()).filter(l => l.length > 0);
+          if (lines.length === 0) return;
+          setSerialLines(prev => [...prev, ...lines].slice(-500));
+        });
+        if (cancelled) { un(); return; }
+        unlisten = un;
+      } catch { /* Tauri 不可用时忽略 */ }
+    })();
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
+
+  // 串口输出自动滚动到底部
+  useEffect(() => {
+    if (serialBoxRef.current) {
+      serialBoxRef.current.scrollTop = serialBoxRef.current.scrollHeight;
+    }
+  }, [serialLines]);
 
   return (
     <div className="flex justify-center animate-slide-up">
@@ -930,6 +964,23 @@ function OperationTimeline({ operation }: { operation: OperationProgress }) {
             );
           })}
         </div>
+        {serialLines.length > 0 && (
+          <div className="mt-2.5 border-t border-border-subtle pt-2">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Terminal size={11} className="text-text-tertiary" />
+              <span className="text-[10px] text-text-tertiary font-medium">{t('aiOp.serialOutput')}</span>
+              <span className="text-[10px] text-text-disabled">({serialLines.length})</span>
+            </div>
+            <div
+              ref={serialBoxRef}
+              className="bg-surface-root rounded-md p-2 max-h-[160px] overflow-y-auto font-mono text-[10.5px] leading-[1.4] text-text-secondary whitespace-pre-wrap break-all"
+            >
+              {serialLines.map((line, i) => (
+                <div key={i}>{line}</div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1172,7 +1223,7 @@ function doCopy(text: string, setter: (v: boolean) => void) {
   setTimeout(() => setter(false), 2000);
 }
 
-function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (code: string, suggested: string) => void }) {
+function MessageItem({ message, isStreaming, onApply }: { message: ChatMessage; isStreaming?: boolean; onApply: (code: string, suggested: string) => void }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [localCopied, setLocalCopied] = useState(false);
@@ -1181,6 +1232,15 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isTool = !!message.toolData;
+
+  // 过程叙述（工具调用间的淡色步骤流，无气泡，穿插在工具卡片之间）
+  if (message.role === 'assistant' && message.isNarration) {
+    return <NarrationFlow content={message.content} />;
+  }
+  // 空 main assistant（流式未开始或 CodeWhale 在最后工具调用后无最终回复）跳过渲染
+  if (message.role === 'assistant' && !message.content && !isStreaming) {
+    return null;
+  }
 
   // 工具调用消息 - 可折叠
   if (isTool) {
@@ -1348,7 +1408,7 @@ function MessageItem({ message, onApply }: { message: ChatMessage; onApply: (cod
             ? 'bg-accent text-white rounded-2xl rounded-tr-sm'
             : 'bg-surface-overlay border border-border-subtle rounded-2xl rounded-tl-sm'
         }`}>
-          <MessageContent content={message.content} onApply={onApply} />
+          <MessageContent content={message.content} isStreaming={isStreaming} onApply={onApply} />
         </div>
         {!isUser && message.content && (
           <div className="flex items-center gap-1 mt-1">
@@ -1476,9 +1536,113 @@ function CodeBlock({ language, code, content, onApply }: { language: string; cod
   );
 }
 
-function MessageContent({ content, onApply }: { content: string; onApply: (code: string, suggested: string) => void }) {
-  return (
-    <div className="[&_p]:mb-2 [&_p:last-of-type]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2 [&_ul]:space-y-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2 [&_ol]:space-y-1 [&_h1]:text-lg [&_h1]:font-bold [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-bold [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mb-1 [&_table]:border-collapse [&_table]:mb-2 [&_table]:text-[12px] [&_th]:border [&_th]:border-border-subtle [&_th]:px-2 [&_th]:py-1 [&_th]:bg-surface-overlay [&_th]:font-medium [&_td]:border [&_td]:border-border-subtle [&_td]:px-2 [&_td]:py-1 [&_blockquote]:border-l-2 [&_blockquote]:border-accent [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-text-tertiary [&_blockquote]:mb-2 [&_a]:text-accent [&_a]:hover:underline [&_hr]:border-border-subtle [&_hr]:my-2">
+// ===== 块级流式渲染 =====
+// 将 Markdown 文本按语义块（段落/代码块/标题/列表/引用/表格/分隔线）切分。
+// 已完成的块由 memo 缓存，流式时只有"进行中的尾块"重渲染，
+// 避免整条消息每来一个 chunk 就全量重解析导致的跳变与"一坨文本"观感。
+// 这是专业 IDE（Trae/Cursor）流式呈现的核心做法。
+
+interface MDBlock {
+  id: string;
+  type: 'code' | 'heading' | 'paragraph' | 'list' | 'blockquote' | 'table' | 'hr';
+  content: string;
+}
+
+// 语义块切分状态机：跟踪是否在代码围栏内，围栏内不按空行断块。
+// 用 ref 对象持有当前块，避免 TS 对闭包变量的控制流窄化（never）。
+function splitMarkdownBlocks(src: string): MDBlock[] {
+  if (!src) return [];
+  const lines = src.split('\n');
+  const blocks: MDBlock[] = [];
+  const ref: { cur: MDBlock | null } = { cur: null };
+  let inFence = false;
+  let fenceChar = '';
+  let idx = 0;
+
+  const flush = () => { if (ref.cur) { blocks.push(ref.cur); ref.cur = null; } };
+  const start = (type: MDBlock['type'], line: string) => {
+    idx += 1;
+    ref.cur = { id: `b${idx}-${type}`, type, content: line + '\n' };
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // 代码围栏（``` 或 ~~~）
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      const ch = fence[1][0];
+      if (!inFence) {
+        flush();
+        inFence = true;
+        fenceChar = ch;
+        start('code', line);
+      } else if (ch === fenceChar) {
+        // 结束围栏：代码块闭合
+        if (ref.cur) ref.cur.content += line + '\n';
+        inFence = false;
+        fenceChar = '';
+        flush();
+      } else if (ref.cur) {
+        ref.cur.content += line + '\n';
+      }
+      continue;
+    }
+    if (inFence) {
+      if (ref.cur) ref.cur.content += line + '\n';
+      continue;
+    }
+
+    // 空行 = 块边界
+    if (line.trim() === '') { flush(); continue; }
+
+    // 标题（单行即闭合）
+    if (/^#{1,6}\s/.test(line)) { flush(); start('heading', line); flush(); continue; }
+
+    // 分隔线（单行即闭合）
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); start('hr', line); flush(); continue; }
+
+    // 列表（连续列表项合并为一块）
+    if (/^\s*([-*+]|\d+\.)\s/.test(line)) {
+      if (ref.cur && ref.cur.type === 'list') ref.cur.content += line + '\n';
+      else { flush(); start('list', line); }
+      continue;
+    }
+
+    // 引用
+    if (/^>\s?/.test(line)) {
+      if (ref.cur && ref.cur.type === 'blockquote') ref.cur.content += line + '\n';
+      else { flush(); start('blockquote', line); }
+      continue;
+    }
+
+    // 表格
+    if (/^\|/.test(line)) {
+      if (ref.cur && ref.cur.type === 'table') ref.cur.content += line + '\n';
+      else { flush(); start('table', line); }
+      continue;
+    }
+
+    // 普通段落（连续非空行合并为一块，行内换行由 remark-breaks 转 <br>）
+    if (ref.cur && ref.cur.type === 'paragraph') ref.cur.content += line + '\n';
+    else { flush(); start('paragraph', line); }
+  }
+  flush();
+  return blocks;
+}
+
+// Markdown 块样式（段落/列表/标题/表格/引用等），与原 MessageContent 一致。
+const MD_BLOCK_CLASS = "[&_p]:mb-2 [&_p:last-of-type]:mb-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2 [&_ul]:space-y-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2 [&_ol]:space-y-1 [&_h1]:text-lg [&_h1]:font-bold [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-bold [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:mb-1 [&_table]:border-collapse [&_table]:mb-2 [&_table]:text-[12px] [&_th]:border [&_th]:border-border-subtle [&_th]:px-2 [&_th]:py-1 [&_th]:bg-surface-overlay [&_th]:font-medium [&_td]:border [&_td]:border-border-subtle [&_td]:px-2 [&_td]:py-1 [&_blockquote]:border-l-2 [&_blockquote]:border-accent [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-text-tertiary [&_blockquote]:mb-2 [&_a]:text-accent [&_a]:hover:underline [&_hr]:border-border-subtle [&_hr]:my-2";
+
+// 单个 Markdown 块。memo 仅比较 content：已完成块 content 不变则跳过重渲染，
+// 只有"进行中的尾块"content 在变才重渲染。fullContent（用于 CodeBlock 提取文件路径）
+// 不参与比较——Apply 按钮点击时实时计算，且代码块前的路径提示在首次渲染时已可得。
+const MarkdownBlockBase = ({ block, fullContent, onApply }: {
+  block: MDBlock;
+  fullContent: string;
+  onApply: (code: string, suggested: string) => void;
+}) => (
+  <div className={`animate-block-in ${MD_BLOCK_CLASS}`}>
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkBreaks]}
       components={{
@@ -1486,7 +1650,7 @@ function MessageContent({ content, onApply }: { content: string; onApply: (code:
           const match = /language-(\w+)/.exec(className || '');
           const codeString = String(children).replace(/\n$/, '');
           if (match) {
-            return <CodeBlock language={match[1]} code={codeString} content={content} onApply={onApply} />;
+            return <CodeBlock language={match[1]} code={codeString} content={fullContent} onApply={onApply} />;
           }
           return <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-secondary font-mono text-[12px]" {...props}>{children}</code>;
         },
@@ -1494,10 +1658,7 @@ function MessageContent({ content, onApply }: { content: string; onApply: (code:
           return (
             <a
               href={href}
-              onClick={(e) => {
-                e.preventDefault();
-                if (href) open(href);
-              }}
+              onClick={(e) => { e.preventDefault(); if (href) open(href); }}
               className="text-accent hover:underline cursor-pointer"
               {...props}
             >
@@ -1507,8 +1668,48 @@ function MessageContent({ content, onApply }: { content: string; onApply: (code:
         },
       }}
     >
-      {content}
+      {block.content}
     </ReactMarkdown>
+  </div>
+);
+
+const MarkdownBlock = memo(MarkdownBlockBase, (prev, next) =>
+  prev.block.content === next.block.content
+);
+
+// 流式光标：进行中的尾块末尾闪烁竖线，表示"正在生成"。
+function Caret() {
+  return <span className="inline-block w-[2px] h-[1.05em] -mb-[2px] ml-[1px] bg-accent align-text-bottom animate-caret-blink" />;
+}
+
+function MessageContent({ content, isStreaming, onApply }: { content: string; isStreaming?: boolean; onApply: (code: string, suggested: string) => void }) {
+  const blocks = useMemo(() => splitMarkdownBlocks(content), [content]);
+  if (blocks.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, i) => {
+        // 流式时只有最后一块"进行中"，重渲染；其余块由 memo 缓存。
+        const isStreamingTail = !!isStreaming && i === blocks.length - 1;
+        return (
+          <div key={block.id}>
+            <MarkdownBlock block={block} fullContent={content} onApply={onApply} />
+            {isStreamingTail && <Caret />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// 过程叙述步骤流：工具调用间的淡色叙述，无气泡，穿插在工具卡片之间。
+// 专业 IDE（Trae/Cursor）的做法——过程叙述不当正文 Markdown 渲染，用淡色步骤流呈现。
+function NarrationFlow({ content }: { content: string }) {
+  return (
+    <div className="flex gap-2 max-w-[92%] py-0.5 animate-fade-in">
+      <div className="w-0.5 rounded-full bg-border-subtle shrink-0 my-0.5" />
+      <div className="text-[12px] text-text-tertiary leading-relaxed whitespace-pre-wrap break-words">
+        {content}
+      </div>
     </div>
   );
 }

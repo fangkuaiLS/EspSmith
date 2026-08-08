@@ -1,0 +1,17 @@
+[build]
+# 统一的 cargo 构建产物输出目录。
+# 放在项目根的 .cargo/config.toml，确保无论从项目根还是 src-tauri/ 调用 cargo，
+# 都能发现此配置（cargo 从 CWD 向上查找 .cargo/config.toml）并使用同一个 target 目录，
+# 避免出现两份重复的依赖编译产物（曾出现 src-tauri/target 与 espsmith-target 各一份）。
+# 使用绝对路径，保证不同 CWD 下解析结果一致。
+# （原 src-tauri/target 与 espsmith-target 都曾出现文件系统损坏，统一到此外部位置）
+target-dir = "E:\\AIstdio\\espsmith-target"
+
+# 限制并行编译任务数，降低峰值内存/提交量（commit charge）。
+# 背景：本机 16GB 物理内存 + ~20GB 页面文件 = ~36GB 提交上限，但空闲时提交量已达 97.6%
+# （explorer 泄漏 ~5.7GB、lceda-pro ~6.7GB、Trae CN ~4.6GB、chrome ~3.5GB、rust-analyzer ~3GB）。
+# cargo 默认按 CPU 逻辑核数并行，每个 rustc 在大型 crate（tauri/serde 等）上峰值 1-4GB，
+# 并行拉起会瞬间顶破提交上限 → mmap libcore 失败（os error 1455 页面文件太小）
+# → 连锁报 "Ok/Err not found" / "cannot resolve prelude import"。
+# 设为 2 在释放内存后可稳定编译；若仍 OOM 可临时命令行覆盖 `cargo build -j 1`。
+jobs = 2

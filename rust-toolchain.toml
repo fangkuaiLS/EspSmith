@@ -1,2 +1,13 @@
 [toolchain]
+# 使用 MSVC 工具链（Windows 默认 host）。
+# 背景/决策记录：
+# 1. 此前曾因 1.95.0-msvc 的 rustc 出现 ICE（STATUS_STACK_BUFFER_OVERRUN，根因是 E: 盘
+#    文件系统损坏）而临时切到 stable-x86_64-pc-windows-gnu。
+# 2. 用户已手动 chkdsk 修复磁盘，1.95.0-msvc rustc 经验证恢复正常（能成功编译+链接
+#    最小程序，rustc --print link-args 正确发现 VS 2022 的 link.exe）。
+# 3. GNU 工具链在本机不可用：系统未安装 MinGW，rust GNU toolchain 的 self-contained 目录
+#    为空（无 gcc/ld/dlltool），编译到 windows-sys 时报 "dlltool.exe: program not found"。
+# 4. MSVC 工具链的 link.exe 正常不在 PATH（由 vcvarsall 注入），但 rustc 通过
+#    vswhere+注册表能自动发现 VS 2022 Preview 的 link.exe，无需手动配置 PATH。
+# 因此切回 MSVC（1.95.0 解析为 1.95.0-x86_64-pc-windows-msvc，本机默认 host 即 MSVC）。
 channel = "1.95.0"

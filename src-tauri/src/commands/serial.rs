@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::process::Command;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 use tracing::{debug, info, warn};
@@ -132,6 +132,15 @@ lazy_static::lazy_static! {
         Arc::new(Mutex::new(None));
 }
 
+/// 全局缓存的 AppHandle，供无 AppHandle 参数的代码（如 mcp.rs 的 read_serial_once）
+/// 向前端 emit 事件。应用启动时由 lib.rs setup 闭包调用 set_app_handle 注入。
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+/// 应用启动时调用，缓存 AppHandle 供后续 emit 事件使用。
+pub fn set_app_handle(app: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(app);
+}
+
 /// 环形缓冲区行容量（默认 50000，约 10MB）。
 /// 可通过环境变量 ESPSMITH_RING_LINES 覆盖（最小 1000）。
 fn configured_ring_lines() -> usize {
@@ -189,6 +198,29 @@ pub fn ring_search(pattern: &str, limit: usize) -> Result<Vec<RingEntry>, String
 /// 缓冲区当前条目数
 pub fn ring_len() -> usize {
     RING_BUFFER.read().unwrap_or_else(|e| e.into_inner()).len()
+}
+
+/// 将外部采样（如 AI 的 read_serial_once fallback 路径）的串口文本按行写入共享 ring buffer。
+/// 修复：fallback 采样路径原先不写 ring buffer，导致 AI 后续 serial_tail 读不到、前端也看不到。
+pub fn push_sampled_lines(text: &str) {
+    let mut ring = RING_BUFFER.write().unwrap_or_else(|e| e.into_inner());
+    for line in text.split('\n') {
+        let trimmed = line.trim_end_matches('\r');
+        if !trimmed.is_empty() {
+            ring.push_line(trimmed.to_string());
+        }
+    }
+}
+
+/// 向前端 emit serial-data 事件（若 AppHandle 已注册）。
+/// 供无 AppHandle 参数的采样路径（read_serial_once）使用，让前端实时看到 AI 采样到的设备输出。
+pub fn emit_serial_data(port: &str, data: &str) {
+    if let Some(app) = APP_HANDLE.get() {
+        let _ = app.emit(
+            "serial-data",
+            serde_json::json!({ "port": port, "data": data }),
+        );
+    }
 }
 
 /// `ring_wait_for_output` 的返回值，带来源标识。
@@ -278,6 +310,26 @@ pub fn ring_latest_ts() -> u64 {
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .latest_ts()
+}
+
+/// `serial_ring_tail` 命令的返回值，供前端一次性预填近期串口历史。
+#[derive(Debug, Clone, Serialize)]
+pub struct RingTailResult {
+    pub lines: Vec<RingEntry>,
+    pub total_in_buffer: usize,
+    pub latest_ts_ms: u64,
+}
+
+/// 取环形缓冲区最近 n 行（Tauri 命令，供前端打开串口面板时预填历史）。
+/// 实时数据仍由 serial-data 事件驱动，此命令仅用于初始加载历史快照。
+#[tauri::command]
+pub async fn serial_ring_tail(n: Option<usize>) -> Result<RingTailResult, String> {
+    let n = n.unwrap_or(200).min(2000);
+    Ok(RingTailResult {
+        lines: ring_tail(n),
+        total_in_buffer: ring_len(),
+        latest_ts_ms: ring_latest_ts(),
+    })
 }
 
 /// 是否有串口处于连接（读取中）状态

@@ -527,6 +527,26 @@ pub async fn ai_send_message(
     message: String,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
+    // 首次尝试用现有 session_id（若有）。若 session 已失效（进程中断/存储过期），
+    // CodeWhale 会报 "could not load session" / "No session found"。
+    // inner 检测到后会清除 session_id；此处自动重试一次用全新会话，避免用户手动重发。
+    let result = ai_send_message_inner(message.clone(), app_handle.clone()).await;
+    match result {
+        Ok(r) => Ok(r),
+        Err(e)
+            if e.contains("could not load session") || e.contains("No session found") =>
+        {
+            info!("Stale session detected, auto-retrying with fresh session");
+            ai_send_message_inner(message, app_handle).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn ai_send_message_inner(
+    message: String,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
     let (
         model,
         project_path,
@@ -587,7 +607,10 @@ pub async fn ai_send_message(
             idf_path.as_deref(),
             &provider_kind,
         ) {
-            info!("[ai_send_message] AGENTS.md regeneration failed (non-fatal): {}", e);
+            info!(
+                "[ai_send_message] AGENTS.md regeneration failed (non-fatal): {}",
+                e
+            );
         }
     }
 
@@ -695,6 +718,10 @@ pub async fn ai_send_message(
     let mut output = String::new();
     let mut stderr_lines = Vec::new();
     let mut new_session_id: Option<String> = None;
+    // 区分正常完成（done 事件）与异常终止（进程被 kill / EOF / 超时）。
+    // 异常终止时 new_session_id 可能是 session_capture 设置的中间值（未持久化），
+    // 不能写入 client.session_id，否则下次加载会 "could not load session"。
+    let mut normal_completion = false;
     let mut msg_input_tokens: u64 = 0;
     let mut msg_output_tokens: u64 = 0;
     let mut msg_cached_tokens: u64 = 0;
@@ -1106,6 +1133,7 @@ pub async fn ai_send_message(
                                                             let mut s = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
                                                             *s = AIStatus::Idle;
                                                         }
+                                                        normal_completion = true;
                                                         break;
                                                     }
                                                     Ok(None) => {
@@ -1124,6 +1152,7 @@ pub async fn ai_send_message(
                                             let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
                                             *status = AIStatus::Idle;
                                         }
+                                        normal_completion = true;
                                         // 提取 session_id（CodeWhale 格式）
                                         if let Some(sid) = event["session_id"].as_str() {
                                             if !sid.is_empty() {
@@ -1243,20 +1272,45 @@ pub async fn ai_send_message(
         *op = None;
     }
 
-    if let Some(sid) = new_session_id {
-        let mut client = AI_CLIENT.lock().await;
-        client.session_id = Some(sid);
+    // 只在正常完成时持久化 session_id。异常终止（进程被 kill / EOF / 超时）
+    // 时 new_session_id 可能是 session_capture 设置的中间值，未持久化到
+    // CodeWhale 的 session 存储，写入会导致下次 "could not load session"。
+    if normal_completion {
+        if let Some(sid) = new_session_id {
+            let mut client = AI_CLIENT.lock().await;
+            client.session_id = Some(sid);
+        }
     }
 
     if output.is_empty() {
-        let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
-        *status = AIStatus::Error;
         if !stderr_lines.is_empty() {
-            return Err(format!(
-                "{} error:\n{}",
-                provider_name,
-                stderr_lines.join("\n")
-            ));
+            let err_text = stderr_lines.join("\n");
+            // 检测 CodeWhale session 加载失败：session 已失效（如上次执行被中断
+            // 导致 session 未持久化，或 session 存储损坏）。清除 session_id，
+            // 由上层 ai_send_message wrapper 自动重试一次用全新会话。
+            // 此处不设置 Error 状态（避免重试时的状态闪烁），直接返回让 wrapper 处理。
+            if err_text.contains("could not load session") || err_text.contains("No session found")
+            {
+                let mut client = AI_CLIENT.lock().await;
+                if client.session_id.is_some() {
+                    info!(
+                        "{} session load failed, clearing stale session_id for retry",
+                        provider_name
+                    );
+                    client.session_id = None;
+                }
+                return Err(format!("{} error:\n{}", provider_name, err_text));
+            }
+            // 其他错误：设置 Error 状态
+            {
+                let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
+                *status = AIStatus::Error;
+            }
+            return Err(format!("{} error:\n{}", provider_name, err_text));
+        }
+        {
+            let mut status = AI_STATUS.lock().unwrap_or_else(|e| e.into_inner());
+            *status = AIStatus::Error;
         }
         return Err(format!(
             "{} returned no response. Check the API key and network access.",
@@ -2670,7 +2724,9 @@ fn _which_cmd_uncached(cmd: &str) -> Option<PathBuf> {
             if let Ok(path_var) = std::env::var("PATH") {
                 for entry in path_var.split(';') {
                     let entry = entry.trim();
-                    if entry.is_empty() { continue; }
+                    if entry.is_empty() {
+                        continue;
+                    }
                     let pb = PathBuf::from(entry);
                     // 显式加入 PATH 中所有目录（避免 where 命令的行为差异）
                     v.push(pb);

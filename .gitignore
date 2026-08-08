@@ -32,6 +32,7 @@ src-tauri/wix/*.wixobj
 .vscode/
 .idea/
 .mimocode/
+.trae/
 
 # OS
 .DS_Store

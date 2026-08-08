@@ -13,6 +13,8 @@ export interface ChatMessage {
   usage?: { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number; costRmb: number };
   /** AI 推理/思考过程内容（独立于正式回复，可折叠展示） */
   thinkingContent?: string;
+  /** 标记为工具调用间的过程叙述（淡色步骤流渲染，非正文回复） */
+  isNarration?: boolean;
 }
 
 // AI 状态

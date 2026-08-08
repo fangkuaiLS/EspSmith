@@ -253,7 +253,7 @@
     },
     "model": {
       "switch": "切换模型",
-      "mimoAuto": "MiMo Auto（MiMo-V2.5 限免中）"
+      "mimoAuto": "MiMo-V2.5（Xiaomi 平台）"
     },
     "rollback": {
       "confirmTitle": "确定退回到本次对话发起前吗？",
@@ -389,6 +389,7 @@
     "mimoSystemInstalled": "已安装 (系统)",
     "mimoNotInstalled": "未安装",
     "mimoInstallHint": "请通过 npm 全局安装 MiMo-Code:",
+    "mimoConfigHint": "MiMo Auto 免费通道已结束。请在终端运行 mimo，选择 Xiaomi MiMo Platform 完成 OAuth 登录后即可使用。",
     "experience": {
       "title": "经验库管理",
       "desc": "经验库记录 AI 在 ESP32 开发中遇到的疑难杂症和解决方案，帮助 AI 在后续项目中更快速地解决类似问题。",
@@ -805,6 +806,7 @@
     "flashFirmware": "烧录固件",
     "completed": "✓ 完成",
     "failed": "✗ 失败",
+    "serialOutput": "串口输出",
     "step": {
       "compileFirmware": "编译固件",
       "openocdFlash": "OpenOCD 烧录",

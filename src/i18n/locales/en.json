@@ -253,7 +253,7 @@
     },
     "model": {
       "switch": "Switch model",
-      "mimoAuto": "MiMo Auto (MiMo-V2.5 free trial)"
+      "mimoAuto": "MiMo-V2.5 (Xiaomi Platform)"
     },
     "rollback": {
       "confirmTitle": "Are you sure you want to roll back to before this conversation?",
@@ -389,6 +389,7 @@
     "mimoSystemInstalled": "Installed (System)",
     "mimoNotInstalled": "Not installed",
     "mimoInstallHint": "Please install MiMo-Code globally via npm:",
+    "mimoConfigHint": "MiMo Auto free channel has ended. Run `mimo` in terminal, select Xiaomi MiMo Platform to complete OAuth login.",
     "experience": {
       "title": "Experience Library Management",
       "desc": "The experience library records difficult problems and solutions encountered by AI in ESP32 development, helping AI solve similar issues faster in future projects.",
@@ -922,6 +923,7 @@
     "flashFirmware": "Flash Firmware",
     "completed": "✓ Done",
     "failed": "✗ Failed",
+    "serialOutput": "Serial Output",
     "step": {
       "compileFirmware": "Compile Firmware",
       "openocdFlash": "OpenOCD Flash",

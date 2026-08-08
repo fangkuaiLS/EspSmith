@@ -461,6 +461,14 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                       </p>
                     </div>
                   )}
+
+                  {mimoStatus === 'system' && (
+                    <div className="mt-3 p-2.5 bg-warning/10 border border-warning/30 rounded-lg">
+                      <p className="text-[12px] text-text-secondary leading-relaxed">
+                        {t('settings.mimoConfigHint')}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Experience 经验库管理 */}

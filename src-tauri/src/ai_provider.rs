@@ -268,16 +268,11 @@ impl AIProvider for MiMoCodeProvider {
         }
     }
 
-    fn api_key_env(&self, config: &AIConfig) -> Option<(String, String)> {
-        // MiMo-Code 内置免费通道（mimo/mimo-auto），无需 API Key
-        // 只有使用第三方模型（如 xiaomi/*, deepseek/*）时才需要
-        if config.model.starts_with("mimo/") {
-            return None;
-        }
-        config
-            .api_key
-            .as_ref()
-            .map(|k| ("DEEPSEEK_API_KEY".into(), k.clone()))
+    fn api_key_env(&self, _config: &AIConfig) -> Option<(String, String)> {
+        // MiMo-Code 通过配置文件（mimocode.json / auth.json）管理认证，
+        // 不读取环境变量 API key。用户需在终端运行 `mimo` 完成 OAuth 登录
+        // 或在 TUI 中配置 provider（含 apiKey）。
+        None
     }
 
     fn supports_session(&self) -> bool {

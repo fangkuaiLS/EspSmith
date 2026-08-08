@@ -1,7 +1,7 @@
 import { spawn, execSync } from 'child_process';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync, mkdirSync, statSync } from 'fs';
+import { existsSync, mkdirSync, statSync, writeFileSync, unlinkSync } from 'fs';
 import { platform, homedir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -47,16 +47,77 @@ function hasRustupToolchain(toolchain) {
   }
 }
 
+function getCargoTargetDir() {
+  // 通过 cargo metadata 获取实际解析后的 target 目录（尊重 .cargo/config.toml 的 target-dir）。
+  // 这样无论配置指向何处，CLI 可执行文件路径都能正确匹配，避免因路径不一致导致每次 dev 都重复编译 CLI。
+  try {
+    const out = execSync(
+      'cargo metadata --format-version 1 --no-deps --manifest-path src-tauri/Cargo.toml',
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], cwd: projectRoot, shell: true }
+    );
+    return JSON.parse(out).target_directory;
+  } catch {
+    // 极端情况下 cargo metadata 失败时回退到默认位置
+    return join(projectRoot, 'src-tauri', 'target');
+  }
+}
+
+// 检测 MSVC 链接器是否可用。
+// 关键：MSVC 的 link.exe 正常情况下不在 PATH（它由 vcvarsall 注入开发者命令行环境），
+// 因此不能用 `where link.exe` 检测——会误判为缺失并错误地切到 GNU 工具链。
+// rustc 自身通过 vswhere + 注册表 + vcvarsall 发现 MSVC，与正式编译完全一致；
+// 这里让 rustc 实际编译+链接一个最小程序作为“能否链接二进制”的权威判定。
+// （已验证：本机 VS 2022 Preview 不被 `vswhere`（不带 -prerelease）列出，也不在 PATH，
+//  但 rustc 能正确发现其 link.exe。故只有 rustc 探针可靠。）
+function msvcLinkerAvailable() {
+  if (platform() !== 'win32') return false;
+  // 快速正路径：link.exe 已在 PATH（开发者命令行环境），无需探针。
+  if (findInPath('link.exe')) return true;
+  // 权威判定：让 rustc 按 rust-toolchain.toml 指定的工具链（MSVC host）尝试链接最小程序。
+  const probeDir = join(projectRoot, '.tmp');
+  const probeSrc = join(probeDir, 'msvc_probe.rs');
+  const probeExe = join(probeDir, 'msvc_probe.exe');
+  ensureDir(probeDir);
+  try {
+    writeFileSync(probeSrc, 'fn main(){}\n');
+    execSync(`rustc "${probeSrc}" -o "${probeExe}" --crate-type bin`, {
+      stdio: 'ignore',
+      shell: true,
+      cwd: projectRoot,
+    });
+    return existsSync(probeExe);
+  } catch {
+    return false;
+  } finally {
+    try { unlinkSync(probeExe); } catch {}
+    try { unlinkSync(probeSrc); } catch {}
+    // 顺带清理 rustc 可能产生的 .pdb
+    try { unlinkSync(join(probeDir, 'msvc_probe.pdb')); } catch {}
+  }
+}
+
 function detectAndSetupToolchain() {
   if (platform() !== 'win32') return;
 
-  const hasLink = findInPath('link.exe');
-  if (hasLink) {
+  // MSVC 可用则遵从 rust-toolchain.toml，不覆盖工具链。
+  if (msvcLinkerAvailable()) {
     return;
   }
 
+  // MSVC 不可用才回退 GNU。
+  // 注意：GNU 工具链链接仍需系统装有 MinGW（gcc/ld/dlltool），
+  // 否则会在链接 windows-sys 时报 "dlltool.exe: program not found"。
+  // 故推荐优先安装 Visual Studio Build Tools（含 MSVC）。
+  process.stderr.write(
+    '[esp-ai-studio] MSVC linker not detected (rustc probe failed). Falling back to GNU toolchain.\n' +
+    '  Note: GNU toolchain also requires MinGW (gcc/ld/dlltool) for linking; otherwise\n' +
+    '  windows-sys will fail with "dlltool.exe: program not found".\n' +
+    '  Recommended: install Visual Studio Build Tools (C++ workload):\n' +
+    '    https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022\n'
+  );
+
   if (!hasRustupToolchain('stable-x86_64-pc-windows-gnu')) {
-    process.stderr.write('[esp-ai-studio] MSVC tools not found, installing GNU toolchain...\n');
+    process.stderr.write('[esp-ai-studio] Installing GNU toolchain...\n');
     try {
       execSync('rustup toolchain install stable-x86_64-pc-windows-gnu', {
         stdio: 'inherit',
@@ -64,17 +125,14 @@ function detectAndSetupToolchain() {
       });
     } catch {
       process.stderr.write(
-        '[esp-ai-studio] ERROR: MSVC Build Tools not found and GNU toolchain install failed.\n' +
-        '  Please install one of:\n' +
-        '  1. Visual Studio Build Tools: https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022\n' +
-        '  2. GNU toolchain manually: rustup toolchain install stable-x86_64-pc-windows-gnu\n'
+        '[esp-ai-studio] ERROR: MSVC not found and GNU toolchain install failed.\n' +
+        '  Please install Visual Studio Build Tools (C++ workload) or MinGW manually.\n'
       );
       process.exit(1);
     }
   }
 
   process.env.RUSTUP_TOOLCHAIN = 'stable-x86_64-pc-windows-gnu';
-  process.stderr.write('[esp-ai-studio] Using GNU toolchain (MSVC Build Tools not detected)\n');
 }
 
 function setupEnv() {
@@ -155,7 +213,7 @@ const args = process.argv.slice(2);
 // build.rs 已用 catch_unwind 包裹 tauri_build::build()，所以 cargo build --bin espsmith-cli
 // 不会再 panic。这里在 tauri dev 启动前先编译 CLI binary。
 if (args.includes('dev')) {
-  const cliExePath = join(projectRoot, 'src-tauri', 'target', 'debug', 'espsmith-cli.exe');
+  const cliExePath = join(getCargoTargetDir(), 'debug', 'espsmith-cli.exe');
   // 检查是否需要重新编译：文件不存在，或者 lib.rs 比 cli.exe 更新
   const needsCompile = !existsSync(cliExePath) || (() => {
     try {

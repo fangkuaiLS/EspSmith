@@ -172,6 +172,9 @@ pub fn run() {
             }
             // 初始化全局 AppHandle，供 sink 在非 Tauri 命令上下文中 emit 事件
             ai_assistant::init_app_handle(app.handle().clone());
+            // 缓存 AppHandle 供 serial 模块：让 read_serial_once（AI fallback 采样）
+            // 能向前端 emit serial-data 事件，AUTO 模式串口面板实时可见
+            serial::set_app_handle(app.handle().clone());
             // 启动 IPC 服务器：让 espsmith-cli.exe 子进程能把 RunnerEvent 实时传回主进程
             self_healing::ipc::start_ipc_server();
             // 注册委托处理器：CLI 子进程通过 IPC 委托主进程执行 Self-Healing 引擎（实时进度）
@@ -231,6 +234,7 @@ pub fn run() {
             serial::open_serial_port,
             serial::close_serial_port,
             serial::write_serial,
+            serial::serial_ring_tail,
             // 调试命令（旧版 batch 模式，向后兼容）
             debug::get_debug_state,
             debug::set_breakpoint,
