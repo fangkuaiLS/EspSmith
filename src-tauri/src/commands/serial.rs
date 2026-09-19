@@ -374,7 +374,10 @@ pub const CRASH_PATTERNS: &[&str] = &[
     "Brownout",
     "Core  0 register dump",
     "Core  1 register dump",
-    "rst:",
+    // 注意：不要加入 "rst:" —— ESP32 正常上电/软复位启动时都会打印
+    // "rst:0x1 (POWERON_RESET)" / "rst:0x3 (SW_RESET)"，会被误判为崩溃。
+    // 真正的 panic 已由 "Guru Meditation Error"、"Backtrace:"、"Rebooting..."、
+    // "Core  N register dump" 等签名可靠覆盖。
 ];
 
 /// 检测文本中是否包含崩溃特征，命中则返回拼接的命中模式字符串。

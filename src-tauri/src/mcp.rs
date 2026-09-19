@@ -2128,8 +2128,12 @@ fn read_mcp_message<R: BufRead>(reader: &mut R) -> Result<Option<Value>, String>
 
 fn write_mcp_message<W: Write>(writer: &mut W, response: &Value) -> Result<(), String> {
     let body = serde_json::to_vec(response).map_err(|e| e.to_string())?;
-    write!(writer, "Content-Length: {}\r\n\r\n", body.len()).map_err(|e| e.to_string())?;
+    // CodeWhale 的 MCP stdio transport 使用 newline-delimited JSON：
+    // send() 追加 '\n'，recv() 用 read_line 逐行读取整行 JSON。
+    // 标准 Content-Length 框架会使其把 "Content-Length: N" 头当 JSON 行解析而失败。
+    // 因此这里输出单行 JSON + 换行，与 CodeWhale 读取侧匹配。
     writer.write_all(&body).map_err(|e| e.to_string())?;
+    writer.write_all(b"\n").map_err(|e| e.to_string())?;
     writer.flush().map_err(|e| e.to_string())
 }
 

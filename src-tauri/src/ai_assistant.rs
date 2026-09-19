@@ -418,6 +418,11 @@ pub async fn ai_start(app_handle: tauri::AppHandle, config: AIConfig) -> Result<
     let idf = client.config.idf_path.clone();
     drop(client); // 释放锁，避免 ensure_project_agent_instructions 内可能的死锁
 
+    // 同步 CodeWhale 的 MCP 服务器配置，确保 AI 会话能发现 espsmith 的 MCP 工具
+    // （project_context / query_experience / record_experience 等）
+    sync_codewhale_mcp_config(project.as_deref(), idf.as_deref());
+    ensure_codewhale_search_provider();
+
     // track AGENTS.md path for event emission
     let mut agents_file_path: Option<PathBuf> = None;
 
@@ -533,9 +538,7 @@ pub async fn ai_send_message(
     let result = ai_send_message_inner(message.clone(), app_handle.clone()).await;
     match result {
         Ok(r) => Ok(r),
-        Err(e)
-            if e.contains("could not load session") || e.contains("No session found") =>
-        {
+        Err(e) if e.contains("could not load session") || e.contains("No session found") => {
             info!("Stale session detected, auto-retrying with fresh session");
             ai_send_message_inner(message, app_handle).await
         }
@@ -626,6 +629,10 @@ async fn ai_send_message_inner(
     let binary = provider
         .ensure_ready()
         .map_err(|e| format!("i18n:aiBackend.codewhaleNotFound|error={}", e))?;
+
+    // 每次发送消息前同步 MCP 服务器配置（项目可能已切换），并兜底搜索后端
+    sync_codewhale_mcp_config(project_path.as_deref(), idf_path.as_deref());
+    ensure_codewhale_search_provider();
 
     let prompt = build_short_agent_prompt(
         &message,
@@ -1750,7 +1757,7 @@ fn build_short_agent_prompt(
             chip = resolved_chip
         );
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n\n重要: 以下命令仅在用户明确要求编译/烧录/验证，或你修改了代码需要验证时才使用。对于问候、提问、咨询等简单对话，直接回复即可，不要执行任何命令。\n\n[可用命令 - 按需使用]\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
+            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n\n注意: 不要使用 terminal/run/send/wait/reset 等状态终端工具（仅Unix支持，Windows不可用），所有命令通过 {shell} 执行。\n\n重要: 以下命令仅在用户明确要求编译/烧录/验证，或你修改了代码需要验证时才使用。对于问候、提问、咨询等简单对话，直接回复即可，不要执行任何命令。\n\n[可用命令 - 按需使用]\n编译: {shell} {build_cmd}\nJTAG闭环验证: {shell} {closed_loop_cmd}\nJTAG深度检查(仅设断点/观察变量): {shell} {jtag_check_cmd}\n烧录(UART): {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\nOpenOCD: {shell} {openocd_start_cmd}, {shell} {cli} openocd-stop, {shell} {cli} openocd-is-running\n用户: {msg}",
             shell=shell_cmd, cli=cli_exe, msg=user_message,
             build_cmd=build_cmd, closed_loop_cmd=closed_loop_cmd, jtag_check_cmd=jtag_check_cmd,
             openocd_start_cmd=openocd_start_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd,
@@ -1765,7 +1772,7 @@ fn build_short_agent_prompt(
             ipc = ipc_addr_arg
         );
         sanitize_prompt_for_cmd(format!(
-            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n\n重要: 以下命令仅在用户明确要求编译/烧录/验证，或你修改了代码需要验证时才使用。对于问候、提问、咨询等简单对话，直接回复即可，不要执行任何命令。\n\n[可用命令 - 按需使用]\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
+            "你是ESP32开发者。请先读取AGENTS.md了解工作流规则。\n\n注意: 不要使用 terminal/run/send/wait/reset 等状态终端工具（仅Unix支持，Windows不可用），所有命令通过 {shell} 执行。\n\n重要: 以下命令仅在用户明确要求编译/烧录/验证，或你修改了代码需要验证时才使用。对于问候、提问、咨询等简单对话，直接回复即可，不要执行任何命令。\n\n[可用命令 - 按需使用]\n编译: {shell} {build_cmd}\n烧录: {shell} {flash_cmd}\n监控: {shell} {monitor_cmd}\n一键闭环: {shell} {closed_loop_cmd}\n端口查询: {shell} {cli} list-ports\n连接检测: {shell} {cli} detect-connection\n用户: {msg}",
             shell=shell_cmd, cli=cli_exe, msg=user_message,
             build_cmd=build_cmd, flash_cmd=flash_cmd, monitor_cmd=monitor_cmd, closed_loop_cmd=uart_closed_loop_cmd,
         ))
@@ -2225,6 +2232,7 @@ fn ensure_project_agent_instructions(
 
 ## 关键规则
 - ESP-IDF 已预配置，无需检查或验证 IDF 路径/工具链，直接构建即可
+- **不要使用 `terminal` / `run` / `send` / `wait` / `reset` 等状态终端工具**：CodeWhale 的 stateful terminal 仅支持 Unix，Windows 上调用必然失败。所有命令统一通过 `{shell_tool}` 执行
 - 所有操作均通过 `{shell_tool}` + `espsmith-cli.exe` 子命令完成（不要用 espsmith.exe）
 - build/flash/closed-loop 是长时间同步命令（可能需要数分钟），{shell_tool} 执行后必须耐心等待结果返回，绝不要在命令运行中重复执行同一命令或尝试跳过，否则会导致进程冲突和崩溃
 - 如果收到 "Another espsmith command is running" 错误，说明上一次命令仍在运行，必须等待其完成，不要重试
@@ -2883,6 +2891,130 @@ pub async fn setup_codewhale(app_handle: tauri::AppHandle) -> Result<String, Str
     let _ = app_handle.emit("codewhale-setup-progress", "done");
     info!("CodeWhale installed locally at: {}", local_bin.display());
     Ok("installed".into())
+}
+
+/// 同步 CodeWhale 的 MCP 服务器配置（mcp.json），让 AI 会话能发现 espsmith 的 MCP 工具。
+///
+/// 背景：CodeWhale 通过 `~/.codewhale/mcp.json` 发现 MCP 服务器，缺失时回退读取 legacy 的
+/// `~/.deepseek/mcp.json`。espsmith 以 stdio 模式（`--mcp-server`）暴露 project_context /
+/// query_experience / record_experience / list_serial_ports 等 MCP 工具。但旧配置是历史遗留
+/// （command 指向已不存在的旧项目目录、env 指向测试项目），导致 MCP 服务器启动失败，AI 侧
+/// tool_search 搜不到任何 MCP 工具、经验引擎不可用。
+///
+/// 本函数在 AI 会话启动前写入/更新配置：
+/// - 主配置 `~/.codewhale/mcp.json`：合并保留已有 servers，只更新/新增 espsmith 条目
+/// - legacy `~/.deepseek/mcp.json`：同样修正，避免回退路径读到旧配置
+/// - command 使用当前可执行文件路径（开发/生产均正确）
+/// - env 使用用户当前打开的项目路径与 IDF 路径
+///
+/// 非致命：任何失败仅记录日志，不影响 AI 主流程。
+pub fn sync_codewhale_mcp_config(project_path: Option<&str>, idf_path: Option<&str>) {
+    let Some(exe) = std::env::current_exe().ok() else {
+        tracing::warn!("[sync_mcp] current_exe unavailable, skip mcp.json sync");
+        return;
+    };
+
+    let espsmith_server = serde_json::json!({
+        "command": exe.to_string_lossy().to_string(),
+        "args": ["--mcp-server"],
+        "env": {
+            "ESPSMITH_PROJECT": project_path.unwrap_or_default(),
+            "ESPSMITH_IDF_PATH": idf_path.unwrap_or_default(),
+        },
+        "enabled": true,
+        "required": true,
+        "disabled": false,
+        "disabled_tools": [],
+        "enabled_tools": [],
+        "url": null,
+        "connect_timeout": null,
+        "execute_timeout": 180,
+        "read_timeout": 300,
+    });
+
+    let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    for dir in [home.join(".codewhale"), home.join(".deepseek")] {
+        let path = dir.join("mcp.json");
+        // 合并保留已有配置（可能还有其他 MCP 服务器），仅更新 espsmith 条目
+        let existing = fs::read_to_string(&path).unwrap_or_default();
+        let mut root = serde_json::from_str::<serde_json::Value>(&existing)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        if !root.is_object() {
+            root = serde_json::json!({});
+        }
+        root["servers"]["espsmith"] = espsmith_server.clone();
+        if root.get("timeouts").is_none() {
+            root["timeouts"] = serde_json::json!({
+                "connect_timeout": 10,
+                "execute_timeout": 60,
+                "read_timeout": 120,
+            });
+        }
+        let text = serde_json::to_string_pretty(&root).unwrap_or_else(|_| root.to_string());
+
+        if let Err(e) = fs::create_dir_all(&dir) {
+            tracing::warn!("[sync_mcp] create dir {} failed: {}", dir.display(), e);
+            continue;
+        }
+        // 原子写入：.tmp → rename，避免文件占用导致 os error 5
+        let tmp = dir.join("mcp.json.tmp");
+        if let Err(e) = fs::write(&tmp, &text) {
+            tracing::warn!("[sync_mcp] write {} failed: {}", tmp.display(), e);
+            continue;
+        }
+        if let Err(e) = fs::rename(&tmp, &path) {
+            tracing::warn!(
+                "[sync_mcp] rename {} -> {} failed: {}",
+                tmp.display(),
+                path.display(),
+                e
+            );
+            let _ = fs::write(&path, &text); // 回退直接写
+        }
+        info!(
+            "[sync_mcp] MCP config synced to {} (exe={}, project={})",
+            path.display(),
+            exe.display(),
+            project_path.unwrap_or("")
+        );
+    }
+}
+
+/// CodeWhale 默认搜索后端是 duckduckgo，国内网络不可达导致 web_search 失败。
+/// 若 `~/.codewhale/config.toml` 中未显式配置 `[search]`，追加 `provider = "bing"`
+/// （国内可访问、无需 API key）。已存在 `[search]` 段时保持用户设置不动。
+/// 非致命：失败仅记录日志。
+pub fn ensure_codewhale_search_provider() {
+    let home = dirs_next::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let path = home.join(".codewhale").join("config.toml");
+    let content = fs::read_to_string(&path).unwrap_or_default();
+    if content.contains("[search]") {
+        return; // 用户已配置，不覆盖
+    }
+    let mut new_content = content;
+    if !new_content.is_empty() && !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    new_content.push_str("\n[search]\nprovider = \"bing\"\n");
+
+    let tmp = path.with_extension("toml.tmp");
+    if let Err(e) = fs::write(&tmp, &new_content) {
+        tracing::warn!("[sync_mcp] write {} failed: {}", tmp.display(), e);
+        return;
+    }
+    if let Err(e) = fs::rename(&tmp, &path) {
+        tracing::warn!(
+            "[sync_mcp] rename {} -> {} failed: {}",
+            tmp.display(),
+            path.display(),
+            e
+        );
+        let _ = fs::write(&path, &new_content);
+    }
+    info!(
+        "[sync_mcp] search provider defaulted to bing in {}",
+        path.display()
+    );
 }
 
 /// 确保 CodeWhale 可用 (内部函数，在 ai_send_message 中调用)
